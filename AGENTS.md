@@ -79,6 +79,11 @@ copy their architecture wholesale.
 - Keep provider authentication and transport behind a replaceable interface.
   Do not launch or bundle the Codex CLI to implement subscription access.
 - Keep credentials out of saved cores, conversation files, and Git.
+- The qlfile is the only place a git dependency is pinned. `./script/bootstrap`
+  writes `qlfile.lock`, and `nix/package.nix` reads that lock for every git
+  source, so never copy a ref or hash into Nix. A new git dependency needs only
+  its build metadata (systems and `lispLibs`) in `nix/package.nix`, and Nix
+  evaluation fails until that entry exists.
 - Source is authoritative for clean rebuilds. Saved cores preserve exact
   working live states, but never replace tracked source.
 - Operate on Lisp forms for durable source edits. Do not use blind regular

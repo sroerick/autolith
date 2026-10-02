@@ -10,6 +10,53 @@ let
   expectedSbclSourceHash = lib.removeSuffix "\n" (builtins.readFile "${src}/sbcl-source.sha256");
   fffSourceCommit = lib.removeSuffix "\n" (builtins.readFile "${src}/native/fff/commit");
 
+  # Git dependencies come from qlfile.lock, the same lock qlot installs from,
+  # so Nix never carries a second copy of a ref. The lock records each git
+  # source as
+  #   ("name" . (:class qlot/source/git:source-git
+  #              :initargs (:remote-url "URL" :ref "SHA") :version "git-SHA"))
+  # and builtins.fetchGit pins the checkout by that full commit, which pure
+  # evaluation accepts without a separate hash. The fetched tree is a
+  # content-addressed store path, so every derivation built from it stays
+  # binary-cacheable; only the first evaluation on a machine clones.
+  qlotLock = builtins.readFile "${src}/qlfile.lock";
+  qlotGitSources =
+    let
+      pattern = ''\("([^"]+)" \.[[:space:]]+\(:class qlot/source/git:source-git[[:space:]]+:initargs \(:remote-url "([^"]+)" :ref "([0-9a-f]{40})"\)'';
+      matches = builtins.filter builtins.isList (builtins.split pattern qlotLock);
+    in
+    builtins.listToAttrs (map (match: {
+      name = builtins.elemAt match 0;
+      value = {
+        url = builtins.elemAt match 1;
+        rev = builtins.elemAt match 2;
+      };
+    }) matches);
+  qlotEntry = name:
+    qlotGitSources.${name}
+      or (throw "qlfile.lock has no git source named ${name}; add it to the qlfile and run ./script/bootstrap.");
+  qlotSource = name:
+    let entry = qlotEntry name;
+    in builtins.fetchGit {
+      inherit (entry) url rev;
+      shallow = true;
+    };
+  qlotVersion = name: "git-${builtins.substring 0 12 (qlotEntry name).rev}";
+
+  # Every git source in the lock must have build metadata below. A dependency
+  # added to the qlfile without a buildASDFSystem entry fails evaluation here
+  # instead of quietly shipping a release that never loaded it.
+  qlotLibrariesWithBuildMetadata = [
+    "agentcomms" "cl-colorist" "cl-exec-sandbox" "cl-jobpond"
+    "cl-llm-provider-api" "cl-lsp" "cl-rfc8628" "cl-skills" "cl-termdown"
+    "clifff" "clinedi" "clinker-transcript" "colordiff" "colorlisp" "fetch-gist"
+    "idsmall" "image-daemon" "ls-compat" "ls-flock" "mcparen" "org-templater"
+    "parenchek" "sbcl-generations" "sbcl-workers" "sexp-config" "sexp-store"
+    "sophisticated-clipboard" "structlisp"
+  ];
+  qlotSourcesWithoutBuildMetadata =
+    lib.subtractLists qlotLibrariesWithBuildMetadata (builtins.attrNames qlotGitSources);
+
   # Quicklisp's NYAML archive includes dangling symlinks in its unused test data.
   nyaml = pkgs.sbclPackages.nyaml.overrideAttrs (old: {
     postInstall = (old.postInstall or "") + ''
@@ -19,13 +66,8 @@ let
 
   agentcomms = pkgs.sbcl.buildASDFSystem {
     pname = "agentcomms";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "agentcomms";
-      rev = "e2f0cf5931bb35eb070da9077d0144e4ac013947";
-      hash = "sha256-prLkXQBefxsPCwm3LmCN3bppVLlASxVUJ7YYUC2DVSw=";
-    };
+    version = qlotVersion "agentcomms";
+    src = qlotSource "agentcomms";
     lispLibs = with pkgs.sbclPackages; [
       bordeaux-threads
       serapeum
@@ -35,18 +77,13 @@ let
 
   clColorist = pkgs.sbcl.buildASDFSystem {
     pname = "cl-colorist";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
-      repo = "cl-colorist";
-      rev = "a70749493fbdbe79d6766f254a664119042102b9";
-      hash = "sha256-VrJkXhLkRaAcv+f7ckSgIeH8oU3Ft2XAXaAs13pPNnw=";
-    };
+    version = qlotVersion "cl-colorist";
+    src = qlotSource "cl-colorist";
   };
 
   clLlmProviderApi = pkgs.sbcl.buildASDFSystem {
     pname = "cl-llm-provider-api";
-    version = "0.2.0";
+    version = qlotVersion "cl-llm-provider-api";
     systems = [
       "cl-llm-provider-api"
       "cl-llm-provider-api/wire"
@@ -54,12 +91,7 @@ let
       "cl-llm-provider-api/context"
       "cl-llm-provider-api/contracts"
     ];
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "cl-llm-provider-api";
-      rev = "fd05933ce7950a1b0a2ccbc1c61228d3e633867a";
-      hash = "sha256-TbiaUWXBvTnF++fRnMUW6cU4b/JrmIteL4/MBjk8Sqk=";
-    };
+    src = qlotSource "cl-llm-provider-api";
     lispLibs = with pkgs.sbclPackages; [
       babel
       bordeaux-threads
@@ -75,13 +107,8 @@ let
 
   clLsp = pkgs.sbcl.buildASDFSystem {
     pname = "cl-lsp";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "cl-lsp";
-      rev = "285aa75ae19c4e02de97f5891a398478242b4153";
-      hash = "sha256-5O4ggBry8GPhLF11EG5fMzsuhkt/kTlQQSsIzWlrALE=";
-    };
+    version = qlotVersion "cl-lsp";
+    src = qlotSource "cl-lsp";
     lispLibs = with pkgs.sbclPackages; [
       bordeaux-threads
       flexi-streams
@@ -93,13 +120,8 @@ let
 
   clRfc8628 = pkgs.sbcl.buildASDFSystem {
     pname = "cl-rfc8628";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "cl-rfc8628";
-      rev = "dea112d1bf2750a52c52f33344157af7b9f4f6f8";
-      hash = "sha256-oJ+kcCMkdhI5Yf6je/F8IueGA2MR3P+Lq0N965JWFnM=";
-    };
+    version = qlotVersion "cl-rfc8628";
+    src = qlotSource "cl-rfc8628";
     lispLibs = with pkgs.sbclPackages; [
       bordeaux-threads
       cl-base64
@@ -111,13 +133,8 @@ let
 
   clinkerTranscript = pkgs.sbcl.buildASDFSystem {
     pname = "clinker-transcript";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "clinker-transcript";
-      rev = "08acbc1caaab2beaa0ea824507d722a117ec70b0";
-      hash = "sha256-PVzNSXSCTWMczcZT8HtwipWdoXVKlYhDBR7dCUBiG7o=";
-    };
+    version = qlotVersion "clinker-transcript";
+    src = qlotSource "clinker-transcript";
     lispLibs = with pkgs.sbclPackages; [
       yason
       structlisp
@@ -126,13 +143,8 @@ let
 
   imageDaemon = pkgs.sbcl.buildASDFSystem {
     pname = "image-daemon";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "image-daemon";
-      rev = "dbd7644f5811b5c29f05818cd20e88746743d009";
-      hash = "sha256-F1OfaVfit9MKv5yxrvKaISh1hmckUceCJVRlK1uAoqI=";
-    };
+    version = qlotVersion "image-daemon";
+    src = qlotSource "image-daemon";
     systems = [ "image-daemon" "image-daemon/runtime" ];
     lispLibs = [
       idsmall
@@ -148,13 +160,8 @@ let
 
   lsCompat = pkgs.sbcl.buildASDFSystem {
     pname = "ls-compat";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "ls-compat";
-      rev = "24fbc85ec31f3a8f8d2d165a2997e18a21427738";
-      hash = "sha256-KddEtJYKr6YCWAOKK+NiVz1y+SzjidExCUpRQXi9z90=";
-    };
+    version = qlotVersion "ls-compat";
+    src = qlotSource "ls-compat";
     systems = [ "ls-compat" "ls-compat/posix" ];
     lispLibs = with pkgs.sbclPackages; [
       babel
@@ -164,13 +171,8 @@ let
 
   lsFlock = pkgs.sbcl.buildASDFSystem {
     pname = "ls-flock";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "ls-flock";
-      rev = "0e3e0ada0f5b693cb3f32f46aefbb8dbebcc20f2";
-      hash = "sha256-fYzB1uM4jHm5HmNkwkQ6sLTc/V78e+X0mlGZDrKTmcI=";
-    };
+    version = qlotVersion "ls-flock";
+    src = qlotSource "ls-flock";
     lispLibs = with pkgs.sbclPackages; [
       bordeaux-threads
     ];
@@ -178,13 +180,8 @@ let
 
   clSkills = pkgs.sbcl.buildASDFSystem {
     pname = "cl-skills";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "cl-skills";
-      rev = "3c219ae44379a1891bbd8f374692763cae9215f8";
-      hash = "sha256-hkZQfv/V3cI1+3PwiIVi+kBo8c+V9rzzEQfjN8RGCow=";
-    };
+    version = qlotVersion "cl-skills";
+    src = qlotSource "cl-skills";
     lispLibs = [
       pkgs.sbclPackages.ironclad
       lsCompat
@@ -196,26 +193,16 @@ let
 
   clinedi = pkgs.sbcl.buildASDFSystem {
     pname = "clinedi";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "clinedi";
-      rev = "8c9b3ef53f6ffb92980b7adba43910f4c4585cd9";
-      hash = "sha256-scyVdAzrZRhoCDYSBZe4ENj/j4wSmcraHNuIOqhPsQQ=";
-    };
+    version = qlotVersion "clinedi";
+    src = qlotSource "clinedi";
     systems = [ "clinedi" "clinedi/posix" ];
     lispLibs = [ clColorist ];
   };
 
   mcparen = pkgs.sbcl.buildASDFSystem {
     pname = "mcparen";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "mcparen";
-      rev = "482f87cf0803c4583579eb12c58f0c1078199c94";
-      hash = "sha256-jTYhAsVkgD5xDt0VDdLtnUlKutks4rqN6Od5RkLU6wA=";
-    };
+    version = qlotVersion "mcparen";
+    src = qlotSource "mcparen";
     systems = [ "mcparen" "mcparen/managed" ];
     lispLibs = [ lsCompat ] ++ (with pkgs.sbclPackages; [
       babel
@@ -226,16 +213,11 @@ let
     ]);
   };
 
-  colorlispSource = pkgs.fetchFromGitHub {
-    owner = "lambda-symbolics";
-    repo = "colorlisp";
-    rev = "2654ae0fa34aee42cff401693b5a80a86f0942c4";
-    hash = "sha256-VE8H0FSmCPPqEwijwoKf6yRerm0Kye0irrva/8wnXe4=";
-  };
+  colorlispSource = qlotSource "colorlisp";
 
   colorlispNativeLibrary = pkgs.stdenv.mkDerivation {
     pname = "colorlisp-tree-sitter";
-    version = "0.2.0";
+    version = qlotVersion "colorlisp";
     src = colorlispSource;
     nativeBuildInputs = [ pkgs.findutils ];
     dontConfigure = true;
@@ -262,7 +244,7 @@ let
 
   colorlisp = pkgs.sbcl.buildASDFSystem {
     pname = "colorlisp";
-    version = "0.2.0";
+    version = qlotVersion "colorlisp";
     src = colorlispSource;
     lispLibs = with pkgs.sbclPackages; [
       babel
@@ -273,13 +255,8 @@ let
 
   colordiff = pkgs.sbcl.buildASDFSystem {
     pname = "colordiff";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "colordiff";
-      rev = "e224fd4148c399998ba893e71b7da0cc8a2c658a";
-      hash = "sha256-GdjAlug81TLNG6AcwZw/dlLQbep2UtEDAGQY9/pTqKo=";
-    };
+    version = qlotVersion "colordiff";
+    src = qlotSource "colordiff";
     lispLibs = [
       clColorist
       colorlisp
@@ -288,13 +265,8 @@ let
 
   clTermdown = pkgs.sbcl.buildASDFSystem {
     pname = "cl-termdown";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "cl-termdown";
-      rev = "314723383fcf2f5c05c5f35000fb1549c44058a2";
-      hash = "sha256-EgOQ4qhcoCooxfiToXuIX4iIT5b74IlEzuXbCScG/Gw=";
-    };
+    version = qlotVersion "cl-termdown";
+    src = qlotSource "cl-termdown";
     lispLibs = with pkgs.sbclPackages; [
       clinedi
       colordiff
@@ -305,13 +277,8 @@ let
 
   parenchek = pkgs.sbcl.buildASDFSystem {
     pname = "parenchek";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "parenchek";
-      rev = "7f26ccf19131f15584ef4a01cfa3cc6bf54403b9";
-      hash = "sha256-xGNNJgzSuWwTe9u1PuU2cD+W16CL6ZMDsNNhEjsec30=";
-    };
+    version = qlotVersion "parenchek";
+    src = qlotSource "parenchek";
     lispLibs = [ lsCompat ] ++ (with pkgs.sbclPackages; [
       serapeum
     ]);
@@ -319,35 +286,20 @@ let
 
   orgTemplater = pkgs.sbcl.buildASDFSystem {
     pname = "org-templater";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "org-templater";
-      rev = "918d456528474e880014fe8377e4810e4a55e6a9";
-      hash = "sha256-M9kMLo9bBnxIMUVCVFdXqLpFi2/mJSx+iBcOCBw7feQ=";
-    };
+    version = qlotVersion "org-templater";
+    src = qlotSource "org-templater";
   };
 
   structlisp = pkgs.sbcl.buildASDFSystem {
     pname = "structlisp";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "structlisp";
-      rev = "66bbfbe947b69f3105f71f5e4293637decc91746";
-      hash = "sha256-ax+mwi9opGFkycQjNNDJyLPUI11aOdTtljb4WDthUI4=";
-    };
+    version = qlotVersion "structlisp";
+    src = qlotSource "structlisp";
   };
 
   clifff = pkgs.sbcl.buildASDFSystem {
     pname = "clifff";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
-      repo = "clifff";
-      rev = "8bf3ebb0985108593cad105d31639cedbe9e5373";
-      hash = "sha256-PAp4odBnJG/NcGZRjuQCQBpm75QZgNbq/cQcMHccgtw=";
-    };
+    version = qlotVersion "clifff";
+    src = qlotSource "clifff";
     lispLibs = with pkgs.sbclPackages; [
       bordeaux-threads
       cffi
@@ -356,25 +308,15 @@ let
 
   sexpStore = pkgs.sbcl.buildASDFSystem {
     pname = "sexp-store";
-    version = "0.4.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "sexp-store";
-      rev = "778ce8021071bb8ba4066eff9eb822499b8a48ec";
-      hash = "sha256-OXkSce5PnGWWI+cNPMqQE1aLX3YKxKyaGpKUbQ4+wJM=";
-    };
+    version = qlotVersion "sexp-store";
+    src = qlotSource "sexp-store";
     lispLibs = [ lsCompat lsFlock ];
   };
 
   sbclWorkers = pkgs.sbcl.buildASDFSystem {
     pname = "sbcl-workers";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "sbcl-workers";
-      rev = "da94b8c55a4225a7a1f5e2c2758adb5d200689bc";
-      hash = "sha256-siy16UD3pAE5Q3JWULvSfkT7yk5ULHmf7SRhrdkg2bk=";
-    };
+    version = qlotVersion "sbcl-workers";
+    src = qlotSource "sbcl-workers";
     lispLibs = [ lsCompat sexpStore ] ++ (with pkgs.sbclPackages; [
       bordeaux-threads
     ]);
@@ -382,73 +324,43 @@ let
 
   idsmall = pkgs.sbcl.buildASDFSystem {
     pname = "idsmall";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
-      repo = "idsmall";
-      rev = "3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9";
-      hash = "sha256-KnK/eWB1DQrI1LdO63rBNbeDhWESI6b5BZq1s9Xlp2A=";
-    };
+    version = qlotVersion "idsmall";
+    src = qlotSource "idsmall";
     lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
   };
 
   sexpConfig = pkgs.sbcl.buildASDFSystem {
     pname = "sexp-config";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
-      repo = "sexp-config";
-      rev = "408fa906e2d16aa515b39c943d3affcab3811ffc";
-      hash = "sha256-r4bCQHHVOC8peLofhzh0m8Y2vuu/uaaT/oOwAB8TaXQ=";
-    };
+    version = qlotVersion "sexp-config";
+    src = qlotSource "sexp-config";
   };
 
   sophisticatedClipboard = pkgs.sbcl.buildASDFSystem {
     pname = "sophisticated-clipboard";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
-      repo = "sophisticated-clipboard";
-      rev = "f4fb761c233b8599d1f9f572281bced26c114e82";
-      hash = "sha256-diSL+fjK7WqzWTBjGK0W9zD04iIPQO+tIugn6vzW0n8=";
-    };
+    version = qlotVersion "sophisticated-clipboard";
+    src = qlotSource "sophisticated-clipboard";
     lispLibs = with pkgs.sbclPackages; [ flexi-streams ];
   };
 
   sbclGenerations = pkgs.sbcl.buildASDFSystem {
     pname = "sbcl-generations";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "sbcl-generations";
-      rev = "4cfe637597a90263c6259ad2d114053618312243";
-      hash = "sha256-R0GzTzDP1qvGf+P872iyxC56KoqnktPdZrKkmyjnMcA=";
-    };
+    version = qlotVersion "sbcl-generations";
+    src = qlotSource "sbcl-generations";
     lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
   };
 
   clJobpond = pkgs.sbcl.buildASDFSystem {
     pname = "cl-jobpond";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
-      repo = "cl-jobpond";
-      rev = "ee2e2eb0bd5080c52db55036f853c00671962178";
-      hash = "sha256-2brHuyCb2dxzDqtLZa7upi9EZuEQKOximh/RwYjjb6U=";
-    };
+    version = qlotVersion "cl-jobpond";
+    src = qlotSource "cl-jobpond";
     lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
   };
 
-  clExecSandboxSource = pkgs.fetchFromGitHub {
-    owner = "lambda-symbolics";
-    repo = "cl-exec-sandbox";
-    rev = "8c9f0c83ede8dd29163a4f93f4332368f2292ece";
-    hash = "sha256-OJPFn9CWWDEqtbIQsa8pUmo3sxxR/BLLMB3cHQKcr84=";
-  };
+  clExecSandboxSource = qlotSource "cl-exec-sandbox";
 
   clExecSandbox = pkgs.sbcl.buildASDFSystem {
     pname = "cl-exec-sandbox";
-    version = "0.1.0";
+    version = qlotVersion "cl-exec-sandbox";
     src = clExecSandboxSource;
   };
 
@@ -503,13 +415,8 @@ let
 
   fetchGist = pkgs.sbcl.buildASDFSystem {
     pname = "fetch-gist";
-    version = "0.1.0";
-    src = pkgs.fetchFromGitHub {
-      owner = "lambda-symbolics";
-      repo = "fetch-gist";
-      rev = "0adb33b6801d1218ce6249d2a751b05f88b98c40";
-      hash = "sha256-DqYli/ASTTAr4f1hICUrIcd6btZBWTqzTsH7qOzs4Zg=";
-    };
+    version = qlotVersion "fetch-gist";
+    src = qlotSource "fetch-gist";
     lispLibs = with pkgs.sbclPackages; [
       dexador
       plump
@@ -821,6 +728,10 @@ let
   '';
 
 in
+assert lib.assertMsg (qlotSourcesWithoutBuildMetadata == [])
+  "qlfile.lock git sources without Nix build metadata in nix/package.nix: ${toString qlotSourcesWithoutBuildMetadata}";
+assert lib.assertMsg (lib.subtractLists (builtins.attrNames qlotGitSources) qlotLibrariesWithBuildMetadata == [])
+  "nix/package.nix lists build metadata for libraries no longer in qlfile.lock: ${toString (lib.subtractLists (builtins.attrNames qlotGitSources) qlotLibrariesWithBuildMetadata)}";
 assert with pkgs.stdenv.hostPlatform;
   (isLinux && (isx86_64 || isAarch64)) || (isDarwin && isAarch64);
 assert pkgs.sbcl.version == expectedSbclVersion;
@@ -903,6 +814,7 @@ pkgs.writeShellApplication {
   };
 
   passthru = {
+    inherit qlotGitSources;
     inherit autolithSystem clColorist clExecSandbox clifff clinedi clJobpond
       colorlisp colorlispNativeLibrary fffLibrary idsmall imageIdentity
       imageValidation runtime sandboxHelper sbclGenerations sbclSource mcparen
