@@ -2866,6 +2866,30 @@ may execute immediately; other Lisp waits for the idle boundary."
           (setf (application-input-controller-reader-thread controller) nil)))))
   nil)
 
+(-> application-input-controller-reader-thread-p
+    (application-input-controller)
+    boolean)
+(defun application-input-controller-reader-thread-p (controller)
+  "Return true when the current thread is CONTROLLER's terminal reader."
+  (with-lock-held ((application-input-controller-lock controller))
+    (eq (current-thread)
+        (application-input-controller-reader-thread controller))))
+
+(-> application-input-controller-call-with-exclusive-input
+    (application-input-controller function)
+    t)
+(defun application-input-controller-call-with-exclusive-input
+    (controller function)
+  "Call modal FUNCTION as the only reader of CONTROLLER's terminal.
+
+Work already running on the reader thread is that reader, so it proceeds in
+place; every other thread pauses the reader for the call's dynamic extent.
+This is the owner installed as the terminal UI's exclusive-input function."
+  (if (application-input-controller-reader-thread-p controller)
+      (funcall function)
+      (application-input-controller-call-with-reader-paused
+       controller function)))
+
 (-> application-input-controller-call-with-reader-paused
     (application-input-controller function)
     t)
@@ -3256,6 +3280,11 @@ sandbox grant is revalidated at this final authorization boundary."
                           pending-persistence-enabled-p
                           :main-thread (current-thread))))
     (setf (application-input-controller application) controller)
+    (when (slot-boundp application 'ui)
+      (setf (terminal-ui-exclusive-input-function (application-ui application))
+            (lambda (function)
+              (application-input-controller-call-with-exclusive-input
+               controller function))))
     (when load-pending-p
       (application-input-controller--load-pending controller))
     (application-input-controller--publish-counts controller)
@@ -3527,7 +3556,10 @@ sandbox grant is revalidated at this final authorization boundary."
           (setf (application-input-controller-reader-thread controller) nil))))
     (let ((application (application-input-controller-application controller)))
       (when (eq controller (application-input-controller application))
-        (setf (application-input-controller application) nil))))
+        (setf (application-input-controller application) nil)
+        (when (slot-boundp application 'ui)
+          (setf (terminal-ui-exclusive-input-function (application-ui application))
+                #'funcall)))))
   nil)
 
 (-> application-input-controller-call-with-shutdown-escape

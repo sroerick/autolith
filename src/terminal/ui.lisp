@@ -2455,21 +2455,24 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
                              :message "ON-EVENT returned an unsupported picker action."
                              :operation ':select :cause nil))))))
         (let ((selected
-                (clinedi:run-selection-session
-                 session
-                 :read-event (lambda () (terminal-read-event (terminal-ui-terminal ui)))
-                 :input-ready-p (lambda () (terminal-input-ready-p (terminal-ui-terminal ui)))
-                 :poll-interval poll-interval
-                 :call-with-lock (lambda (function)
-                                   (with-terminal-ui-locked (ui) (funcall function)))
-                 :refresh (lambda () (publish) (terminal-ui-refresh-size ui resize-callback))
-                 :paint (lambda () (publish) (terminal-ui--repaint-live ui))
-                 :on-open #'publish :on-event #'handle-custom
-                 :on-close (lambda ()
-                             (setf (terminal-ui-selector ui) nil
-                                   (terminal-ui-selector-title ui) nil
-                                   (terminal-ui-selector-hint ui) nil)
-                             (terminal-ui--repaint-live ui)))))
+                (terminal-ui-call-with-exclusive-input
+                 ui
+                 (lambda ()
+                   (clinedi:run-selection-session
+                    session
+                    :read-event (lambda () (terminal-read-event (terminal-ui-terminal ui)))
+                    :input-ready-p (lambda () (terminal-input-ready-p (terminal-ui-terminal ui)))
+                    :poll-interval poll-interval
+                    :call-with-lock (lambda (function)
+                                      (with-terminal-ui-locked (ui) (funcall function)))
+                    :refresh (lambda () (publish) (terminal-ui-refresh-size ui resize-callback))
+                    :paint (lambda () (publish) (terminal-ui--repaint-live ui))
+                    :on-open #'publish :on-event #'handle-custom
+                    :on-close (lambda ()
+                                (setf (terminal-ui-selector ui) nil
+                                      (terminal-ui-selector-title ui) nil
+                                      (terminal-ui-selector-hint ui) nil)
+                                (terminal-ui--repaint-live ui)))))))
           (if (stringp selected) selected (value selected)))))))
 
 
@@ -3107,6 +3110,16 @@ thread."
 (defun terminal-ui-read-event (ui)
   "Read one semantic input event for UI without emitting fallback prompt controls."
   (terminal-read-event (terminal-ui-terminal ui)))
+
+(-> terminal-ui-call-with-exclusive-input (terminal-ui function) t)
+(defun terminal-ui-call-with-exclusive-input (ui function)
+  "Call FUNCTION while it alone reads UI's terminal input, returning its values.
+
+Modal pickers and other direct event readers take ownership here when they
+open, so the work that reached them, whether a slash command, a Lisp form, or
+an agent turn, never has to give up responsive input in advance. Without an
+installed owner the thunk simply runs."
+  (funcall (terminal-ui-exclusive-input-function ui) function))
 
 (-> terminal-ui--safe-editor-event (t) t)
 (defun terminal-ui--safe-editor-event (event)

@@ -2103,18 +2103,21 @@ are forwarded to TERMINAL-UI-SELECT."
     (multiple-value-bind
           (input output stop-ui-p input-echo-disabled-p input-file-descriptor)
         (application--authentication-streams application)
-      (application-call-with-authentication-ui
-       ui stop-ui-p
+      (terminal-ui-call-with-exclusive-input
+       ui
        (lambda ()
-         (let ((*standard-input* input)
-               (*standard-output* output)
-               (*api-key-input-echo-disabled-p* input-echo-disabled-p)
-               (*api-key-input-file-descriptor* input-file-descriptor)
-               (*api-key-output-styled-p*
-                 (terminal-styled-p (terminal-ui-terminal ui))))
-           (setf message
-                 (provider-authenticate-with-method
-                  provider method :stream output :open-browser-p t))))))
+         (application-call-with-authentication-ui
+          ui stop-ui-p
+          (lambda ()
+            (let ((*standard-input* input)
+                  (*standard-output* output)
+                  (*api-key-input-echo-disabled-p* input-echo-disabled-p)
+                  (*api-key-input-file-descriptor* input-file-descriptor)
+                  (*api-key-output-styled-p*
+                    (terminal-styled-p (terminal-ui-terminal ui))))
+              (setf message
+                    (provider-authenticate-with-method
+                     provider method :stream output :open-browser-p t))))))))
     (application-present application message))
   nil)
 

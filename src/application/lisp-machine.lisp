@@ -471,23 +471,26 @@ journaling or provider conversation projection."
                (terminal-span
                 ':hint
                 "Enter one Lisp form. Its multiple values become restart arguments.")))
-             (loop
-               (multiple-value-bind (action payload)
-                   (terminal-ui-process-event ui (terminal-ui-read-event ui))
-                 (case action
-                   (:submit
-                    (if (user-message-input-image-pathnames payload)
-                        (progn
-                          (application-present
-                           application
-                           (list
-                            (terminal-span
-                             ':failure
-                             "Restart argument input cannot include image attachments.")))
-                          (terminal-ui-set-input ui payload))
-                        (return (user-message-input-text payload))))
-                   ((:interrupt :end-of-input :escape)
-                    (return nil))))))
+             (terminal-ui-call-with-exclusive-input
+              ui
+              (lambda ()
+                (loop
+                  (multiple-value-bind (action payload)
+                      (terminal-ui-process-event ui (terminal-ui-read-event ui))
+                    (case action
+                      (:submit
+                       (if (user-message-input-image-pathnames payload)
+                           (progn
+                             (application-present
+                              application
+                              (list
+                               (terminal-span
+                                ':failure
+                                "Restart argument input cannot include image attachments.")))
+                             (terminal-ui-set-input ui payload))
+                           (return (user-message-input-text payload))))
+                      ((:interrupt :end-of-input :escape)
+                       (return nil))))))))
         (terminal-ui-set-input ui saved-input)
         (terminal-ui-set-lisp-input ui saved-lisp-input-p)))))
 

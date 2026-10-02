@@ -305,6 +305,13 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
     :reader terminal-ui-clock-function
     :type function
     :documentation "The injected monotonic clock function returning seconds.")
+   (exclusive-input-function
+    :initarg :exclusive-input-function
+    :initform #'funcall
+    :accessor terminal-ui-exclusive-input-function
+    :type function
+    :documentation
+    "The function calling a modal-input thunk with sole ownership of terminal input.")
    (preview-rows
     :initform nil
     :accessor terminal-ui-preview-rows
