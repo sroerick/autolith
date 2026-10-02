@@ -435,6 +435,12 @@ truthful source of dimensions."
 (defparameter *application-prompt* "❯ "
   "The styled input prompt shown on the live editor row.")
 
+(defparameter *application-message-header-prefixes* '("❯ you" "● autolith")
+  "The transcript header prefixes opening user and assistant messages.
+
+The fullscreen viewport jumps between these lines, so a reader can follow the
+exchange without scrolling through reasoning and tool activity.")
+
 (defparameter *application-placeholder*
   "Ask Autolith anything. Type (help) for operations."
   "The dim hint shown on the prompt row while input is empty.")
@@ -453,6 +459,7 @@ truthful source of dimensions."
          :columns columns
          :input-file-descriptor (terminal-standard-input-file-descriptor))))
      :prompt *application-prompt*
+     :message-header-prefixes *application-message-header-prefixes*
      :placeholder *application-placeholder*
      :completion-function #'application-command-completion-entries)))
 

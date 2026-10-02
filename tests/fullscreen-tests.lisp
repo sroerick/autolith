@@ -256,3 +256,59 @@
       (test-assert (eq expected (localgroup--terminal-event-p event))
                    (format nil "relay validation of ~S" event))))
   nil)
+
+
+;;;; -- Message Jumps and Exit Epilogue --
+
+(-> fullscreen-test--row-text (fullscreen-terminal-ui integer) string)
+(defun fullscreen-test--row-text (ui index)
+  "Return the plain text of UI's committed transcript row INDEX."
+  (let* ((row (aref (fullscreen-terminal-ui-rows ui) index))
+         (text (first (aref (fullscreen-terminal-ui-chunks ui) (fullscreen-row-chunk row))))
+         (start (fullscreen-row-offset row)))
+    (subseq text start (+ start (fullscreen-row-length row)))))
+
+(-> test-terminal-fullscreen-message-jumps () null)
+(defun test-terminal-fullscreen-message-jumps ()
+  "Test Ctrl-Page jumps land on user and assistant headers while skipping activity rows."
+  (let* ((terminal (make-instance 'recording-terminal :columns 40 :rows 12))
+         (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "
+                                 :message-header-prefixes '("❯ you" "● autolith"))))
+    (with-terminal-ui (active ui)
+      (terminal-ui-append-finalized-batch
+       active
+       (loop for turn below 4
+             append (list (list (list :user turn)
+                                (format nil "❯ you 12:0~D~%question ~D" turn turn))
+                          (list (list :tool turn)
+                                (format nil "▸ tool ~D~%│ output line~%│ more output" turn))
+                          (list (list :agent turn)
+                                (format nil "● autolith~%answer ~D continues here" turn)))))
+      (terminal-ui-process-event active ':scroll-bottom)
+      (terminal-ui-process-event active ':previous-section)
+      (let ((top (fullscreen-terminal-ui-top active)))
+        (test-assert (and top (uiop:string-prefix-p "❯ you 12:03" (fullscreen-test--row-text active top)))
+                     "Ctrl-PgUp from the tail tops the newest header above the window"))
+      (terminal-ui-process-event active ':previous-section)
+      (let ((top (fullscreen-terminal-ui-top active)))
+        (test-assert (and top (uiop:string-prefix-p "● autolith" (fullscreen-test--row-text active top)))
+                     "a second Ctrl-PgUp skips tool rows and tops the previous assistant header"))
+      (terminal-ui-process-event active ':next-section)
+      (let ((top (fullscreen-terminal-ui-top active)))
+        (test-assert (and top (uiop:string-prefix-p "❯ you 12:03" (fullscreen-test--row-text active top)))
+                     "Ctrl-PgDn returns to the following user header"))
+      (terminal-ui-process-event active ':next-section)
+      (test-assert (null (fullscreen-terminal-ui-top active))
+                   "jumping past the final window follows the tail again")
+      (terminal-ui-process-event active ':scroll-top)
+      (terminal-ui-process-event active ':previous-section)
+      (test-assert (eql 0 (fullscreen-terminal-ui-top active))
+                   "Ctrl-PgUp at the first row stays put")
+      (terminal-ui-process-event active ':next-section)
+      (let ((top (fullscreen-terminal-ui-top active)))
+        (test-assert (and top (uiop:string-prefix-p "● autolith" (fullscreen-test--row-text active top)))
+                     "Ctrl-PgDn from the first user header reaches the first assistant header"))
+      (test-assert (string= "draft" (progn (terminal-ui-set-input active "draft")
+                                           (line-editor-text (terminal-ui-editor active))))
+                   "message jumps leave the draft alone")))
+  nil)

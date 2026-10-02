@@ -39,7 +39,8 @@
   test-terminal-fullscreen-relayed-wheel
   test-fullscreen-authentication-lifecycle
   test-terminal-fullscreen-clicks
-  test-localgroup-click-events)
+  test-localgroup-click-events
+  test-terminal-fullscreen-message-jumps)
 
 (define-test-suite hyperlinks
   test-text-url-ranges

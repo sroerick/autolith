@@ -191,6 +191,51 @@ OFFSET and LENGTH locate the row's plain characters inside the chunk text."
                                (max 0 (- (length lines) count)))))
               (values (subseq lines start (+ start count)) (- row start) column))))))))
 
+(-> terminal-ui-fullscreen--legend-items (boolean) list)
+(defun terminal-ui-fullscreen--legend-items (following-p)
+  "Return (KEY DESCRIPTION) pairs for the legend, for a tail-following or scrolled view."
+  (append
+   '(("PgUp/PgDn" "scroll")
+     ("Ctrl-PgUp/PgDn" "messages"))
+   (if following-p
+       '(("Ctrl-Home/End" "ends")
+         ("Shift+mouse" "selects text"))
+       '(("Ctrl-End" "follows")))))
+
+(-> terminal-ui-fullscreen--legend-row
+    (fullscreen-terminal-ui &key (:top integer) (:total integer) (:space integer)
+                            (:width integer))
+    string)
+(defun terminal-ui-fullscreen--legend-row (ui &key top total space width)
+  "Render the status-bar legend separating the transcript from the composer.
+
+The position block wears the status accent, keys the plain status style, and
+their descriptions the dim status style, all over the status background that
+spans WIDTH cells, so the legend reads as a bar rather than as prompt advice."
+  (let* ((following-p (null (fullscreen-terminal-ui-top ui)))
+         (position (if following-p
+                       " LIVE "
+                       (format nil " ~D-~D / ~D "
+                               (1+ top) (min total (+ top space)) total)))
+         (spans
+           (append
+            (list (terminal-span ':status-accent position))
+            (loop for (key description) in (terminal-ui-fullscreen--legend-items following-p)
+                  for first-p = t then nil
+                  append (list (terminal-span ':status-dim (if first-p "  " " · "))
+                               (terminal-span ':status-plain key)
+                               (terminal-span ':status-dim
+                                              (format nil " ~A" description))))))
+         (clipped (terminal--clip-spans spans width))
+         (padding (- width (terminal--spans-width clipped))))
+    (terminal--render-spans
+     (terminal-ui-terminal ui)
+     (if (plusp padding)
+         (append clipped
+                 (list (terminal-span ':status-dim
+                                      (make-string padding :initial-element #\Space))))
+         clipped))))
+
 (-> terminal-ui-fullscreen--frame (fullscreen-terminal-ui (option real))
     (values list integer integer))
 (defun terminal-ui-fullscreen--frame (ui status-now)
@@ -223,16 +268,9 @@ OFFSET and LENGTH locate the row's plain characters inside the chunk text."
         (values
          (append visible (make-list (max 0 (- space (length visible))) :initial-element "")
                  (when separator-p
-                   (list (terminal--render-spans
-                          terminal
-                          (list (terminal-span
-                                 ':hint
-                                 (layout-fit-text
-                                  (if (fullscreen-terminal-ui-top ui)
-                                      (format nil "[ ~D-~D / ~D ]  PgUp/PgDn scroll . Ctrl-End follows"
-                                              (1+ top) (min total (+ top space)) total)
-                                      "[ LIVE ]  PgUp/PgDn scroll . Ctrl-Home/End . Shift: select")
-                                  width))))))
+                   (list (terminal-ui-fullscreen--legend-row
+                          ui
+                          :top top :total total :space space :width width)))
                  composer)
          (+ space (if separator-p 1 0) cursor-row) cursor-column)))))
 
@@ -295,6 +333,44 @@ row that still overruns instead of scrolling."
   "Follow the latest transcript output again."
   (setf (fullscreen-terminal-ui-top ui) nil)
   (terminal-ui--paint-live ui)
+  nil)
+
+(-> terminal-ui-fullscreen--message-row-p (fullscreen-terminal-ui fullscreen-row) boolean)
+(defun terminal-ui-fullscreen--message-row-p (ui row)
+  "Return true when ROW starts a transcript line opening a user or assistant message."
+  (let* ((chunk (aref (fullscreen-terminal-ui-chunks ui) (fullscreen-row-chunk row)))
+         (text (first chunk))
+         (offset (fullscreen-row-offset row)))
+    (and (or (zerop offset)
+             (char= (char text (1- offset)) #\Newline))
+         (some (lambda (prefix)
+                 (let ((end (+ offset (length prefix))))
+                   (and (<= end (length text))
+                        (string= prefix text :start2 offset :end2 end))))
+               (terminal-ui-message-header-prefixes ui)))))
+
+(-> terminal-ui-fullscreen-jump-message (fullscreen-terminal-ui (member -1 1)) null)
+(defun terminal-ui-fullscreen-jump-message (ui direction)
+  "Scroll so the nearest message header in DIRECTION tops the viewport.
+
+DIRECTION -1 seeks above the current top row and 1 below it. A header inside
+the final window follows the tail again. Without a header in that direction
+the viewport does not move."
+  (let* ((rows (fullscreen-terminal-ui-rows ui))
+         (maximum (fullscreen-terminal-ui-maximum-top ui))
+         (current (or (fullscreen-terminal-ui-top ui) maximum))
+         (target
+           (if (minusp direction)
+               (loop for index from (1- current) downto 0
+                     when (terminal-ui-fullscreen--message-row-p ui (aref rows index))
+                       return index)
+               (loop for index from (1+ current) below (length rows)
+                     when (terminal-ui-fullscreen--message-row-p ui (aref rows index))
+                       return index))))
+    (when target
+      (let ((top (min target maximum)))
+        (setf (fullscreen-terminal-ui-top ui) (unless (= top maximum) top)))
+      (terminal-ui--paint-live ui)))
   nil)
 
 (-> terminal-ui-fullscreen--column-character-index
@@ -369,6 +445,10 @@ lock, because copying and browser launches present notices of their own."
        (terminal-ui--paint-live ui))
       ((eq event ':scroll-bottom)
        (terminal-ui-fullscreen-bottom ui))
+      ((eq event ':previous-section)
+       (terminal-ui-fullscreen-jump-message ui -1))
+      ((eq event ':next-section)
+       (terminal-ui-fullscreen-jump-message ui 1))
       ((and (consp event) (eq (first event) ':scroll) (member (second event) '(-1 1)))
        (terminal-ui-fullscreen-scroll ui (* 3 (second event))))
       ((typep event '(cons (eql :click) (cons (integer 1) (cons (integer 1) null))))

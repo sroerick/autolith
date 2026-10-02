@@ -76,6 +76,13 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
     :reader terminal-ui-prompt
     :type string
     :documentation "The untrusted-text-safe prompt prefix.")
+   (message-header-prefixes
+    :initarg :message-header-prefixes
+    :initform nil
+    :reader terminal-ui-message-header-prefixes
+    :type list
+    :documentation
+    "Plain-text prefixes of the transcript lines that open user and assistant messages.")
    (prompt-marker-state
     :initform ':closed
     :accessor terminal-ui-prompt-marker-state

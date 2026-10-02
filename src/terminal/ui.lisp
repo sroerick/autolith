@@ -141,16 +141,27 @@ offered only while the typed prefix no longer matches its primary."
           (:completion-function (option function))
           (:completion-root (option pathname))
           (:path-search-function (option function))
+          (:message-header-prefixes list)
           (:clock-function function))
     terminal-ui)
 (defun terminal-ui-create
     (&key terminal editor (prompt "> ") (placeholder "") completions
           completion-function completion-root path-search-function fullscreen-p
+          message-header-prefixes
           (clock-function #'terminal-ui--monotonic-seconds))
-  "Create an inline or opt-in fullscreen UI for interactive TERMINAL."
+  "Create an inline or opt-in fullscreen UI for interactive TERMINAL.
+
+MESSAGE-HEADER-PREFIXES name the transcript lines the fullscreen viewport
+jumps between as messages."
   (unless (typep terminal 'terminal)
     (error 'terminal-error
            :message "TERMINAL-UI-CREATE requires a terminal instance."
+           :operation ':create-ui
+           :cause nil))
+  (unless (and (listp message-header-prefixes)
+               (every #'non-empty-string-p message-header-prefixes))
+    (error 'terminal-error
+           :message "Message header prefixes must be non-empty strings."
            :operation ':create-ui
            :cause nil))
   (unless (every #'terminal-completion-p completions)
@@ -191,6 +202,7 @@ offered only while the typed prefix no longer matches its primary."
                    :live-region live-region
                    :clock-function clock-function
                    :prompt prompt
+                   :message-header-prefixes message-header-prefixes
                    :placeholder placeholder
                    :completions completions
                    :completion-function completion-function

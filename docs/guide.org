@@ -72,13 +72,16 @@ Save the preference for future launches at the Autolith prompt:
 #+END_SRC
 
 The fullscreen viewport keeps the transcript scrollable and pins the composer to
-the bottom. Use =PageUp= and =PageDown= for page movement, =Ctrl-Home= and
-=Ctrl-End= for the oldest and newest transcript positions, and the mouse wheel
-for incremental scrolling. The =--fullscreen= command-line option enables it for
-one launch without changing the saved preference.
+the bottom. Use =PageUp= and =PageDown= for page movement, =Ctrl-PageUp= and
+=Ctrl-PageDown= to jump between the user and assistant messages while skipping
+the reasoning and tool activity in between, =Ctrl-Home= and =Ctrl-End= for the
+oldest and newest transcript positions, and the mouse wheel for incremental
+scrolling. The =--fullscreen= command-line option enables it for one launch
+without changing the saved preference.
 Pass =nil= to =preferences-set-fullscreen= to return future launches to inline mode.
-Use =Shift= with the mouse for terminal text selection. Fullscreen history lives
-in the application rather than the terminal emulator's native scrollback.
+Because the viewport owns the mouse, hold =Shift= while dragging to select text
+with the terminal emulator. Fullscreen history lives in the application rather
+than the terminal emulator's native scrollback.
 
 Clicking a web address in the fullscreen transcript opens it in the default
 browser, and every fenced code block ends with a =⧉ copy= label that copies the
