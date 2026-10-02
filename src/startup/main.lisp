@@ -295,19 +295,22 @@
 
 (-> application--present-resume-instruction (application) boolean)
 (defun application--present-resume-instruction (application)
-  "Present APPLICATION's exact resume command when its conversation is durable."
+  "Present APPLICATION's exact resume command when its conversation is durable.
+
+The instruction goes through the UI's epilogue so a fullscreen session shows
+it on the normal screen after its alternate buffer closes."
   (let ((conversation (application-conversation application)))
     (if (conversation-persisted-p conversation)
-        (not
-         (null
-          (application-present
-           application
+        (progn
+          (terminal-ui-set-epilogue
+           (application-ui application)
            (list
-            (terminal-span :dim "To resume this conversation, run:")
-            (terminal-span :plain (string #\Newline))
-            (terminal-span :code
+            (terminal-span ':dim "To resume this conversation, run:")
+            (terminal-span ':plain (string #\Newline))
+            (terminal-span ':code
                            (format nil "  ~A"
-                                   (application--resume-command application)))))))
+                                   (application--resume-command application)))))
+          t)
         nil)))
 
 (-> application--initial-work-items

@@ -40,7 +40,8 @@
   test-fullscreen-authentication-lifecycle
   test-terminal-fullscreen-clicks
   test-localgroup-click-events
-  test-terminal-fullscreen-message-jumps)
+  test-terminal-fullscreen-message-jumps
+  test-terminal-fullscreen-exit-epilogue)
 
 (define-test-suite hyperlinks
   test-text-url-ranges

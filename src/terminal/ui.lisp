@@ -2661,6 +2661,14 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
         (terminal-flush (terminal-ui-terminal ui))))
   nil)
 
+(defmethod terminal-ui-set-epilogue ((ui terminal-ui) entry)
+  "Append ENTRY to native scrollback, where it outlives the UI."
+  (with-terminal-ui-locked (ui)
+    (multiple-value-bind (text display)
+        (terminal-ui--finalized-content ui entry)
+      (terminal-ui--append-output ui text display)))
+  nil)
+
 (-> terminal-ui-append-finalized (terminal-ui t (or string list)) boolean)
 (defun terminal-ui-append-finalized (ui identifier entry)
   "Append finalized transcript ENTRY once for IDENTIFIER and return true when emitted."

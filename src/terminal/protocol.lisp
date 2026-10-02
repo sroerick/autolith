@@ -475,6 +475,14 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
 
 APPENDED-REGIONS are the (START END ACTION) click regions of APPENDED-TEXT."))
 
+(defgeneric terminal-ui-set-epilogue (ui entry)
+  (:documentation
+   "Present ENTRY so it remains readable after UI stops.
+
+Native scrollback keeps appended output, so the inline UI appends ENTRY at
+once; the fullscreen UI writes it to the normal screen when it leaves the
+alternate buffer, since anything shown inside that buffer vanishes with it."))
+
 (defgeneric terminal-ui--append-output (ui text display &key regions)
   (:documentation
    "Append plain TEXT and trusted styled DISPLAY to UI's transcript.

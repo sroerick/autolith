@@ -40,7 +40,9 @@ OFFSET and LENGTH locate the row's plain characters inside the chunk text."
    (welcome-tip :initform nil :accessor fullscreen-terminal-ui-welcome-tip
                 :documentation "Startup advice retained across welcome repaints and resize.")
    (welcome-p :initform nil :accessor terminal-ui-fullscreen-welcome-p :type boolean
-              :documentation "Whether the empty session shows the machine console panel."))
+              :documentation "Whether the empty session shows the machine console panel.")
+   (epilogue :initform nil :accessor fullscreen-terminal-ui-epilogue :type (option string)
+             :documentation "Rendered text written to the normal screen once the alternate buffer is left."))
   (:documentation "An alternate-screen transcript viewport and bottom-pinned composer."))
 
 (defmethod terminal-ui-fullscreen-p ((ui fullscreen-terminal-ui))
@@ -55,18 +57,24 @@ OFFSET and LENGTH locate the row's plain characters inside the chunk text."
 
 (-> terminal-ui-fullscreen-leave (fullscreen-terminal-ui) null)
 (defun terminal-ui-fullscreen-leave (ui)
-  "Leave only an owned alternate buffer and restore native state on every exit."
+  "Leave only an owned alternate buffer and restore native state on every exit.
+
+Any epilogue set through TERMINAL-UI-SET-EPILOGUE follows the restore
+sequence, so it lands in the normal screen where it stays readable."
   (when (fullscreen-terminal-ui-active-p ui)
     (unwind-protect
-         (progn
+         (let ((terminal (terminal-ui-terminal ui))
+               (epilogue (shiftf (fullscreen-terminal-ui-epilogue ui) nil)))
            (terminal--write
-            (terminal-ui-terminal ui)
+            terminal
             (concatenate
              'string
              (terminal-theme-leave-sequence *terminal-theme*)
              (format nil "~C[0m~C[?7h~C[?25h~C[?1006l~C[?1000l~C[?1049l"
                      #\Escape #\Escape #\Escape #\Escape #\Escape #\Escape)))
-           (terminal-flush (terminal-ui-terminal ui)))
+           (when epilogue
+             (terminal--write-safe-text terminal (format nil "~A~%" epilogue)))
+           (terminal-flush terminal))
       (let ((token (fullscreen-terminal-ui-platform-token ui)))
         (setf (fullscreen-terminal-ui-active-p ui) nil
               (fullscreen-terminal-ui-platform-token ui) nil)
@@ -464,6 +472,16 @@ lock, because copying and browser launches present notices of their own."
 
 
 ;;;; -- Presentation Transactions --
+
+(defmethod terminal-ui-set-epilogue ((ui fullscreen-terminal-ui) entry)
+  "Retain ENTRY's rendering for the normal screen; the alternate buffer would discard it."
+  (with-terminal-ui-locked (ui)
+    (setf (fullscreen-terminal-ui-epilogue ui)
+          (terminal--render-spans (terminal-ui-terminal ui)
+                                  (if (stringp entry)
+                                      (list (terminal-span ':plain entry))
+                                      entry))))
+  nil)
 
 (defmethod terminal-ui--append-output ((ui fullscreen-terminal-ui) text display &key regions)
   "Commit output through the same transaction as streamed live presentation."
