@@ -464,6 +464,11 @@
   "Run COMMAND through the POSIX shell."
   (list "/bin/sh" "-c" command))
 
+(defmethod platform-open-url ((platform posix-platform) url)
+  "Hand URL to the desktop launcher: open on macOS, xdg-open elsewhere."
+  (declare (ignore platform))
+  (platform--launch-quietly (list #+darwin "open" #-darwin "xdg-open" url)))
+
 
 ;;;; -- Local Sockets --
 

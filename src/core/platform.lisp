@@ -413,6 +413,26 @@ interrupt context and must do no more than record the event."))
   (:documentation
    "Return the program and arguments that run shell COMMAND on this host."))
 
+(defgeneric platform-open-url (platform url)
+  (:documentation
+   "Hand web URL to the host's default browser without waiting for it.
+
+Return true when the launcher started and NIL when it could not. Callers
+validate that URL is an http or https URL before asking."))
+
+(-> platform--launch-quietly (list) boolean)
+(defun platform--launch-quietly (command)
+  "Start COMMAND detached from this process's streams, reporting whether it began."
+  (handler-case
+      (progn
+        (uiop:launch-program command
+                             :input nil
+                             :output nil
+                             :error-output nil)
+        t)
+    (error ()
+      nil)))
+
 (defgeneric platform-source-check-command (platform source-root)
   (:documentation
    "Return the argv that runs the repository check for SOURCE-ROOT on this host."))

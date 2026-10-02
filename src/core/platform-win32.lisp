@@ -1486,6 +1486,11 @@ can omit. Bounded retries cover handles released just after a child process exit
   "Run COMMAND through native PowerShell in both sandboxed and full-access modes."
   (list "powershell.exe" "-NoProfile" "-NonInteractive" "-Command" command))
 
+(defmethod platform-open-url ((platform win32-platform) url)
+  "Hand URL to the shell's protocol handler, which opens the default browser."
+  (declare (ignore platform))
+  (platform--launch-quietly (list "rundll32.exe" "url.dll,FileProtocolHandler" url)))
+
 (defmethod platform-source-check-command ((platform win32-platform) source-root)
   "Run the PowerShell repository check script on Windows."
   (declare (ignore platform))
