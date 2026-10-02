@@ -369,9 +369,16 @@ notice preference is on, so enabling it mid-session takes effect immediately."
           (format nil "~4,'0D-~2,'0D-~2,'0D ~2,'0D:~2,'0D"
                   year month date hour minute)))))
 
-(-> application--limit-spans (string list) list)
-(defun application--limit-spans (fallback-label window)
-  "Return one rate limit WINDOW as an aligned transcript row with a usage bar."
+(-> application--limit-label (string list) string)
+(defun application--limit-label (fallback-label window)
+  "Return the row label naming rate limit WINDOW, using FALLBACK-LABEL if unsized."
+  (format nil "~A limit"
+          (application--window-label (getf window :window-minutes)
+                                     fallback-label)))
+
+(-> application--limit-spans (string list (integer 0)) list)
+(defun application--limit-spans (label window width)
+  "Return rate limit WINDOW as a usage bar row with LABEL padded to WIDTH."
   (let* ((used (min 100 (max 0 (getf window :used-percent))))
          (left (- 100 used))
          (cells 20)
@@ -379,12 +386,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
          (bar (concatenate 'string
                            (make-string filled :initial-element #\█)
                            (make-string (- cells filled) :initial-element #\░))))
-    (list (terminal-span :dim
-                         (format nil "  ~13A "
-                                 (format nil "~A limit"
-                                         (application--window-label
-                                          (getf window :window-minutes)
-                                          fallback-label))))
+    (list (terminal-span :dim (format nil "  ~vA " width label))
           (terminal-span :plain (format nil "[~A] ~D% left" bar (round left)))
           (terminal-span :dim
                          (format nil "~@[ (resets ~A)~]~%"
@@ -402,53 +404,43 @@ notice preference is on, so enabling it mid-session takes effect immediately."
   (let ((configuration (application-configuration application)))
     (append
      (list (terminal-span ':brand (format nil "settings~%")))
-     (application--field-spans "model"
-                               (config :model configuration))
-     (application--field-spans "effort"
-                               (config :reasoning-effort configuration))
-     (application--field-spans
-      "Codex fast"
-      (cond
-        ((configuration-codex-fast-mode-active-p configuration)
-         "on")
-        ((config :codex-fast-mode-p configuration)
-         "on (saved; inactive)")
-        (t
-         "off")))
-     (application--field-spans "web search"
-                               (config :web-search-mode configuration))
-     (application--field-spans
-      "trace"
-      (application--toggle-state
-       (application-reasoning-traces-p application)))
-     (application--field-spans
-      "timestamps"
-      (application--toggle-state
-       (application-turn-timestamps-p application)))
-     (application--field-spans
-      "cache misses"
-      (application--toggle-state
-       (application-cache-miss-notices-p application)))
-     (application--field-spans
-      "compact view"
-      (application--toggle-state
-       (application-compact-view-p application)))
-     (application--field-spans
-      "STE"
-      (application--toggle-state
-       (config :simple-technical-english-p configuration)))
-     (application--field-spans
-      "session titles"
-      (application--toggle-state
-       (config :session-title-generation-p configuration)))
-     (application--field-spans
-      "hurry-up"
-      (application--toggle-state
-       (application-hurry-up-p application)))
-     (application--field-spans
-      "permissions"
-      (application--permission-mode-name
-       (application-permission-mode application))))))
+     (application--field-rows
+      (list
+       (list "model" (config :model configuration))
+       (list "effort" (config :reasoning-effort configuration))
+       (list "Codex fast"
+             (cond
+               ((configuration-codex-fast-mode-active-p configuration)
+                "on")
+               ((config :codex-fast-mode-p configuration)
+                "on (saved; inactive)")
+               (t
+                "off")))
+       (list "web search" (config :web-search-mode configuration))
+       (list "trace"
+             (application--toggle-state
+              (application-reasoning-traces-p application)))
+       (list "timestamps"
+             (application--toggle-state
+              (application-turn-timestamps-p application)))
+       (list "cache misses"
+             (application--toggle-state
+              (application-cache-miss-notices-p application)))
+       (list "compact view"
+             (application--toggle-state
+              (application-compact-view-p application)))
+       (list "STE"
+             (application--toggle-state
+              (config :simple-technical-english-p configuration)))
+       (list "session titles"
+             (application--toggle-state
+              (config :session-title-generation-p configuration)))
+       (list "hurry-up"
+             (application--toggle-state
+              (application-hurry-up-p application)))
+       (list "permissions"
+             (application--permission-mode-name
+              (application-permission-mode application))))))))
 
 (-> application-status-entry (application) list)
 (defun application-status-entry (application)
@@ -456,78 +448,84 @@ notice preference is on, so enabling it mid-session takes effect immediately."
   (let* ((configuration (application-configuration application))
          (provider (application-provider application))
          (snapshot (and provider (provider-rate-limits provider)))
-         (usage (application--conversation-usage application)))
+         (usage (application--conversation-usage application))
+         (primary (getf snapshot :primary))
+         (secondary (getf snapshot :secondary))
+         (primary-label (and primary
+                             (application--limit-label "primary" primary)))
+         (secondary-label (and secondary
+                               (application--limit-label "weekly" secondary)))
+         (fields
+           (remove
+            nil
+            (list
+             (list "model"
+                   (format nil "~A (effort ~A)"
+                           (config :model configuration)
+                           (config :reasoning-effort configuration)))
+             (list "reasoning trace"
+                   (if (application-reasoning-traces-p application)
+                       "visible summaries"
+                       "hidden"))
+             (list "conversation"
+                   (conversation-identifier-display
+                    (conversation-identifier
+                     (application-conversation application))))
+             (list "workspace"
+                   (or (application--abbreviated-directory
+                        (namestring (config :working-directory configuration)))
+                       ""))
+             (list "path"
+                   (if (configuration-codex-fast-mode-active-p configuration)
+                       "fast (2x Codex plan usage)"
+                       "standard"))
+             (list "web search" (config :web-search-mode configuration))
+             (list "goal"
+                   (let ((goal (application-goal application)))
+                     (if goal
+                         (format nil "~(~A~): ~A"
+                                 (getf goal :status)
+                                 (getf goal :objective))
+                         "none")))
+             (list "token usage"
+                   (format nil "~A total (~A input + ~A output)"
+                           (application--token-count-description
+                            (getf usage :total))
+                           (application--token-count-description
+                            (getf usage :input))
+                           (application--token-count-description
+                            (getf usage :output))))
+             (and (getf usage :cache-seen-p)
+                  (list "prompt cache"
+                        (application--prompt-cache-description usage)))
+             (list "context"
+                   (let ((used (conversation-last-total-tokens
+                                (application-conversation application)))
+                         (window (config :context-window configuration)))
+                     (format nil "~A of ~A used (~D%), compacts at ~D%"
+                             (application--token-count-description used)
+                             (application--token-count-description window)
+                             (round (* 100 used) (max 1 window))
+                             (config :compaction-threshold-percent
+                                     configuration)))))))
+         (width
+           (application--field-label-width
+            (append (mapcar #'first fields)
+                    (remove nil (list primary-label secondary-label))))))
     (append
      (list (terminal-span :brand "autolith")
            (terminal-span :dim (format nil " v~A~%" *autolith-version*)))
-     (application--field-spans "model"
-                               (format nil "~A (effort ~A)"
-                                       (config :model configuration)
-                                       (config :reasoning-effort
-                                        configuration)))
-     (application--field-spans "reasoning trace"
-                               (if (application-reasoning-traces-p application)
-                                   "visible summaries"
-                                   "hidden"))
-     (application--field-spans "conversation"
-                               (conversation-identifier-display
-                                (conversation-identifier
-                                 (application-conversation application))))
-     (application--field-spans "workspace"
-                               (or (application--abbreviated-directory
-                                    (namestring
-                                     (config :working-directory
-                                      configuration)))
-                                   ""))
-     (application--field-spans
-      "path"
-      (if (configuration-codex-fast-mode-active-p configuration)
-          "fast (2x Codex plan usage)"
-          "standard"))
-     (application--field-spans "web search"
-                               (config :web-search-mode configuration))
-     (application--field-spans "goal"
-                               (let ((goal (application-goal application)))
-                                 (if goal
-                                     (format nil "~(~A~): ~A"
-                                             (getf goal :status)
-                                             (getf goal :objective))
-                                     "none")))
-     (application--field-spans "token usage"
-                               (format nil "~A total (~A input + ~A output)"
-                                       (application--token-count-description
-                                        (getf usage :total))
-                                       (application--token-count-description
-                                        (getf usage :input))
-                                       (application--token-count-description
-                                        (getf usage :output))))
-     (if (getf usage :cache-seen-p)
-         (application--field-spans
-          "prompt cache"
-          (application--prompt-cache-description usage))
-         nil)
-     (application--field-spans
-      "context"
-      (let ((used (conversation-last-total-tokens
-                   (application-conversation application)))
-            (window (config :context-window configuration)))
-        (format nil "~A of ~A used (~D%), compacts at ~D%"
-                (application--token-count-description used)
-                (application--token-count-description window)
-                (round (* 100 used) (max 1 window))
-                (config :compaction-threshold-percent configuration))))
+     (application--field-rows fields :width width)
      (cond
        ((null snapshot)
         (list (terminal-span :dim
                              "  No rate limit data yet; send a message first.")))
        (t
         (append
-         (let ((primary (getf snapshot :primary)))
-           (when primary
-             (application--limit-spans "primary" primary)))
-         (let ((secondary (getf snapshot :secondary)))
-           (when secondary
-             (application--limit-spans "weekly" secondary)))))))))
+         (when primary
+           (application--limit-spans primary-label primary width))
+         (when secondary
+           (application--limit-spans secondary-label secondary width))))))))
 
 
 ;;;; -- Interactive Pickers --

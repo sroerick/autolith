@@ -2065,11 +2065,30 @@ command replaced the active conversation."
          (tool-compact-result-visible-p tool))))
 
 
-(-> application--field-spans (string string) list)
-(defun application--field-spans (label value)
-  "Return one aligned dim LABEL and plain VALUE line as transcript spans."
-  (list (terminal-span :dim (format nil "  ~13A " label))
+(-> application--field-label-width (list) (integer 0))
+(defun application--field-label-width (labels)
+  "Return the label column width fitting every string in LABELS."
+  (loop for label in labels
+        maximize (length label)))
+
+(-> application--field-spans (string string (integer 0)) list)
+(defun application--field-spans (label value width)
+  "Return one dim LABEL padded to WIDTH and its plain VALUE line as spans."
+  (list (terminal-span :dim (format nil "  ~vA " width label))
         (terminal-span :plain (format nil "~A~%" value))))
+
+(-> application--field-rows (list &key (:width (option (integer 0)))) list)
+(defun application--field-rows (fields &key width)
+  "Return FIELDS, a list of (LABEL VALUE) pairs, as aligned transcript spans.
+
+NIL entries are skipped so callers can include conditional rows. The label
+column is WIDTH cells, or otherwise wide enough for the longest label present."
+  (let* ((present (remove nil fields))
+         (width (or width
+                    (application--field-label-width
+                     (mapcar #'first present)))))
+    (loop for (label value) in present
+          append (application--field-spans label value width))))
 
 (-> web-search-call-detail (json-object) string)
 (defun web-search-call-detail (item)
