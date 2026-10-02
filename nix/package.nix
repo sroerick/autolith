@@ -276,8 +276,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "cl-termdown";
-      rev = "f54cd93e3e39390d056752cfc17d7396073b38e7";
-      hash = "sha256-Xv3SIJxzOJc68KpUI3sAFG0ZyNTe6Ee5KYkYSmJXZSQ=";
+      rev = "314723383fcf2f5c05c5f35000fb1549c44058a2";
+      hash = "sha256-EgOQ4qhcoCooxfiToXuIX4iIT5b74IlEzuXbCScG/Gw=";
     };
     lispLibs = with pkgs.sbclPackages; [
       clinedi
@@ -385,6 +385,18 @@ let
       rev = "408fa906e2d16aa515b39c943d3affcab3811ffc";
       hash = "sha256-r4bCQHHVOC8peLofhzh0m8Y2vuu/uaaT/oOwAB8TaXQ=";
     };
+  };
+
+  sophisticatedClipboard = pkgs.sbcl.buildASDFSystem {
+    pname = "sophisticated-clipboard";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "luciusmagn";
+      repo = "sophisticated-clipboard";
+      rev = "f4fb761c233b8599d1f9f572281bced26c114e82";
+      hash = "sha256-diSL+fjK7WqzWTBjGK0W9zD04iIPQO+tIugn6vzW0n8=";
+    };
+    lispLibs = with pkgs.sbclPackages; [ flexi-streams ];
   };
 
   sbclGenerations = pkgs.sbcl.buildASDFSystem {
@@ -531,6 +543,7 @@ let
       sbclWorkers
       sexpConfig
       sexpStore
+      sophisticatedClipboard
       structlisp
     ];
     nativeBuildInputs = [ pkgs.git ];
