@@ -680,6 +680,7 @@
   test-application-lisp-evaluation
   test-application-restart-debugger
   test-application-debugger-recoveries
+  test-application-debugger-diagnosis
   test-application-debugger-modal-recoveries
   test-application-lisp-activity
   test-application-lisp-input-routing

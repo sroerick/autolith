@@ -846,6 +846,38 @@
      "debugger metadata normalizes absent source and reaches the live selector"))
   nil)
 
+(-> test-application-debugger-diagnosis () null)
+(defun test-application-debugger-diagnosis ()
+  "Test a real debugger diagnosis thread with a scripted agent response."
+  (with-test-configuration (configuration)
+    (let ((session (lisp-machine-tests--debugger-session)))
+      (test-call-with-function-replacements
+       (list
+        (list 'provider-create
+              (lambda (&rest ignored)
+                (declare (ignore ignored))
+                nil))
+        (list 'agent-create
+              (lambda (&rest ignored)
+                (declare (ignore ignored))
+                nil))
+        (list 'agent-run-user-turn
+              (lambda (&rest arguments)
+                (let ((observer (getf (member :observer arguments) :observer)))
+                  (agent-observer-text observer "Scripted diagnosis.")))))
+       (lambda ()
+         (application-debugger-start-diagnosis session configuration)
+         (join-thread (application-debugger-diagnosis-thread session))))
+      (let ((status (application-debugger-poll session)))
+        (test-assert (and (eq (getf status :state) ':complete)
+                          (string= (getf status :explanation)
+                                   "Scripted diagnosis."))
+                     "a scripted diagnosis completes with its explanation")
+        (test-assert (null (getf status :failure))
+                     "a completed diagnosis has no failure"))))
+  nil)
+
+
 (-> test-application-debugger-modal-recoveries () null)
 (defun test-application-debugger-modal-recoveries ()
   "Test stable modal recovery choices and diagnosis cancellation."
