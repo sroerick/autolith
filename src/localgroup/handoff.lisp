@@ -585,35 +585,6 @@ detach is immediate and never interrupts session work."
         (return nil))
       (sleep 0.05))))
 
-(-> localgroup-handoff--process-pairs () list)
-(defun localgroup-handoff--process-pairs ()
-  "Return best-effort process PID and parent-PID pairs from the host."
-  (handler-case
-      (let ((output
-              (uiop:run-program
-               '("ps" "-ax" "-o" "pid=" "-o" "ppid=")
-               :output ':string
-               :ignore-error-status t)))
-        (loop for line in (uiop:split-string output :separator '(#\Newline))
-              for fields =
-                (remove ""
-                        (uiop:split-string line :separator '(#\Space #\Tab))
-                        :test #'string=)
-              when (= (length fields) 2)
-                collect (cons (parse-integer (first fields))
-                              (parse-integer (second fields)))))
-    (error () nil)))
-
-(-> localgroup-handoff--descendant-pids (integer list) list)
-(defun localgroup-handoff--descendant-pids (root-pid pairs)
-  "Return ROOT-PID's descendants ordered deepest first."
-  (labels ((collect-children (parent)
-             "Return PARENT's recursive descendants with children first."
-             (loop for (pid . parent-pid) in pairs
-                   when (= parent-pid parent)
-                     append (append (collect-children pid) (list pid)))))
-    (remove-duplicates (collect-children root-pid) :test #'=)))
-
 (-> localgroup-handoff--signal-pid (integer boolean) null)
 (defun localgroup-handoff--signal-pid (pid force-p)
   "Best-effort terminate PID or process group -PID, forcibly when FORCE-P."
@@ -759,7 +730,6 @@ detach is immediate and never interrupts session work."
     (loop
       (let* ((now (get-internal-real-time))
              (force-p (>= now kill-at))
-             (pairs (localgroup-handoff--process-pairs))
              (launcher-pid
                (localgroup-handoff--plain-pid-at
                 (localgroup-handoff--launcher-pid-pathname handoff-pathname)))
@@ -768,9 +738,7 @@ detach is immediate and never interrupts session work."
         (when root-pid
           (setf known-pids
                 (remove-duplicates
-                 (append
-                  (localgroup-handoff--descendant-pids root-pid pairs)
-                  known-pids)
+                 (append (descendant-process-ids root-pid) known-pids)
                  :test #'=)))
         (when launcher-pid
           (localgroup-handoff--signal-pid launcher-pid force-p)

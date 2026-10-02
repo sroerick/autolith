@@ -843,6 +843,8 @@
   (:import-from #:ls-compat.files
                 #:publish-file
                 #:publish-pathname)
+  (:import-from #:ls-compat.posix
+                #:descendant-process-ids)
   (:import-from #:ls-flock
                 #:call-with-file-lock
                 #:file-lock-busy
