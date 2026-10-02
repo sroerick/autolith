@@ -675,6 +675,37 @@
   nil)
 
 
+(-> test-checkpoint-backend-selection () null)
+(defun test-checkpoint-backend-selection ()
+  "Test restart-only checkpoint construction and unsupported-host refusal."
+  (with-test-configuration (configuration)
+    (let ((supports-p (symbol-function 'platform-supports-p)))
+      (dolist (restart-p '(t nil))
+        (test-call-with-function-replacements
+         (list
+          (list 'platform-supports-p
+                (lambda (platform capability)
+                  (case capability
+                    (:restartable-image-saver restart-p)
+                    (:forked-image-saver nil)
+                    (otherwise
+                     (funcall supports-p platform capability))))))
+         (lambda ()
+           (if restart-p
+               (test-assert
+                (typep (checkpoint-backend-create configuration nil)
+                       'sbcl-generations:restart-checkpoint-backend)
+                "a restart-only host constructs the exact-heap checkpoint backend")
+               (test-assert
+                (handler-case
+                    (progn
+                      (checkpoint-backend-create configuration nil)
+                      nil)
+                  (platform-capability-unavailable ()
+                    t))
+                "a host without a checkpoint capability is refused")))))))
+  nil)
+
 (-> test-generation-manifest () null)
 (defun test-generation-manifest ()
   "Test generation publication, loading, selection, and compatibility checks."

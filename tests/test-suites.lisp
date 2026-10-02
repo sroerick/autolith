@@ -369,6 +369,7 @@
   test-self-define-alias)
 
 (define-test-suite generation
+  test-checkpoint-backend-selection
   test-generation-manifest
   test-crash-capsule-correlation)
 

@@ -627,6 +627,7 @@
                 #:generation-temporary-core-pathname
                 #:make-checkpoint-backend
                 #:make-generation-store
+                #:make-restart-checkpoint-backend
                 #:make-sbcl-core-probe-runner)
   (:import-from #:sexp-config
                 #:make-source-grammar
