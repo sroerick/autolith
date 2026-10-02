@@ -195,7 +195,9 @@
  :description "Grok subscription"
  :family ':grok
  :protocol ':responses
- :models '((:name "grok-4.6" :context-window 500000)
+ :models '((:name "grok-4.7" :context-window 500000
+            :reasoning-efforts ("low" "medium" "high" "xhigh"))
+           (:name "grok-4.6" :context-window 500000)
            (:name "grok-4.5" :context-window 500000))
  :factory #'provider--grok-registration-factory
  :source ':builtin)

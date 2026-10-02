@@ -5,7 +5,7 @@
 (-> grok-provider-test--configuration () configuration)
 (defun grok-provider-test--configuration ()
   "Return an isolated configuration selecting the Grok model."
-  (configuration-copy (test-configuration) :model "grok-4.5"))
+  (configuration-copy (test-configuration) :model "grok-4.7"))
 
 
 (-> grok-provider-test--item-normalization () null)
@@ -64,11 +64,17 @@
                     (provider-request-object provider conversation (json-array)))
                   (tools (json-get request "tools")))
             (test-assert
-             (string= (json-get request "model") "grok-4.5")
+             (string= (json-get request "model") "grok-4.7")
              "Grok requests select the configured model")
-            (test-assert
-             (string= (json-get (json-get request "reasoning") "effort") "high")
-             "Grok requests select the configured reasoning effort")
+             (dolist (effort '("low" "medium" "high" "xhigh"))
+               (let* ((selected (configuration-copy configuration
+                                                    :reasoning-effort effort))
+                      (request
+                        (provider-request-object
+                         (grok-provider-create selected) conversation (json-array))))
+                 (test-assert
+                  (string= (json-get (json-get request "reasoning") "effort") effort)
+                  "Grok 4.7 requests preserve each supported reasoning effort")))
             (test-assert
              (eq (json-get request "parallel_tool_calls") false)
              "Grok requests disable parallel tool calls")
@@ -135,7 +141,7 @@
             (lambda ()
               (provider-open-response-stream
                provider
-               (json-object "model" "grok-4.5")
+               (json-object "model" "grok-4.7")
                :credentials credentials
                :conversation conversation)))
            (flet ((header (name)
@@ -152,8 +158,10 @@
              (test-assert (string= (header "x-authenticateresponse")
                                    "authenticate-response")
                           "the Grok transport requests authenticated responses")
-             (test-assert (string= (header "x-grok-model-override") "grok-4.5")
+             (test-assert (string= (header "x-grok-model-override") "grok-4.7")
                           "the Grok transport pins the requested model")
+             (test-assert (string= (header "x-grok-agent-id") "autolith")
+                          "the Grok transport identifies Autolith to the proxy")
              (test-assert (string= (header "x-grok-client-version")
                                    *grok-client-protocol-version*)
                           "the Grok transport passes the proxy version gate")

@@ -843,7 +843,7 @@
                         "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
                   (mapcar (lambda (entry) (getf entry ':name))
                           *gemini-code-assist-models*)
-                  (list "grok-4.6" "grok-4.5" "accounts/fireworks/models/kimi-k3"
+                  (list "grok-4.7" "grok-4.6" "grok-4.5" "accounts/fireworks/models/kimi-k3"
                         "accounts/fireworks/models/qwen3p7-plus" "claude-opus-5"
                         "claude-sonnet-5" "claude-haiku-4-5-20251001")))
                 (model-identifiers (provider-model-identifiers))

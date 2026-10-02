@@ -1146,9 +1146,11 @@ default; an explicit or environment model that fails validation signals."
 
 (-> configuration-grok-wire-effort (configuration) string)
 (defun configuration-grok-wire-effort (configuration)
-  "Return the Grok provider effort, clamped to the low, medium, high scale."
+  "Return the Grok effort, preserving Grok 4.7's four-level reasoning scale."
   (let ((effort (config :reasoning-effort configuration)))
     (cond
+      ((string= (config :model configuration) "grok-4.7")
+       effort)
       ((member effort '("none" "low") :test #'string=)
        "low")
       ((string= effort "medium")
