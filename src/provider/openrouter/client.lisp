@@ -10,6 +10,9 @@
     ("X-OpenRouter-Title" . "Autolith"))
   "The non-secret OpenRouter attribution headers sent with provider requests.")
 
+(defparameter *openrouter-models-without-reasoning* (make-hash-table :test #'equal)
+  "Cached set of OpenRouter models that lack reasoning support.")
+
 (-> openrouter--model-name (non-empty-string) non-empty-string)
 (defun openrouter--model-name (wire-name)
   "Return the user-visible OpenRouter model name for WIRE-NAME."
@@ -121,9 +124,6 @@
      "max")
     (t
      effort)))
-
-(defparameter *openrouter-models-without-reasoning* (make-hash-table :test #'equal)
-  "Cached set of OpenRouter models that lack reasoning support.")
 
 (-> openrouter--model-supports-reasoning-p (non-empty-string) boolean)
 (defun openrouter--model-supports-reasoning-p (model-id)
