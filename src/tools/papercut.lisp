@@ -25,9 +25,12 @@
 ;;;; -- Tool Executions --
 
 (defmethod tool-conversation-persistence ((tool papercut-report-tool))
-  "Keep papercut calls and results only through the next provider response."
+  "Keep papercut calls and their short acknowledgements in the conversation.
+
+The acknowledgement is what stops the model from filing the same report again
+after later responses and compaction, so it must outlive the next response."
   (declare (ignore tool))
-  ':next-response)
+  ':durable)
 
 (defmethod tool-compact-result-visible-p ((tool papercut-report-tool))
   "Keep every successful papercut report visible in compact presentation."

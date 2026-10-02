@@ -263,32 +263,9 @@
                           "papercut.report acknowledges with an identifier without echoing the body")
              (test-assert (and tool
                                (eq (tool-conversation-persistence tool)
-                                   ':next-response)
+                                   ':durable)
                                (tool-compact-result-visible-p tool))
-                          "papercut reports are request-local and remain visible in compact mode")
-             (let ((conversation-path (conversation-pathname conversation)))
-               (when (probe-file conversation-path)
-                 (delete-file conversation-path))
-               (conversation-append-provider-item
-                conversation
-                (json-object
-                 "type" "function_call"
-                 "call_id" "papercut-call"
-                 "name" "papercut.report"
-                 "arguments"
-                 (json-encode
-                  (json-object "title" "Private title"
-                               "content" "Private diagnostic body")))
-                :persistence ':next-response)
-               (conversation-append-tool-result
-                conversation
-                "papercut-call"
-                :tool-name "papercut.report"
-                :output (tool-result-content result)
-                :success-p t
-                :persistence ':next-response)
-               (test-assert (not (probe-file conversation-path))
-                            "papercut calls and results stay out of conversation files"))
+                          "papercut reports stay in the conversation and remain visible in compact mode")
              (let* ((record
                       (list :tool-result
                             :tool "papercut.report"
