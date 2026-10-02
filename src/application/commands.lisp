@@ -1545,25 +1545,18 @@ are forwarded to TERMINAL-UI-SELECT."
       (unless items
         (application-present application empty-notice)
         (return nil))
-      (labels ((pick ()
-                 "Run the modal selector with sole ownership of terminal input."
-                 (terminal-ui-select
-                  ui
-                  :title title
-                  :items items
-                  :hint hint
-                  :visible-count visible-count
-                  :initial-name initial-name
-                  :initial-value initial-value
-                  :search-p search-p
-                  :search-key search-key
-                  :on-event on-event
-                  :resize-callback #'application-pending-terminal-size)))
-        (let ((controller (application-input-controller application)))
-          (if controller
-              (application-input-controller-call-with-reader-paused
-               controller #'pick)
-              (pick)))))))
+      (terminal-ui-select
+       ui
+       :title title
+       :items items
+       :hint hint
+       :visible-count visible-count
+       :initial-name initial-name
+       :initial-value initial-value
+       :search-p search-p
+       :search-key search-key
+       :on-event on-event
+       :resize-callback #'application-pending-terminal-size))))
 
 
 (-> application--conversation-delete-confirm-items (list) list)

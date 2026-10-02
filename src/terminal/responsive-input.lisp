@@ -3134,6 +3134,8 @@ sandbox grant is revalidated at this final authorization boundary."
                "Command approval is required, but no interactive terminal owns this session. Attach a controlling terminal or choose an explicit permission mode; the command was not run."
                :command command
                :directory directory))
+      ;; Authorization always pauses the reader explicitly: immediate work on
+      ;; the reader thread is refused a modal instead of blocking input there.
       (let* ((sandbox-available-p
                (application--command-sandbox-available-p))
              (choice
@@ -3235,6 +3237,8 @@ sandbox grant is revalidated at this final authorization boundary."
                    ui
                    (terminal-interactive-p (terminal-ui-terminal ui)))
         (return ':deny))
+      ;; Authorization always pauses the reader explicitly: immediate work on
+      ;; the reader thread is refused a modal instead of blocking input there.
       (let ((choice
               (application-input-controller-call-with-reader-paused
                controller
