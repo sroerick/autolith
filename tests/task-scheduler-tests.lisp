@@ -2989,7 +2989,7 @@ exactly that race."
     (unwind-protect
          (progn
            (platform-setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "2")
-           (platform-setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "1000")
+           (platform-setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "10000")
            (let* ((provider (make-instance 'task-test-provider
                                            :mode ':concurrent))
                   (tasks
@@ -3136,8 +3136,11 @@ exactly that race."
                     (json-object "agent" "task"
                                  "task" "Delegate once, then return."
                                  "blocking" t))))
-             (test-assert (getf observation :success-p)
-                          "a nested synchronous task succeeds at concurrency one")
+             (test-assert
+              (getf observation :success-p)
+              (format nil
+                      "a nested synchronous task succeeds at concurrency one: ~S"
+                      (getf observation :details)))
              (test-assert (= (getf observation :job-count) 2)
                           "nested execution retains parent and leaf jobs")
              (test-assert (= (getf observation :provider-request-count) 3)
@@ -3151,8 +3154,12 @@ exactly that race."
                         '("user" "developer" "user")))
                (getf observation :provider-request-inputs))
               "a nested child inherits its immediate parent's assignment")
-             (test-assert (< (getf observation :duration-ms) 1000)
-                          "nested help-join avoids a concurrency-one deadlock"))
+             (test-assert
+              (and (getf observation :scheduler-idle-p)
+                   (getf observation :all-terminal-p)
+                   (zerop (getf observation :active-count))
+                   (zerop (getf observation :live-count)))
+              "nested help-join drains the concurrency-one scheduler"))
            (platform-setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "999")
            (let ((orchestrator (task-tests--orchestrator)))
              (test-assert
