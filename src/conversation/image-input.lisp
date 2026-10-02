@@ -438,15 +438,6 @@ format is identified from the leading bytes alone."
     (t
      (error "Unsupported decoded image representation ~S." (type-of image)))))
 
-(-> image-input--temporary-pathname (pathname string) pathname)
-(defun image-input--temporary-pathname (target identifier)
-  "Return a private temporary pathname beside TARGET for IDENTIFIER."
-  (make-pathname :name (format nil ".~A.~A"
-                               (pathname-name target)
-                               identifier)
-                 :type "tmp"
-                 :defaults target))
-
 (-> image-input--publish
     (pathname pathname keyword integer integer string)
     image-attachment)
@@ -468,38 +459,36 @@ format is identified from the leading bytes alone."
                         (:jpeg "image/jpeg")))
            (target (merge-pathnames
                     (make-pathname :name identifier :type extension)
-                    artifact-root))
-           (temporary (image-input--temporary-pathname target identifier)))
+                    artifact-root)))
       (ensure-directories-exist target)
       (platform-make-private *platform* artifact-root)
-      (unwind-protect
-           (handler-case
-               (progn
-                 (if preserve-p
-                     (progn
-                       (image-input--decoded-image source format)
-                       (uiop:copy-file source temporary))
-                     (let* ((decoded (image-input--decoded-image source format))
-                            (resized
-                              (if (and (= width target-width)
-                                       (= height target-height))
-                                  decoded
-                                  (resize-image decoded
-                                                target-height target-width
-                                                :interpolate ':bilinear))))
-                       (write-png-file temporary
-                                       (image-input--8-bit-image resized))))
-                 (uiop:rename-file-overwriting-target temporary target)
-                 (platform-make-private *platform* target :read-only-p t))
-             (image-input-error (condition)
-               (error condition))
-             (error (condition)
-               (image-input--error
-                source ':persistence
-                (format nil "Image ~A could not be stored: ~A" source condition)
-                condition)))
-        (when (probe-file temporary)
-          (delete-file temporary)))
+      (handler-case
+          (progn
+            (publish-pathname
+             target
+             (lambda (temporary)
+               (if preserve-p
+                   (progn
+                     (image-input--decoded-image source format)
+                     (uiop:copy-file source temporary))
+                   (let* ((decoded (image-input--decoded-image source format))
+                          (resized
+                            (if (and (= width target-width)
+                                     (= height target-height))
+                                decoded
+                                (resize-image decoded
+                                              target-height target-width
+                                              :interpolate ':bilinear))))
+                     (write-png-file temporary
+                                     (image-input--8-bit-image resized))))))
+            (platform-make-private *platform* target :read-only-p t))
+        (image-input-error (condition)
+          (error condition))
+        (error (condition)
+          (image-input--error
+           source ':persistence
+           (format nil "Image ~A could not be stored: ~A" source condition)
+           condition)))
       (make-instance 'image-attachment
                      :identifier identifier
                      :pathname target
@@ -532,17 +521,13 @@ format is identified from the leading bytes alone."
           (let* ((identifier (make-identifier))
                  (target (merge-pathnames
                           (make-pathname :name identifier :type "webp")
-                          artifact-root))
-                 (temporary (image-input--temporary-pathname target identifier)))
+                          artifact-root)))
             (ensure-directories-exist target)
             (platform-make-private *platform* artifact-root)
-            (unwind-protect
-                 (progn
-                   (uiop:copy-file absolute temporary)
-                   (uiop:rename-file-overwriting-target temporary target)
-                   (platform-make-private *platform* target :read-only-p t))
-              (when (probe-file temporary)
-                (delete-file temporary)))
+            (publish-pathname target
+                              (lambda (temporary)
+                                (uiop:copy-file absolute temporary)))
+            (platform-make-private *platform* target :read-only-p t)
             (make-instance 'image-attachment
                            :identifier identifier
                            :pathname target

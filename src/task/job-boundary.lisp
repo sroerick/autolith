@@ -391,33 +391,16 @@
 (-> run-job-write-result-atomically ((or pathname string) list) pathname)
 (defun run-job-write-result-atomically (pathname result)
   "Serialize, flush, and atomically install RESULT at PATHNAME."
-  (let* ((target (pathname pathname))
-         (directory (uiop:pathname-directory-pathname target)))
-    (ensure-directories-exist target)
-    (let ((temporary
-            (merge-pathnames
-             (format nil ".~A.~A.tmp"
-                     (or (pathname-name target) "result") (make-identifier))
-             directory)))
-      (unwind-protect
-           (progn
-             (with-open-file (stream temporary
-                                    :direction ':output
-                                    :if-exists ':error
-                                    :if-does-not-exist ':create
-                                    :external-format ':utf-8)
-               (let ((*print-readably* nil)
-                     (*print-escape* t)
-                     (*print-array* nil)
-                     (*print-circle* nil)
-                     (*print-pretty* t))
-                 (write result :stream stream)
-                 (terpri stream)
-                 (finish-output stream)))
-             (uiop:rename-file-overwriting-target temporary target)
-             target)
-        (when (probe-file temporary)
-          (delete-file temporary))))))
+  (publish-file
+   (pathname pathname)
+   (lambda (stream)
+     (let ((*print-readably* nil)
+           (*print-escape* t)
+           (*print-array* nil)
+           (*print-circle* nil)
+           (*print-pretty* t))
+       (write result :stream stream)
+       (terpri stream)))))
 
 (-> run-job-headless-command-authorization
     (application keyword run-job-request)

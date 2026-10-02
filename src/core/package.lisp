@@ -840,6 +840,9 @@
                 #:sbcl-worker-start
                 #:sbcl-worker-stop
                 #:sbcl-worker-used-image-identifier)
+  (:import-from #:ls-compat.files
+                #:publish-file
+                #:publish-pathname)
   (:import-from #:ls-flock
                 #:call-with-file-lock
                 #:file-lock-busy

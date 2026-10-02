@@ -1424,21 +1424,7 @@ Files the system withholds from this image through :IF-FEATURE are left out."
 (-> source--atomic-write (pathname string) pathname)
 (defun source--atomic-write (pathname content)
   "Atomically replace PATHNAME with CONTENT through a sibling temporary file."
-  (let ((temporary
-          (merge-pathnames
-           (format nil ".~A.~D.tmp"
-                   (pathname-name pathname)
-                   (sb-posix:getpid))
-           (uiop:pathname-directory-pathname pathname))))
-    (with-open-file (stream temporary
-                            :direction ':output
-                            :if-exists ':supersede
-                            :if-does-not-exist ':create
-                            :external-format ':utf-8)
-      (write-string content stream)
-      (finish-output stream))
-    (uiop:rename-file-overwriting-target temporary pathname)
-    pathname))
+  (publish-file pathname content))
 
 (-> source-replace-definition (pathname string) (values string string))
 (defun source-replace-definition (pathname definition-source)

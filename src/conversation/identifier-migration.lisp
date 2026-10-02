@@ -311,36 +311,22 @@
 (defun conversation-identifier-migration--write-forms
     (pathname forms &key write-date)
   "Atomically replace PATHNAME with readable top-level FORMS."
-  (let ((temporary
-          (merge-pathnames
-           (make-pathname
-            :name (format nil ".~A.~D" (or (pathname-name pathname) "state")
-                          (sb-posix:getpid))
-            :type "tmp")
-           (uiop:pathname-directory-pathname pathname))))
-    (ensure-directories-exist pathname)
-    (unwind-protect
-         (progn
-           (with-open-file (stream temporary
-                                   :direction ':output
-                                   :if-exists ':supersede
-                                   :if-does-not-exist ':create
-                                   :external-format ':utf-8)
-             (with-standard-io-syntax
-               (let ((*print-readably* t)
-                     (*print-pretty* t)
-                     (*print-circle* t))
-                 (dolist (form forms)
-                   (prin1 form stream)
-                   (terpri stream))))
-             (finish-output stream))
-           (platform-make-private *platform* temporary)
-           (uiop:rename-file-overwriting-target temporary pathname)
-           (when write-date
-             (conversation-identifier-migration--write-date pathname write-date))
-           pathname)
-      (when (probe-file temporary)
-        (delete-file temporary)))))
+  (publish-file
+   pathname
+   (lambda (stream)
+     (with-standard-io-syntax
+       (let ((*print-readably* t)
+             (*print-pretty* t)
+             (*print-circle* t))
+         (dolist (form forms)
+           (prin1 form stream)
+           (terpri stream)))))
+   :prepare-function
+   (lambda (temporary)
+     (platform-make-private *platform* temporary)))
+  (when write-date
+    (conversation-identifier-migration--write-date pathname write-date))
+  pathname)
 
 (-> conversation-identifier-migration--read-forms (pathname) list)
 (defun conversation-identifier-migration--read-forms (pathname)
@@ -360,49 +346,38 @@
 The durable log may contain a very large conversation. Processing one top-level
 form at a time keeps migration stack-safe while preserving readable arrays and
 shared structure. An incomplete final form remains ignored, as in log-read."
-  (let ((temporary
-          (merge-pathnames
-           (make-pathname
-            :name (format nil ".~A.~D" (or (pathname-name target) "state")
-                          (sb-posix:getpid))
-            :type "tmp")
-           (uiop:pathname-directory-pathname target)))
-        (changed-p nil))
-    (ensure-directories-exist target)
-    (unwind-protect
-         (progn
-           (with-open-file (input source :direction ':input :external-format ':utf-8)
-             (with-open-file (output temporary
-                                     :direction ':output
-                                     :if-exists ':supersede
-                                     :if-does-not-exist ':create
-                                     :external-format ':utf-8)
-               (with-standard-io-syntax
-                 (let ((*print-readably* t)
-                       (*print-pretty* t)
-                       (*print-circle* t)
-                       (*read-eval* nil)
-                       (end-marker (cons nil nil)))
-                   (loop for form = (handler-case
-                                        (read input nil end-marker)
-                                      (end-of-file () end-marker))
-                         until (eq form end-marker)
-                         do (let ((rewritten
-                                   (conversation-identifier-migration--rewrite-value
-                                    form entries)))
-                              (unless (equalp form rewritten)
-                                (setf changed-p t))
-                              (prin1 rewritten output)
-                              (terpri output)))))
-               (finish-output output)))
-           (when (or changed-p (not (equal source target)))
-             (platform-make-private *platform* temporary)
-             (uiop:rename-file-overwriting-target temporary target)
-             (when write-date
-               (conversation-identifier-migration--write-date target write-date)))
-           changed-p)
-      (when (probe-file temporary)
-        (delete-file temporary)))))
+  (let ((changed-p nil))
+    (publish-file
+     target
+     (lambda (output)
+       (with-open-file (input source :direction ':input :external-format ':utf-8)
+         (with-standard-io-syntax
+           (let ((*print-readably* t)
+                 (*print-pretty* t)
+                 (*print-circle* t)
+                 (*read-eval* nil)
+                 (end-marker (cons nil nil)))
+             (loop for form = (handler-case
+                                  (read input nil end-marker)
+                                (end-of-file () end-marker))
+                   until (eq form end-marker)
+                   do (let ((rewritten
+                              (conversation-identifier-migration--rewrite-value
+                               form entries)))
+                        (unless (equalp form rewritten)
+                          (setf changed-p t))
+                        (prin1 rewritten output)
+                        (terpri output)))))))
+     :publish-function
+     (lambda (temporary final)
+       ;; An unchanged file rewritten onto itself keeps its current content;
+       ;; the temporary is still cleaned up by the publication.
+       (when (or changed-p (not (equal source final)))
+         (platform-make-private *platform* temporary)
+         (platform-replace-file *platform* temporary final)
+         (when write-date
+           (conversation-identifier-migration--write-date final write-date)))))
+    changed-p))
 
 (-> conversation-identifier-migration--file-needs-rewrite-p (pathname list) boolean)
 (defun conversation-identifier-migration--file-needs-rewrite-p (pathname entries)

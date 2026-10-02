@@ -175,24 +175,12 @@
              :message "skill.edit content must be a string no larger than 262144 characters."))
     (skill-edit-tool--validate configuration name content)
     (let* ((pathname (merge-pathnames (format nil "~A/SKILL.md" name) root))
-           (native (make-pathname :type "sexp" :defaults pathname))
-           (temporary (merge-pathnames (format nil ".skill-~A.tmp" (make-identifier))
-                                      (uiop:pathname-directory-pathname pathname))))
+           (native (make-pathname :type "sexp" :defaults pathname)))
       (when (probe-file native)
         (error 'tool-error :tool-name "skill.edit"
                :message (format nil "Edit the native skill at ~A instead; it takes precedence over SKILL.md."
                                 native)))
-      (ensure-directories-exist pathname)
-      (unwind-protect
-           (progn
-             (with-open-file (stream temporary :direction ':output
-                                               :if-does-not-exist ':create
-                                               :if-exists ':error
-                                               :external-format ':utf-8)
-               (write-string content stream))
-             (uiop:rename-file-overwriting-target temporary pathname))
-        (when (probe-file temporary)
-          (delete-file temporary)))
+      (publish-file pathname content)
       (make-instance 'tool-result
                      :success-p t
                      :content (format nil "Validated and wrote global skill ~A at ~A."

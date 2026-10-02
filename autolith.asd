@@ -23,6 +23,7 @@
                #:clinedi
                (:feature (:not :win32) #:clinedi/posix)
                (:feature :win32 #:clinedi/win32)
+               #:ls-compat/files
                #:ls-compat/posix
                #:clingon
                #:colorlisp

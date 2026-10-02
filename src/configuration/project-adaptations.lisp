@@ -281,42 +281,29 @@ discarded or obsolete candidates.
 (-> project-adaptation-notes-create (pathname) pathname)
 (defun project-adaptation-notes-create (project-root)
   "Create PROJECT-ROOT's AUTOLITH.org without replacing an existing file."
-  (let* ((pathname (workspace-autolith-notes-path project-root))
-         (temporary
-           (merge-pathnames
-            (format nil ".AUTOLITH.org.~D.~D.tmp"
-                    (sb-posix:getpid)
-                    (random most-positive-fixnum))
-            project-root)))
+  (let ((pathname (workspace-autolith-notes-path project-root)))
     (when (uiop:file-exists-p pathname)
       (return-from project-adaptation-notes-create pathname))
-    (unwind-protect
-         (handler-case
-             (progn
-               (with-open-file (stream temporary
-                                       :direction ':output
-                                       :if-exists ':error
-                                       :if-does-not-exist ':create
-                                       :external-format ':utf-8)
-                 (write-string *project-adaptation-notes-template* stream)
-                 (finish-output stream))
-               (handler-case
-                   (platform-publish-new-file *platform* temporary pathname)
-                 (platform-error (cause)
-                   (unless (and (eq (platform-error-reason cause) ':exists)
-                                (uiop:file-exists-p pathname))
-                     (error cause))))
-               pathname)
-           (error (cause)
-             (error 'project-adaptation-error
-                    :message (format nil "Could not create ~A: ~A"
-                                     pathname
-                                     cause)
-                    :pathname pathname
-                    :operation ':create
-                    :cause cause)))
-      (when (probe-file temporary)
-        (delete-file temporary)))))
+    (handler-case
+        (publish-file
+         pathname
+         *project-adaptation-notes-template*
+         :publish-function
+         (lambda (temporary target)
+           (handler-case
+               (platform-publish-new-file *platform* temporary target)
+             (platform-error (cause)
+               (unless (and (eq (platform-error-reason cause) ':exists)
+                            (uiop:file-exists-p target))
+                 (error cause))))))
+      (error (cause)
+        (error 'project-adaptation-error
+               :message (format nil "Could not create ~A: ~A"
+                                pathname
+                                cause)
+               :pathname pathname
+               :operation ':create
+               :cause cause)))))
 
 
 ;;;; -- Resume Qualification --

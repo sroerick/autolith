@@ -113,28 +113,9 @@
 (-> image-commit--write-atomically (pathname function) pathname)
 (defun image-commit--write-atomically (pathname writer)
   "Atomically publish PATHNAME using a stream WRITER, then make it read-only."
-  (let ((temporary
-          (make-pathname
-           :name (format nil ".~A.~A"
-                         (pathname-name pathname)
-                         (make-identifier))
-           :type "tmp"
-           :defaults pathname)))
-    (ensure-directories-exist pathname)
-    (unwind-protect
-         (progn
-           (with-open-file (stream temporary
-                                   :direction ':output
-                                   :if-exists ':supersede
-                                   :if-does-not-exist ':create
-                                   :external-format ':utf-8)
-             (funcall writer stream)
-             (finish-output stream))
-           (uiop:rename-file-overwriting-target temporary pathname)
-           (platform-make-read-only *platform* pathname))
-      (when (probe-file temporary)
-        (delete-file temporary)))
-    pathname))
+  (publish-file pathname writer)
+  (platform-make-read-only *platform* pathname)
+  pathname)
 
 (-> image-commit--write-form-atomically (pathname list) pathname)
 (defun image-commit--write-form-atomically (pathname form)

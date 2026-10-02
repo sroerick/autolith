@@ -38,26 +38,16 @@
   "Publish CAPSULE-PATHNAME to this launcher's private pointer, when configured."
   (let ((pointer-value (uiop:getenv "AUTOLITH_CRASH_POINTER")))
     (when (non-empty-string-p pointer-value)
-      (let* ((configuration (application-configuration application))
-             (pointer-pathname (pathname pointer-value))
-             (temporary-pathname
-               (make-pathname :name (format nil ".crash-pointer.~D"
-                                            (sb-posix:getpid))
-                              :type "tmp"
-                              :defaults pointer-pathname)))
+      (let ((configuration (application-configuration application))
+            (pointer-pathname (pathname pointer-value)))
         (when (uiop:subpathp pointer-pathname
                              (config :state-root configuration))
-          (ensure-directories-exist pointer-pathname)
-          (with-open-file (stream temporary-pathname
-                                  :direction ':output
-                                  :if-exists ':supersede
-                                  :if-does-not-exist ':create
-                                  :external-format ':utf-8)
-            (write-line (namestring capsule-pathname) stream)
-            (finish-output stream))
-          (platform-make-private *platform* temporary-pathname)
-          (uiop:rename-file-overwriting-target temporary-pathname
-                                               pointer-pathname)))))
+          (publish-file
+           pointer-pathname
+           (format nil "~A~%" (namestring capsule-pathname))
+           :prepare-function
+           (lambda (temporary)
+             (platform-make-private *platform* temporary)))))))
   nil)
 
 (-> application-write-crash-capsule
