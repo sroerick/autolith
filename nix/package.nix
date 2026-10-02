@@ -17,6 +17,22 @@ let
     '';
   });
 
+  agentcomms = pkgs.sbcl.buildASDFSystem {
+    pname = "agentcomms";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lambda-symbolics";
+      repo = "agentcomms";
+      rev = "e2f0cf5931bb35eb070da9077d0144e4ac013947";
+      hash = "sha256-prLkXQBefxsPCwm3LmCN3bppVLlASxVUJ7YYUC2DVSw=";
+    };
+    lispLibs = with pkgs.sbclPackages; [
+      bordeaux-threads
+      serapeum
+      yason
+    ];
+  };
+
   clColorist = pkgs.sbcl.buildASDFSystem {
     pname = "cl-colorist";
     version = "0.1.0";
@@ -506,6 +522,7 @@ let
     inherit src;
     systems = [ "autolith" "autolith/tests" ];
     lispLibs = with pkgs.sbclPackages; [
+      agentcomms
       bordeaux-threads
       cl-base64
       cffi
