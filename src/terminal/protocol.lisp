@@ -111,6 +111,23 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
     :accessor terminal-ui-deferred-live-appended-display
     :type string
     :documentation "Styled scrollback deferred while direct terminal I/O owns the display.")
+   (deferred-live-appended-regions
+    :initform nil
+    :accessor terminal-ui-deferred-live-appended-regions
+    :type list
+    :documentation "Click regions of the deferred scrollback, offset within its plain text.")
+   (action-function
+    :initform nil
+    :accessor terminal-ui-action-function
+    :type (option function)
+    :documentation
+    "The function receiving a clicked transcript action such as (:copy TEXT), or NIL.")
+   (pending-action
+    :initform nil
+    :accessor terminal-ui-pending-action
+    :type list
+    :documentation
+    "A clicked transcript action awaiting delivery once the presentation lock is released.")
    (prompt-render-cache
     :initform nil
     :accessor terminal-ui-prompt-render-cache
@@ -444,8 +461,15 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
   "Use native scrollback for the ordinary terminal UI."
   nil)
 
-(defgeneric terminal-ui--present-live (ui &key status-now appended-text appended-display)
-  (:documentation "Present live content and any newly committed transcript text in UI's mode."))
+(defgeneric terminal-ui--present-live
+    (ui &key status-now appended-text appended-display appended-regions)
+  (:documentation
+   "Present live content and any newly committed transcript text in UI's mode.
 
-(defgeneric terminal-ui--append-output (ui text display)
-  (:documentation "Append plain TEXT and trusted styled DISPLAY to UI's transcript."))
+APPENDED-REGIONS are the (START END ACTION) click regions of APPENDED-TEXT."))
+
+(defgeneric terminal-ui--append-output (ui text display &key regions)
+  (:documentation
+   "Append plain TEXT and trusted styled DISPLAY to UI's transcript.
+
+REGIONS are the (START END ACTION) click regions indexing TEXT."))

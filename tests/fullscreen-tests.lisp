@@ -172,3 +172,87 @@
                          (recording-terminal-chunks terminal))
                    "prompt reopening restores mouse reporting")))
   nil)
+
+
+;;;; -- Transcript Clicks --
+
+(-> test-terminal-fullscreen-clicks () null)
+(defun test-terminal-fullscreen-clicks ()
+  "Test clicks resolve to copy widgets and web URLs across streaming, scrolling, and deferral."
+  (let ((terminal (make-instance 'recording-terminal :columns 40 :rows 12))
+        (actions nil))
+    (with-terminal-ui (ui (fullscreen-test--ui terminal))
+      (setf (terminal-ui-action-function ui)
+            (lambda (action)
+              (push action actions)))
+      (terminal-ui-append-finalized
+       ui ':first
+       (list (terminal-span ':plain "see https://example.com/doc now")
+             (terminal-span ':plain (string #\Newline))
+             (terminal-span ':dim "  ``` ")
+             (terminal-widget ':code-copy "⧉ copy" '(:copy "(+ 1 2)"))))
+      (terminal-ui-process-event ui '(:click 10 1))
+      (test-assert (equal '(:open-url "https://example.com/doc") (first actions))
+                   "clicking a URL opens it")
+      (terminal-ui-process-event ui '(:click 2 1))
+      (test-assert (= 1 (length actions)) "clicking plain text does nothing")
+      (terminal-ui-process-event ui '(:click 9 2))
+      (test-assert (equal '(:copy "(+ 1 2)") (first actions))
+                   "clicking the copy label copies the fence source")
+      (terminal-ui-process-event ui '(:click 30 2))
+      (test-assert (= 2 (length actions)) "clicking past the row end does nothing")
+      (terminal-ui-stream-update
+       ui
+       :rows (list (list (terminal-span ':plain "streamed ")
+                         (terminal-widget ':code-copy "⧉ copy" '(:copy "streamed source"))))
+       :tail nil)
+      (terminal-ui-process-event ui '(:click 12 4))
+      (test-assert (equal '(:copy "streamed source") (first actions))
+                   "streamed rows keep their click regions")
+      (terminal-ui-append-finalized-batch
+       ui (loop for index below 30
+                collect (list index (format nil "row https://example.com/~D" index))))
+      (terminal-ui-process-event ui ':scroll-top)
+      (terminal-ui-process-event ui '(:click 10 1))
+      (test-assert (equal '(:open-url "https://example.com/doc") (first actions))
+                   "clicks after scrolling resolve through the visible top row")
+      (terminal-ui-process-event ui ':scroll-bottom)
+      (terminal-ui-process-event ui '(:click 10 2))
+      (test-assert (equal '(:open-url "https://example.com/26") (first actions))
+                   "clicks while following the tail resolve through the painted window")
+      (terminal-ui-resize ui 20 :rows 12)
+      (terminal-ui-process-event ui ':scroll-top)
+      (terminal-ui-process-event ui '(:click 5 2))
+      (test-assert (equal '(:open-url "https://example.com/doc") (first actions))
+                   "reflowed rows still resolve the whole URL from their chunk")
+      (setf (terminal-ui-live-output-suspended-p ui) t)
+      (terminal-ui-append-finalized
+       ui ':deferred
+       (list (terminal-widget ':code-copy "⧉ copy" '(:copy "deferred"))))
+      (setf (terminal-ui-live-output-suspended-p ui) nil)
+      (terminal-ui--paint-live ui)
+      (terminal-ui-process-event ui ':scroll-bottom)
+      (terminal-ui-process-event ui '(:click 1 8))
+      (test-assert (equal '(:copy "deferred") (first actions))
+                   "regions deferred during direct terminal I/O survive the resume")
+      (setf (terminal-ui-action-function ui) nil)
+      (terminal-ui-process-event ui '(:click 1 8))
+      (test-assert (= 7 (length actions))
+                   "clicks without an installed action function are ignored")))
+  nil)
+
+(-> test-localgroup-click-events () null)
+(defun test-localgroup-click-events ()
+  "Test relayed click packets are accepted only with bounded one-based coordinates."
+  (dolist (case '(((:click 3 7) t)
+                  ((:click 1 1) t)
+                  ((:click 0 7) nil)
+                  ((:click 3 0) nil)
+                  ((:click 3 7 1) nil)
+                  ((:click "3" 7) nil)
+                  ((:click 3 10001) nil)
+                  ((:scroll -1) t)))
+    (destructuring-bind (event expected) case
+      (test-assert (eq expected (localgroup--terminal-event-p event))
+                   (format nil "relay validation of ~S" event))))
+  nil)

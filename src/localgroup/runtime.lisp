@@ -396,9 +396,12 @@ forced shutdown does; the conversation stays resumable."
 
 (-> localgroup--terminal-event-p (t) boolean)
 (defun localgroup--terminal-event-p (event)
-  "Accept ordinary relay input and bounded fullscreen wheel events."
+  "Accept ordinary relay input and bounded fullscreen wheel and click events."
   (not (null (or (image-daemon:daemon-terminal-event-p event)
-                 (typep event '(cons (eql :scroll) (cons (member -1 1) null)))))))
+                 (typep event '(cons (eql :scroll) (cons (member -1 1) null)))
+                 (typep event '(cons (eql :click)
+                                (cons (integer 1 10000)
+                                 (cons (integer 1 10000) null))))))))
 
 (-> localgroup--serve-attachment
     (localgroup-session sb-bsd-sockets:socket stream list)

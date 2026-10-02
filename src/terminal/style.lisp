@@ -10,7 +10,7 @@
       :recovery-gradient-1 :recovery-gradient-2 :recovery-gradient-3
       :recovery-gradient-4 :recovery-gradient-5 :recovery-gradient-6
       :user :tool :success :failure :notice :dim :hint :selected
-      :strong :emphasis :code :lisp-prompt :plan-active :timestamp-time
+      :strong :emphasis :code :code-copy :lisp-prompt :plan-active :timestamp-time
       :agent-spinner :agent-name :child-name :agent-role :agent-tool
       :command-spinner :command-id :command-tool
       :status-plain :status-dim :status-accent
@@ -74,6 +74,7 @@ background opt into indexed colors."
       (:strong (:bold t))
       (:emphasis (:italic t))
       (:code (:foreground :cyan))
+      (:code-copy (:faint t :underline t))
       (:lisp-prompt (:foreground :red :bold t))
       (:plan-active (:foreground :cyan :bold t))
       (:timestamp-time (:foreground :cyan))
@@ -175,6 +176,7 @@ secondary, and quiet text the soft blue."
         (:strong (:foreground ,accent :bold t))
         (:emphasis (:italic t))
         (:code (:foreground ,secondary))
+        (:code-copy (:foreground ,soft :underline t))
         (:lisp-prompt (:foreground ,accent :bold t))
         (:plan-active (:foreground ,secondary :bold t))
         (:timestamp-time (:foreground ,soft))
@@ -363,17 +365,76 @@ which only theme colors carrying RGB values make use of."
   "Return SPAN's untrusted text."
   (rest span))
 
+(defstruct (terminal-widget
+            (:constructor terminal-widget (style label action))
+            (:copier nil))
+  "A styled transcript LABEL that performs ACTION when clicked.
+
+ACTION is a list such as (:copy TEXT) or (:open-url URL). Widgets render
+exactly like a span of STYLE and LABEL; the fullscreen viewport keeps their
+plain-text extent so a mouse click can find the action again."
+  (style  ':plain :type terminal-style :read-only t)
+  (label  ""      :type string         :read-only t)
+  (action nil     :type list           :read-only t))
+
 (-> terminal-styled-text-p (t) boolean)
 (defun terminal-styled-text-p (value)
-  "Return true when VALUE is a proper list of styled spans."
+  "Return true when VALUE is a proper list of styled spans and widgets."
   (loop for tail = value then (rest tail)
         while tail
         always (and (consp tail)
-                    (terminal-span-p (first tail)))))
+                    (or (terminal-span-p (first tail))
+                        (terminal-widget-p (first tail))))))
 
 (deftype terminal-styled-text ()
-  "A proper list of styled spans rendered in order."
+  "A proper list of styled spans and widgets rendered in order."
   '(satisfies terminal-styled-text-p))
+
+(-> terminal--presentation-spans (list) list)
+(defun terminal--presentation-spans (spans)
+  "Return SPANS with every widget replaced by the span showing its label."
+  (if (some #'terminal-widget-p spans)
+      (mapcar (lambda (item)
+                (if (terminal-widget-p item)
+                    (terminal-span (terminal-widget-style item)
+                                   (terminal-widget-label item))
+                    item))
+              spans)
+      spans))
+
+(-> terminal--widget-regions (list) list)
+(defun terminal--widget-regions (spans)
+  "Return (START END ACTION) regions for the widgets in SPANS.
+
+Offsets count characters of the sanitized plain text that SPANS present, so
+they index the text TERMINAL--SPANS-TEXT returns for the same SPANS."
+  (let ((position 0)
+        (regions nil))
+    (dolist (item spans (nreverse regions))
+      (let ((length (length (sanitize-text (if (terminal-widget-p item)
+                                               (terminal-widget-label item)
+                                               (terminal-span-text item))))))
+        (when (and (terminal-widget-p item) (plusp length))
+          (push (list position (+ position length) (terminal-widget-action item))
+                regions))
+        (incf position length)))))
+
+(-> terminal--shift-regions (list integer) list)
+(defun terminal--shift-regions (regions offset)
+  "Return REGIONS moved later by OFFSET characters."
+  (if (zerop offset)
+      regions
+      (mapcar (lambda (region)
+                (destructuring-bind (start end action) region
+                  (list (+ start offset) (+ end offset) action)))
+              regions)))
+
+(-> terminal--region-action (list integer) list)
+(defun terminal--region-action (regions offset)
+  "Return the action of the region in REGIONS covering character OFFSET, or NIL."
+  (loop for (start end action) in regions
+        when (and (<= start offset) (< offset end))
+          return action))
 
 (defstruct (terminal-rendered-row
             (:constructor terminal--make-rendered-row (text display))
@@ -386,10 +447,11 @@ which only theme colors carrying RGB values make use of."
 (-> terminal--spans-width (list) (integer 0))
 (defun terminal--spans-width (spans)
   "Return the single-row cell width of sanitized SPANS."
-  (text-cell-width (termdown:spans-text spans :single-line-p t)))
+  (text-cell-width (termdown:spans-text (terminal--presentation-spans spans)
+                                        :single-line-p t)))
 
 
 (-> terminal--clip-spans (list integer) list)
 (defun terminal--clip-spans (spans maximum-width)
   "Fit semantic SPANS to one terminal row."
-  (termdown:fit-spans spans maximum-width))
+  (termdown:fit-spans (terminal--presentation-spans spans) maximum-width))

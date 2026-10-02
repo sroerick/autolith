@@ -37,7 +37,13 @@
   test-fullscreen-boot-linger
   test-fullscreen-boot-reader-diversion
   test-terminal-fullscreen-relayed-wheel
-  test-fullscreen-authentication-lifecycle)
+  test-fullscreen-authentication-lifecycle
+  test-terminal-fullscreen-clicks
+  test-localgroup-click-events)
+
+(define-test-suite hyperlinks
+  test-text-url-ranges
+  test-hyperlinked-rendering)
 (define-test-suite stream
   test-bounded-character-reads)
 

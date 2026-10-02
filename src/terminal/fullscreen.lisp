@@ -2,11 +2,14 @@
 
 ;;;; -- Fullscreen Viewport --
 
-(defstruct (fullscreen-row (:constructor make-fullscreen-row (display chunk offset)))
-  "A wrapped display row and its source anchor within a committed chunk."
+(defstruct (fullscreen-row (:constructor make-fullscreen-row (display chunk offset length)))
+  "A wrapped display row and its source anchor within a committed chunk.
+
+OFFSET and LENGTH locate the row's plain characters inside the chunk text."
   (display "" :type string)
   (chunk 0 :type (integer 0))
-  (offset 0 :type (integer 0)))
+  (offset 0 :type (integer 0))
+  (length 0 :type (integer 0)))
 
 (defclass fullscreen-terminal-ui (terminal-ui)
   ((chunks :initform (make-array 0 :adjustable t :fill-pointer 0)
@@ -102,7 +105,8 @@
 (-> terminal-ui-fullscreen--wrap-chunk (list integer integer) list)
 (defun terminal-ui-fullscreen--wrap-chunk (chunk index width)
   "Wrap one original CHUNK, retaining character anchors for later width changes."
-  (destructuring-bind (text display) chunk
+  (destructuring-bind (text display &optional regions) chunk
+    (declare (ignore regions))
     (let* ((pairs (clinedi:wrap-styled-text text display width))
            (offset 0))
       ;; A final newline begins the next append, rather than an extra empty row.
@@ -110,7 +114,7 @@
         (setf pairs (butlast pairs)))
       (loop for (plain styled) in pairs
             for start = (or (search plain text :start2 offset) offset)
-            collect (make-fullscreen-row styled index start)
+            collect (make-fullscreen-row styled index start (length plain))
             do (setf offset (+ start (length plain)))
                (when (and (< offset (length text)) (char= (char text offset) #\Newline))
                  (incf offset))))))
@@ -137,13 +141,15 @@
       (terminal-ui-fullscreen-invalidate ui)))
   nil)
 
-(-> terminal-ui-fullscreen--append (fullscreen-terminal-ui string string) null)
-(defun terminal-ui-fullscreen--append (ui text display)
-  "Extend the transcript cache with one committed output chunk."
+(-> terminal-ui-fullscreen--append
+    (fullscreen-terminal-ui string string &optional list)
+    null)
+(defun terminal-ui-fullscreen--append (ui text display &optional regions)
+  "Extend the transcript cache with one committed output chunk and its click REGIONS."
   (when (plusp (length text))
     (let* ((chunks (fullscreen-terminal-ui-chunks ui))
            (index (length chunks))
-           (chunk (list text display))
+           (chunk (list text display regions))
            (rows (terminal-ui-fullscreen--wrap-chunk
                   chunk index (fullscreen-terminal-ui-width ui))))
       (vector-push-extend chunk chunks)
@@ -291,6 +297,64 @@ row that still overruns instead of scrolling."
   (terminal-ui--paint-live ui)
   nil)
 
+(-> terminal-ui-fullscreen--column-character-index
+    (string integer integer integer)
+    (option integer))
+(defun terminal-ui-fullscreen--column-character-index (text start end column)
+  "Return the index of the character of TEXT between START and END shown at COLUMN.
+
+COLUMN is one-based. Zero-width characters belong to the cell before them and
+are never returned; a column past the row's last cell returns NIL."
+  (loop with cells = 0
+        for index from start below end
+        for width = (text-cell-width (string (char text index)))
+        do (when (and (plusp width)
+                      (<= cells (1- column) (+ cells width -1)))
+             (return index))
+           (incf cells width)
+        finally (return nil)))
+
+(-> terminal-ui-fullscreen--click-action
+    (fullscreen-terminal-ui integer integer)
+    list)
+(defun terminal-ui-fullscreen--click-action (ui column row)
+  "Return the transcript action under one-based screen COLUMN and ROW, or NIL.
+
+Committed rows resolve through their chunk anchors: a widget region covering
+the clicked character wins, otherwise a web URL under it opens. Live rows,
+the separator, and the composer have no actions."
+  (block nil
+    (let* ((rows (fullscreen-terminal-ui-rows ui))
+           (space (fullscreen-terminal-ui-viewport-height ui))
+           (maximum-top (fullscreen-terminal-ui-maximum-top ui))
+           (top (min (or (fullscreen-terminal-ui-top ui) maximum-top) maximum-top))
+           (screen-row (1- row))
+           (absolute (+ top screen-row)))
+      (when (or (>= screen-row space) (>= absolute (length rows)))
+        (return nil))
+      (let* ((anchor (aref rows absolute))
+             (chunk (aref (fullscreen-terminal-ui-chunks ui) (fullscreen-row-chunk anchor)))
+             (text (first chunk))
+             (regions (third chunk))
+             (start (fullscreen-row-offset anchor))
+             (end (min (length text) (+ start (fullscreen-row-length anchor))))
+             (index (terminal-ui-fullscreen--column-character-index text start end column)))
+        (when index
+          (or (terminal--region-action regions index)
+              (let ((url (text-url-at text index)))
+                (and url (list ':open-url url)))))))))
+
+(-> terminal-ui-fullscreen--click (fullscreen-terminal-ui integer integer) boolean)
+(defun terminal-ui-fullscreen--click (ui column row)
+  "Queue the transcript action under COLUMN and ROW, reporting whether one exists.
+
+The action runs after TERMINAL-UI-PROCESS-EVENT releases the presentation
+lock, because copying and browser launches present notices of their own."
+  (let ((action (terminal-ui-fullscreen--click-action ui column row)))
+    (when action
+      (setf (terminal-ui-pending-action ui) action))
+    (not (null action))))
+
 (-> terminal-ui-fullscreen-handle-event (fullscreen-terminal-ui t) boolean)
 (defun terminal-ui-fullscreen-handle-event (ui event)
   "Consume viewport navigation without changing the draft or its history position."
@@ -307,6 +371,8 @@ row that still overruns instead of scrolling."
        (terminal-ui-fullscreen-bottom ui))
       ((and (consp event) (eq (first event) ':scroll) (member (second event) '(-1 1)))
        (terminal-ui-fullscreen-scroll ui (* 3 (second event))))
+      ((typep event '(cons (eql :click) (cons (integer 1) (cons (integer 1) null))))
+       (terminal-ui-fullscreen--click ui (second event) (third event)))
       ((eq event ':clear-screen)
        (terminal-ui-fullscreen-invalidate ui)
        (terminal-ui--paint-live ui))
@@ -319,18 +385,23 @@ row that still overruns instead of scrolling."
 
 ;;;; -- Presentation Transactions --
 
-(defmethod terminal-ui--append-output ((ui fullscreen-terminal-ui) text display)
+(defmethod terminal-ui--append-output ((ui fullscreen-terminal-ui) text display &key regions)
   "Commit output through the same transaction as streamed live presentation."
-  (terminal-ui--present-live ui :appended-text text :appended-display display))
+  (terminal-ui--present-live ui :appended-text text :appended-display display
+                                :appended-regions regions))
 
 (defmethod terminal-ui--present-live
-    ((ui fullscreen-terminal-ui) &key status-now (appended-text "") (appended-display ""))
+    ((ui fullscreen-terminal-ui) &key status-now (appended-text "") (appended-display "")
+                                 appended-regions)
   "Append, paint and commit atomically; a failed paint can be retried without duplication."
   (if (terminal-ui-live-output-suspended-p ui)
-      (terminal-ui--defer-live-append ui appended-text appended-display)
+      (terminal-ui--defer-live-append ui appended-text appended-display appended-regions)
       (let* ((terminal (terminal-ui-terminal ui))
-             (text (concatenate 'string (terminal-ui-deferred-live-appended-text ui) appended-text))
-             (display (concatenate 'string (terminal-ui-deferred-live-appended-display ui) appended-display)))
+             (deferred-text (terminal-ui-deferred-live-appended-text ui))
+             (text (concatenate 'string deferred-text appended-text))
+             (display (concatenate 'string (terminal-ui-deferred-live-appended-display ui) appended-display))
+             (regions (append (terminal-ui-deferred-live-appended-regions ui)
+                              (terminal--shift-regions appended-regions (length deferred-text)))))
         (terminal-ui-fullscreen--ensure-width ui (max 1 (terminal-columns terminal)))
         (let ((chunk-count (length (fullscreen-terminal-ui-chunks ui)))
               (row-count (length (fullscreen-terminal-ui-rows ui)))
@@ -339,7 +410,7 @@ row that still overruns instead of scrolling."
               (completed-p nil))
           (unwind-protect
                (progn
-                 (terminal-ui-fullscreen--append ui text display)
+                 (terminal-ui-fullscreen--append ui text display regions)
                  (when (terminal-ui-started-p ui)
                    (if (terminal-interactive-p terminal)
                        (progn
@@ -358,6 +429,7 @@ row that still overruns instead of scrolling."
                          (terminal-flush terminal))))
                  (setf (terminal-ui-deferred-live-appended-text ui) ""
                        (terminal-ui-deferred-live-appended-display ui) ""
+                       (terminal-ui-deferred-live-appended-regions ui) nil
                        completed-p t))
             (unless completed-p
               (setf (fill-pointer (fullscreen-terminal-ui-chunks ui)) chunk-count

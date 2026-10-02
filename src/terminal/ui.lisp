@@ -392,21 +392,26 @@ emergency terminal input responsive while another thread owns presentation."
 
 (-> terminal--spans-text (list) string)
 (defun terminal--spans-text (spans)
-  "Return sanitized visible text for semantic SPANS."
-  (termdown:spans-text spans))
+  "Return sanitized visible text for semantic SPANS and widgets."
+  (termdown:spans-text (terminal--presentation-spans spans)))
 
 
 (-> terminal--render-spans (terminal list) string)
 (defun terminal--render-spans (terminal spans)
-  "Render semantic SPANS using the application's style table."
+  "Render semantic SPANS using the application's style table.
+
+Styled terminals also receive OSC 8 hyperlinks around the web URLs in each
+span, so native modifier-clicks open them wherever the terminal supports it."
   (termdown:render-spans
-   spans :style-function
+   (terminal--presentation-spans spans)
+   :style-function
    (when (terminal-styled-p terminal)
      (lambda (role text)
-       (let ((sequence (terminal-style-sequence role)))
+       (let ((sequence (terminal-style-sequence role))
+             (linked (terminal--hyperlinked-text text)))
          (if sequence
-             (concatenate 'string sequence text *terminal-style-reset*)
-             text))))))
+             (concatenate 'string sequence linked *terminal-style-reset*)
+             linked))))))
 
 (-> terminal-ui--lisp-draft-p (string) boolean)
 (defun terminal-ui--lisp-draft-p (text)
@@ -2181,22 +2186,39 @@ form keeps every speculative Markdown wrap live until the logical line commits."
 
 (-> terminal-ui--stream-output (terminal list) (values string string))
 (defun terminal-ui--stream-output (terminal rows)
-  "Return streamed ROWS as plain and styled output ending on a fresh line."
+  "Return streamed ROWS as plain output, styled output, and click regions.
+
+Every row ends on a fresh line and regions index the plain output."
   (let ((plain-stream (make-string-output-stream))
-        (display-stream (make-string-output-stream)))
+        (display-stream (make-string-output-stream))
+        (regions nil)
+        (offset 0))
     (dolist (row rows)
-      (let ((safe-row
-              (loop for span in row
-                    collect (terminal-span
-                             (terminal-span-style span)
-                             (sanitize-text (terminal-span-text span)
-                                            :single-line-p t)))))
-        (write-string (terminal--spans-text safe-row) plain-stream)
+      (let* ((safe-row
+               (loop for item in row
+                     collect (if (terminal-widget-p item)
+                                 (terminal-widget
+                                  (terminal-widget-style item)
+                                  (sanitize-text (terminal-widget-label item)
+                                                 :single-line-p t)
+                                  (terminal-widget-action item))
+                                 (terminal-span
+                                  (terminal-span-style item)
+                                  (sanitize-text (terminal-span-text item)
+                                                 :single-line-p t)))))
+             (plain (terminal--spans-text safe-row)))
+        (write-string plain plain-stream)
         (write-string (terminal--render-spans terminal safe-row) display-stream)
         (write-char #\Newline plain-stream)
-        (write-char #\Newline display-stream)))
+        (write-char #\Newline display-stream)
+        (setf regions
+              (append regions
+                      (terminal--shift-regions (terminal--widget-regions safe-row)
+                                               offset)))
+        (incf offset (1+ (length plain)))))
     (values (get-output-stream-string plain-stream)
-            (get-output-stream-string display-stream))))
+            (get-output-stream-string display-stream)
+            regions)))
 
 (-> terminal-ui-stream-update
     (terminal-ui &key (:rows list) (:tail (or null string list)))
@@ -2210,14 +2232,15 @@ styled row, or styled rows; it replaces the live unfinished content, or NIL
 removes it."
   (with-terminal-ui-locked (ui)
     (let ((terminal (terminal-ui-terminal ui)))
-      (multiple-value-bind (plain-output display-output)
+      (multiple-value-bind (plain-output display-output regions)
           (terminal-ui--stream-output terminal rows)
         (setf (terminal-ui-stream-tail ui) tail)
         (if (terminal-interactive-p terminal)
             (terminal-ui--present-live
              ui
              :appended-text plain-output
-             :appended-display display-output)
+             :appended-display display-output
+             :appended-regions regions)
             (progn
               (when (plusp (length display-output))
                 (terminal--write-safe-text terminal display-output))
@@ -2237,11 +2260,18 @@ removes it."
         t)
       nil))
 
-(-> terminal-ui--defer-live-append (terminal-ui string string) null)
-(defun terminal-ui--defer-live-append (ui text display)
-  "Retain appended plain TEXT and styled DISPLAY until live output resumes."
+(-> terminal-ui--defer-live-append
+    (terminal-ui string string &optional list)
+    null)
+(defun terminal-ui--defer-live-append (ui text display &optional regions)
+  "Retain appended plain TEXT, styled DISPLAY, and REGIONS until live output resumes."
   (when (plusp (length text))
-    (setf (terminal-ui-deferred-live-appended-text ui)
+    (setf (terminal-ui-deferred-live-appended-regions ui)
+          (append (terminal-ui-deferred-live-appended-regions ui)
+                  (terminal--shift-regions
+                   regions
+                   (length (terminal-ui-deferred-live-appended-text ui))))
+          (terminal-ui-deferred-live-appended-text ui)
           (concatenate 'string
                        (terminal-ui-deferred-live-appended-text ui)
                        text)))
@@ -2274,13 +2304,19 @@ removes it."
 (-> terminal-ui--present-live
     (terminal-ui &key (:status-now (option real))
                       (:appended-text string)
-                      (:appended-display string))
+                      (:appended-display string)
+                      (:appended-regions list))
     null)
 (defmethod terminal-ui--present-live
-    ((ui terminal-ui) &key status-now (appended-text "") (appended-display ""))
-  "Present UI live content, atomically preceding it with appended scrollback."
+    ((ui terminal-ui) &key status-now (appended-text "") (appended-display "")
+                      appended-regions)
+  "Present UI live content, atomically preceding it with appended scrollback.
+
+Native scrollback has no mouse reporting, so APPENDED-REGIONS are kept only
+while output is deferred and otherwise dropped."
   (if (terminal-ui-live-output-suspended-p ui)
-      (terminal-ui--defer-live-append ui appended-text appended-display)
+      (terminal-ui--defer-live-append ui appended-text appended-display
+                                      appended-regions)
       (let* ((appended-text
                (concatenate 'string
                             (terminal-ui-deferred-live-appended-text ui)
@@ -2319,7 +2355,8 @@ removes it."
             (terminal-ui--note-command-paint
              ui painted-command-activities)
             (setf (terminal-ui-deferred-live-appended-text ui) ""
-                  (terminal-ui-deferred-live-appended-display ui) "")))))
+                  (terminal-ui-deferred-live-appended-display ui) ""
+                  (terminal-ui-deferred-live-appended-regions ui) nil)))))
   nil)
 
 (-> terminal-ui--paint-live
@@ -2340,19 +2377,23 @@ removes it."
     (terminal-ui (or string list))
     (values string string))
 (defun terminal-ui--finalized-content (ui entry)
-  "Return finalized ENTRY as plain and styled text with a blank separator."
+  "Return finalized ENTRY as plain text, styled text, and click regions.
+
+The texts end with a blank separator row. Regions index the plain text."
   (let* ((terminal (terminal-ui-terminal ui))
          (spans (if (stringp entry)
                     (list (terminal-span ':plain entry))
                     entry))
          (plain (terminal--spans-text spans))
-         (display (terminal--render-spans terminal spans)))
+         (display (terminal--render-spans terminal spans))
+         (regions (terminal--widget-regions spans)))
     (unless (and (plusp (length plain))
                  (char= (char plain (1- (length plain))) #\Newline))
       (setf plain (concatenate 'string plain (string #\Newline))
             display (concatenate 'string display (string #\Newline))))
     (values (concatenate 'string plain (string #\Newline))
-            (concatenate 'string display (string #\Newline)))))
+            (concatenate 'string display (string #\Newline))
+            regions)))
 
 
 (-> terminal-ui-refresh-size
@@ -2595,11 +2636,13 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
       (setf (gethash identifier (terminal-ui-finalized-identifiers ui)) t)
       t)))
 
-(defmethod terminal-ui--append-output ((ui terminal-ui) text display)
-  "Append output to native scrollback, deferring it during direct terminal I/O."
+(defmethod terminal-ui--append-output ((ui terminal-ui) text display &key regions)
+  "Append output to native scrollback, deferring it during direct terminal I/O.
+
+REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
   (if (terminal-interactive-p (terminal-ui-terminal ui))
       (if (terminal-ui-live-output-suspended-p ui)
-          (terminal-ui--defer-live-append ui text display)
+          (terminal-ui--defer-live-append ui text display regions)
           (live-region-append (terminal-ui-live-region ui) text :display display))
       (progn
         (terminal--write-safe-text (terminal-ui-terminal ui) display)
@@ -2614,9 +2657,9 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
       (when (gethash identifier (terminal-ui-finalized-identifiers ui))
         (return nil))
       (handler-case
-          (multiple-value-bind (text display)
+          (multiple-value-bind (text display regions)
               (terminal-ui--finalized-content ui entry)
-            (terminal-ui--append-output ui text display)
+            (terminal-ui--append-output ui text display :regions regions)
             (setf (gethash identifier
                            (terminal-ui-finalized-identifiers ui))
                   t))
@@ -2636,22 +2679,30 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
           (unless (or (gethash identifier
                                (terminal-ui-finalized-identifiers ui))
                       (gethash identifier seen))
-            (multiple-value-bind (text display)
+            (multiple-value-bind (text display regions)
                 (terminal-ui--finalized-content ui entry)
-              (push (list identifier text display) pending)
+              (push (list identifier text display regions) pending)
               (setf (gethash identifier seen) t)))))
       (setf pending (nreverse pending))
       (when pending
         (let ((text-stream (make-string-output-stream))
-              (display-stream (make-string-output-stream)))
+              (display-stream (make-string-output-stream))
+              (regions nil)
+              (offset 0))
           (dolist (entry pending)
-            (write-string (second entry) text-stream)
-            (write-string (third entry) display-stream))
+            (destructuring-bind (identifier text display entry-regions) entry
+              (declare (ignore identifier))
+              (write-string text text-stream)
+              (write-string display display-stream)
+              (setf regions
+                    (append regions
+                            (terminal--shift-regions entry-regions offset)))
+              (incf offset (length text))))
           (let ((text (get-output-stream-string text-stream))
                 (display (get-output-stream-string display-stream)))
             (handler-case
                 (progn
-                  (terminal-ui--append-output ui text display)
+                  (terminal-ui--append-output ui text display :regions regions)
                   (dolist (entry pending)
                     (setf (gethash
                            (first entry)
@@ -3111,6 +3162,19 @@ thread."
   "Read one semantic input event for UI without emitting fallback prompt controls."
   (terminal-read-event (terminal-ui-terminal ui)))
 
+(-> terminal-ui-activate (terminal-ui list) boolean)
+(defun terminal-ui-activate (ui action)
+  "Hand clicked transcript ACTION to UI's installed action function.
+
+Returns true when a function received ACTION. Without one, clicks on
+transcript widgets and URLs do nothing."
+  (let ((function (terminal-ui-action-function ui)))
+    (if function
+        (progn
+          (funcall function action)
+          t)
+        nil)))
+
 (-> terminal-ui-call-with-exclusive-input (terminal-ui function) t)
 (defun terminal-ui-call-with-exclusive-input (ui function)
   "Call FUNCTION while it alone reads UI's terminal input, returning its values.
@@ -3198,11 +3262,35 @@ installed owner the thunk simply runs."
     (values keyword (option (or string user-message-input))))
 (defun terminal-ui-process-event
     (ui event &key queue-completion-p queue-editing-p)
-  "Apply EVENT to UI's suggestions or editor and return its action and payload."
+  "Apply EVENT to UI's suggestions or editor and return its action and payload.
+
+A transcript action that EVENT clicked runs after the presentation lock is
+released, so the action may present notices of its own."
+  (multiple-value-prog1
+      (terminal-ui--process-locked-event ui event
+                                         :queue-completion-p queue-completion-p
+                                         :queue-editing-p queue-editing-p)
+    (terminal-ui--run-pending-action ui)))
+
+(-> terminal-ui--run-pending-action (terminal-ui) null)
+(defun terminal-ui--run-pending-action (ui)
+  "Deliver and clear UI's pending clicked action outside the presentation lock."
+  (let ((action (with-terminal-ui-locked (ui)
+                  (shiftf (terminal-ui-pending-action ui) nil))))
+    (when action
+      (terminal-ui-activate ui action)))
+  nil)
+
+(-> terminal-ui--process-locked-event
+    (terminal-ui t &key (:queue-completion-p boolean) (:queue-editing-p boolean))
+    (values keyword (option (or string user-message-input))))
+(defun terminal-ui--process-locked-event
+    (ui event &key queue-completion-p queue-editing-p)
+  "Apply EVENT under UI's presentation lock and return its action and payload."
   (with-terminal-ui-locked (ui)
     (when (and (terminal-ui-fullscreen-p ui)
                (terminal-ui-fullscreen-handle-event ui event))
-      (return-from terminal-ui-process-event (values ':changed nil)))
+      (return-from terminal-ui--process-locked-event (values ':changed nil)))
     (let* ((editor (terminal-ui-editor ui))
            ;; The editor installs a fresh string on every text change, so
            ;; holding the reference preserves the pre-event content.
