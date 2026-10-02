@@ -977,7 +977,11 @@ independently.
   display state, so they run immediately. An unknown command reports its
   error immediately instead of being scheduled.
 - Terminal behavior is =:shared=, =:exclusive=, or
-  =:exclusive-without-arguments=.
+  =:exclusive-without-arguments=. It declares which invocations open a modal
+  picker so active work keeps them off the immediate reader path. The picker
+  itself takes sole ownership of terminal input when it opens, so slash and
+  parenthesized invocations behave identically and the responsive reader keeps
+  animating until a modal actually appears.
 - =:static-options= replaces =:argument= for one finite positional parameter.
   It derives the help hint and both slash and parenthesized completions.
 

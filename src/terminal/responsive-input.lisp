@@ -3791,29 +3791,15 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
              (let ((result
                      (if (terminal-ui--async-lisp-draft-p (second work))
                          (application-run-async-lisp-input application (second work))
-                         (application-input-controller-call-with-reader-paused
-                          controller
-                          (lambda ()
-                            (application-run-lisp-input application (second work)))))))
+                         (application-run-lisp-input application (second work)))))
                (application-input-controller--record-prompt-result
                 controller result)
                (when (eq result ':quit)
                  (application-input-controller--request-exit
                   controller ':quit))))
             (:command
-             (let* ((input (second work))
-                    (invocation (application-command-invocation-parse input))
-                    (command
-                      (application-command-invocation-command invocation))
-                    (result
-                      (if (and command
-                               (application-command-terminal-owner-p
-                                command invocation))
-                          (application-input-controller-call-with-reader-paused
-                           controller
-                           (lambda ()
-                             (application--run-command-input application input)))
-                          (application--run-command-input application input))))
+             (let ((result
+                     (application--run-command-input application (second work))))
                (application-input-controller--record-prompt-result
                 controller result)
                (when (eq result ':quit)

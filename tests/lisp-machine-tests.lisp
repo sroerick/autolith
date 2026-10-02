@@ -1244,15 +1244,8 @@
                   "local work shows exact source and values outside ordinary provider history")))
              (let ((quit-controller
                      (lisp-machine-tests--controller application)))
-               (test-call-with-function-replacements
-                (list
-                 (list 'application-input-controller-call-with-reader-paused
-                       (lambda (ignored function)
-                         (declare (ignore ignored))
-                         (funcall function))))
-                (lambda ()
-                  (application-input-controller--run-work
-                   quit-controller '(:lisp "(quit)"))))
+               (application-input-controller--run-work
+                quit-controller '(:lisp "(quit)"))
                (test-assert
                 (and (application-input-controller-stopping-p quit-controller)
                      (eq (application-input-controller-exit-reason quit-controller)
@@ -1370,16 +1363,9 @@
                (terminal-ui-start ui)
                (recording-terminal-reset terminal)
                (terminal-ui-open-prompt-block ui)
-               (test-call-with-function-replacements
-                (list
-                 (list 'application-input-controller-call-with-reader-paused
-                       (lambda (ignored function)
-                         (declare (ignore ignored))
-                         (funcall function))))
-                (lambda ()
-                  (run-lisp-work "(values :ok)")
-                  (run-lisp-work "(error \"marker failure\")")
-                  (run-lisp-work "(values :cancelled)" :cancel-p t)))
+               (run-lisp-work "(values :ok)")
+               (run-lisp-work "(error \"marker failure\")")
+               (run-lisp-work "(values :cancelled)" :cancel-p t)
                (let ((output (recording-terminal-output terminal)))
                  (test-assert
                   (and
@@ -1446,14 +1432,7 @@
                (terminal-ui-finish-prompt-block ui 0)
                (terminal-ui-open-prompt-block ui)
                (recording-terminal-reset terminal)
-               (test-call-with-function-replacements
-                (list
-                 (list 'application-input-controller-call-with-reader-paused
-                       (lambda (ignored function)
-                         (declare (ignore ignored))
-                         (funcall function))))
-                (lambda ()
-                  (run-lisp-work "(quit)")))
+               (run-lisp-work "(quit)")
                (let ((output (recording-terminal-output terminal)))
                  (test-assert
                   (and (application-input-controller-stopping-p controller)
