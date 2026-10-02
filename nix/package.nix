@@ -162,7 +162,7 @@ let
     pname = "ls-compat";
     version = qlotVersion "ls-compat";
     src = qlotSource "ls-compat";
-    systems = [ "ls-compat" "ls-compat/posix" ];
+    systems = [ "ls-compat" "ls-compat/posix" "ls-compat/files" ];
     lispLibs = with pkgs.sbclPackages; [
       babel
       serapeum
