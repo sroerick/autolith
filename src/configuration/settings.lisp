@@ -101,11 +101,12 @@
 (defparameter *grok-oauth-client-id* "b1a00492-073a-47ea-816f-4c329264a828"
   "The public OAuth client identifier used by Grok Build compatible clients.")
 
-;; The proxy gates requests on this protocol revision and rejects requests
-;; without it as HTTP 426. Autolith implements the wire dialect of this
-;; grok-build release, reference commit 5163763e, while reporting its own
-;; identity through User-Agent and x-grok-client-identifier.
-(defparameter *grok-client-protocol-version* "1.0.4"
+;; The proxy gates requests on this protocol revision and rejects missing or
+;; older versions as HTTP 426; on 2026-10-02 the proxy required 1.0.13 or
+;; later. Autolith implements the wire dialect of grok-build 1.0.13,
+;; reference commit bb7f39d5, while reporting its own identity through
+;; User-Agent and x-grok-client-identifier.
+(defparameter *grok-client-protocol-version* "1.0.13"
   "The grok-build release whose Grok proxy wire protocol Autolith implements.")
 
 
