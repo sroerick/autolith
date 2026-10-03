@@ -465,7 +465,6 @@ let
       orgTemplater
       quri
       serapeum
-      yason
       clColorist
       clinedi
       clExecSandbox

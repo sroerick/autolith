@@ -53,8 +53,7 @@
                #:sexp-store
                #:sophisticated-clipboard
                #:structlisp
-               #:usocket
-               #:yason)
+               #:usocket)
   :components ((:module "src"
                 :serial t
                 :components ((:file "core/package")

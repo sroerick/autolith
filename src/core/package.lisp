@@ -1027,8 +1027,6 @@
                 #:ordered-map-map
                 #:ordered-map-set
                 #:ordered-map-values)
-  (:import-from #:yason
-                #:false)
   (:export #:application-command
            #:application-command-aliases
            #:application-command-argument
