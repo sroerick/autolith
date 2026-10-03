@@ -130,9 +130,6 @@
 (defparameter *win32-share-all* 7
   "FILE_SHARE_READ, FILE_SHARE_WRITE, and FILE_SHARE_DELETE together.")
 
-(defparameter *win32-create-new* 1
-  "The CreateFileW disposition that fails when the file exists.")
-
 (defparameter *win32-open-existing* 3
   "The CreateFileW disposition that fails when the file is absent.")
 
@@ -698,25 +695,6 @@ state, and cache under the local one, each in its own subdirectory."
        (if xdg
            (merge-pathnames "autolith/" xdg)
            (merge-pathnames "autolith/cache/" (win32--known-folder "LOCALAPPDATA")))))))
-
-(defmethod platform-create-private-file ((platform win32-platform) pathname)
-  "Create PATHNAME exclusively and restrict it to the current user."
-  (let ((handle (win32--create-file (win32--namestring pathname)
-                                    *win32-generic-write* *win32-share-all* nil
-                                    *win32-create-new* *win32-file-attribute-normal* 0)))
-    (when (= handle *win32-invalid-handle*)
-      (win32--fail ':create pathname))
-    (unwind-protect
-         (progn
-           (win32--set-mode pathname #o600)
-           (let ((stream (sb-sys:make-fd-stream handle
-                                                :output t
-                                                :element-type '(unsigned-byte 8)
-                                                :auto-close t)))
-             (setf handle nil)
-             stream))
-      (when handle
-        (win32--close-handle handle)))))
 
 (-> win32--attributes (pathname) integer)
 (defun win32--attributes (pathname)

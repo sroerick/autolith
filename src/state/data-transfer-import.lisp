@@ -227,87 +227,14 @@
       (data-transfer--unique ordered (lambda (write) (namestring (getf write :path))) nil)
       ordered)))
 
-(-> data-transfer--ensure-directories (pathname pathname) list)
-(defun data-transfer--ensure-directories (root target)
-  "Create private destination parents and return only directories newly created."
-  (let ((created nil)
-        (current (uiop:pathname-directory-pathname target)))
-    (loop until (or (equal current root) (uiop:directory-exists-p current)) do
-      (push current created)
-      (setf current (uiop:pathname-parent-directory-pathname current)))
-    (dolist (directory created)
-      (ensure-directories-exist directory)
-      (platform-make-private *platform* directory))
-    created))
-
 (-> data-transfer--publish-writes (list) integer)
 (defun data-transfer--publish-writes (writes)
-  "Pre-stage replacements and rollback copies; restore every published file on failure."
-  (let ((staged nil) (published nil) (created nil) (complete-p nil)
-        (failure nil) (rollback-failures nil))
-    (unwind-protect
-         (handler-bind ((error (lambda (condition) (setf failure condition))))
-           (dolist (write writes)
-             (let* ((path (getf write :path))
-                    (temporary (data-transfer--temporary path))
-                    (backup (when (getf write :old) (data-transfer--temporary path)))
-                    (entry (list :write write :temporary temporary :backup backup)))
-               (data-transfer--check-path (getf write :root) path)
-               (setf created (append (data-transfer--ensure-directories (getf write :root) path) created))
-               (push entry staged)
-               (data-transfer--private-write temporary (getf write :bytes))
-               (when backup (data-transfer--private-write backup (getf write :old)))))
-           (dolist (entry (reverse staged))
-             (let* ((write (getf entry :write)) (path (getf write :path))
-                    (old (getf write :old)))
-               (data-transfer--check-path (getf write :root) path)
-               (unless (equalp old (when (probe-file path) (data-transfer--bytes path)))
-                 (data-transfer--fail path ':conflict "Destination changed during import."))
-               (sb-sys:without-interrupts
-                 (data-transfer--publish (getf entry :temporary) path (not (null old)))
-                 (push entry published))
-               (data-transfer--remove-staging (getf entry :temporary))))
-           (setf complete-p t)
-           (length published))
-      (unless complete-p
-        (dolist (entry published)
-          (let* ((write (getf entry :write)) (path (getf write :path))
-                 (backup (getf entry :backup)))
-            (handler-case
-                (progn
-                  (data-transfer--check-path (getf write :root) path)
-                  (unless (and (probe-file path)
-                               (equalp (data-transfer--bytes path) (getf write :bytes)))
-                    (data-transfer--fail path ':conflict
-                                         "A published destination changed externally; rollback preserved it."))
-                  (if backup
-                      (uiop:rename-file-overwriting-target backup path)
-                      (delete-file path)))
-              (error (condition)
-                (push (list :pathname (namestring path)
-                            :backup (and backup (namestring backup))
-                            :error (princ-to-string condition)) rollback-failures))))))
-      (dolist (entry staged)
-        (dolist (path (list (getf entry :temporary) (getf entry :backup)))
-          (when (and path (probe-file path)
-                     (not (find (namestring path) rollback-failures
-                                :key (lambda (failure) (getf failure :backup)) :test #'equal)))
-            (ignore-errors (delete-file path)))))
-      (unless complete-p
-        (dolist (directory (sort (remove-duplicates created :test #'equal)
-                                 #'> :key (lambda (path) (length (namestring path)))))
-          (ignore-errors (uiop:delete-empty-directory directory))))
-      (when rollback-failures
-        (error 'data-transfer-rollback-error :pathname nil :reason ':rollback
-               :failures (reverse rollback-failures)
-               :message (format nil "Import failed (~A); some restorations failed. Retained recovery copies: ~S"
-                                failure rollback-failures))))))
-
-(-> data-transfer--remove-staging (pathname) null)
-(defun data-transfer--remove-staging (pathname)
-  "Remove a staging link after its destination has been recorded for rollback."
-  (when (probe-file pathname) (delete-file pathname))
-  nil)
+  "Publish planned WRITES together, checking every path against its trusted root."
+  (data-transfer--publish-files
+   writes
+   :roots (mapcar (lambda (write)
+                    (cons (namestring (getf write :path)) (getf write :root)))
+                  writes)))
 
 (-> data-transfer--install (configuration list) integer)
 (defun data-transfer--install (configuration archive)

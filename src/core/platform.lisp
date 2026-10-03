@@ -287,13 +287,6 @@ directory entries and in the order the host enumerates them, and whether more
 entries remained. Signal PLATFORM-ERROR with operation :LIST when PATHNAME
 cannot be enumerated."))
 
-(defgeneric platform-create-private-file (platform pathname)
-  (:documentation
-   "Create PATHNAME exclusively as a private file and return an octet output stream.
-
-Signal PLATFORM-ERROR with operation :CREATE and reason :EXISTS when anything
-already occupies PATHNAME."))
-
 (defgeneric platform-make-private (platform pathname &key read-only-p)
   (:documentation
    "Restrict existing PATHNAME to the current user.

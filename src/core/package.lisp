@@ -1021,7 +1021,12 @@
                 #:record-version
                 #:snapshot-read
                 #:snapshot-write
-                #:store-error)
+                #:store-error
+                #:store-error-pathname
+                #:files-publish
+                #:publication-conflict
+                #:publication-rollback-failed
+                #:publication-rollback-failed-failures)
   (:import-from #:structlisp
                 #:bounded-sequence-builder
                 #:bounded-sequence-builder-maximum-count

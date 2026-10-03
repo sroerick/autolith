@@ -227,41 +227,41 @@ namestring, so no host directory separator ever has to be split out of a name."
       (setf current (data-transfer--directory-pathname current))))
   nil)
 
-(-> data-transfer--private-write (pathname vector) pathname)
-(defun data-transfer--private-write (pathname bytes)
-  "Write BYTES to a new private file, never following an existing path."
-  (let ((stream (platform-create-private-file *platform* pathname)))
-    (unwind-protect
-         (progn
-           (write-sequence bytes stream)
-           (finish-output stream))
-      (close stream)))
-  pathname)
+(-> data-transfer--publish-files (list &key (:roots list)) integer)
+(defun data-transfer--publish-files (writes &key roots)
+  "Publish WRITES, plists of :PATH, :BYTES and :OLD, as one sexp-store transaction.
 
-(-> data-transfer--publish (pathname pathname boolean) pathname)
-(defun data-transfer--publish (temporary target replace-p)
-  "Publish TEMPORARY atomically, refusing an occupied new TARGET."
-  (if replace-p
-      (uiop:rename-file-overwriting-target temporary target)
-      (platform-publish-new-file *platform* temporary target))
-  target)
-
-(-> data-transfer--temporary (pathname) pathname)
-(defun data-transfer--temporary (target)
-  "Return an unpredictable private staging pathname beside TARGET."
-  (merge-pathnames (format nil ".data-transfer-~A" (make-identifier))
-                   (uiop:pathname-directory-pathname target)))
+ROOTS pairs each path's namestring with the trusted root its path check uses.
+Conflicts and incomplete rollbacks become typed transfer failures."
+  (handler-case
+      (files-publish
+       (mapcar (lambda (write)
+                 (list :pathname (getf write :path)
+                       :octets   (coerce (getf write :bytes) '(vector (unsigned-byte 8)))
+                       :expected (and (getf write :old)
+                                      (coerce (getf write :old) '(vector (unsigned-byte 8))))))
+               writes)
+       :check (lambda (pathname)
+                (let ((root (rest (assoc (namestring pathname) roots :test #'string=))))
+                  (when root
+                    (data-transfer--check-path root pathname)))))
+    (publication-rollback-failed (condition)
+      (error 'data-transfer-rollback-error
+             :pathname nil
+             :reason ':rollback
+             :failures (publication-rollback-failed-failures condition)
+             :message (format nil "Import failed and some restorations failed. Retained recovery copies: ~S"
+                              (publication-rollback-failed-failures condition))))
+    (publication-conflict (condition)
+      (data-transfer--fail (store-error-pathname condition) ':conflict
+                           "The destination changed during the transfer."))))
 
 (-> data-transfer--write-export (pathname list) pathname)
 (defun data-transfer--write-export (pathname archive)
   "Atomically publish a new private ARCHIVE at PATHNAME."
-  (let ((temporary (data-transfer--temporary pathname)))
-    (unwind-protect
-         (progn
-           (data-transfer--private-write temporary
-                                         (data-transfer--forms-bytes (list archive)))
-           (data-transfer--publish temporary pathname nil))
-      (when (probe-file temporary) (delete-file temporary)))))
+  (data-transfer--publish-files
+   (list (list :path pathname :bytes (data-transfer--forms-bytes (list archive)) :old nil)))
+  pathname)
 
 (-> data-transfer--workspace-name (t) (option string))
 (defun data-transfer--workspace-name (directory)

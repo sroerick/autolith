@@ -168,21 +168,6 @@
   (declare (ignore platform))
   (uiop:parse-unix-namestring string))
 
-(defmethod platform-create-private-file ((platform posix-platform) pathname)
-  "Create PATHNAME with O_EXCL and mode 0600."
-  (let ((descriptor
-          (posix--call ':create pathname
-                       (lambda ()
-                         (sb-posix:open (posix--namestring pathname)
-                                        (logior sb-posix:o-wronly
-                                                sb-posix:o-creat
-                                                sb-posix:o-excl)
-                                        #o600)))))
-    (sb-sys:make-fd-stream descriptor
-                           :output t
-                           :element-type '(unsigned-byte 8)
-                           :auto-close t)))
-
 (-> posix--mode (pathname) integer)
 (defun posix--mode (pathname)
   "Return PATHNAME's current mode bits through ls-compat, following links."
