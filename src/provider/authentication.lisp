@@ -165,18 +165,23 @@ its protocol-level close operation."
     (declare (ignore sole-form-p))
     form))
 
+(defparameter *credential-json-maximum-octets* (* 1024 1024)
+  "The largest external credential JSON file read.")
+
 (-> read-json-file-with-retry (pathname &key (:attempts integer)) json-object)
 (defun read-json-file-with-retry (pathname &key (attempts 3))
-  "Read PATHNAME as JSON, retrying transient partial rewrites up to ATTEMPTS."
+  "Read PATHNAME as JSON, retrying transient partial rewrites up to ATTEMPTS.
+
+The file belongs to another tool, so a symbolic link to it is followed."
   (loop for attempt from 1 to attempts
         do (handler-case
-               (with-open-file (stream pathname
-                                       :direction ':input
-                                       :external-format ':utf-8)
-                 (let ((value (yason:parse stream)))
-                   (unless (json-object-p value)
-                     (error "Credential root is not a JSON object."))
-                   (return value)))
+               (let ((value (json-decode
+                             (read-file-text pathname
+                                             :maximum-octets *credential-json-maximum-octets*
+                                             :follow-links-p t))))
+                 (unless (json-object-p value)
+                   (error "Credential root is not a JSON object."))
+                 (return value))
              (error (condition)
                (when (= attempt attempts)
                  (error condition))
