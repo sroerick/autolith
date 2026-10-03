@@ -576,6 +576,8 @@
   test-localgroup-picker-waits-for-relayed-input
   test-localgroup-remote-detach-never-pauses-reader
   test-localgroup-detached-terminal-lifecycle
+  test-localgroup-session-exit-relay
+  test-localgroup-relay-exit
   test-localgroup-protocol
   test-localgroup-orphan-reconciliation
   test-localgroup-attachments)

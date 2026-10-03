@@ -550,6 +550,32 @@ it on the normal screen after its alternate buffer closes."
 (defparameter *main-update-request-status* 76
   "The process status asking a packaged outer launcher to perform an update.")
 
+(deftype main-launcher-exit-condition ()
+  "A condition ending the session with a status the stable launcher acts on."
+  '(or update-requested rollback-requested fatal-control-path-error))
+
+(defgeneric main--launcher-exit (condition)
+  (:documentation
+   "Return the launcher status for session-ending CONDITION and the message announcing it."))
+
+(defmethod main--launcher-exit ((condition update-requested))
+  "Ask the packaged outer launcher to install the requested release."
+  (values *main-update-request-status*
+          (format nil "Autolith will update to ~A after restoring the terminal."
+                  (subseq (update-requested-tag condition) 1))))
+
+(defmethod main--launcher-exit ((condition rollback-requested))
+  "Ask the stable launcher to start the selected retained generation."
+  (values *main-rollback-recovery-status*
+          (format nil "Autolith is rolling back to retained generation ~A."
+                  (rollback-requested-generation-id condition))))
+
+(defmethod main--launcher-exit ((condition fatal-control-path-error))
+  "Ask the stable launcher to boot recovery after a fatal error."
+  (values *main-fatal-recovery-status*
+          (format nil "Autolith entered recovery after a fatal error. Capsule: ~A"
+                  (fatal-control-path-error-capsule-pathname condition))))
+
 (-> main--authentication-provider (configuration (option string)) model-provider)
 (defun main--authentication-provider (configuration selection)
   "Return a provider for the active or explicitly selected registration."
@@ -817,15 +843,17 @@ dependencies."
                                (null effective-resume-id))
                           :recovery-diagnosis recovery-diagnosis)))
         (when session-id
-          (let ((record (localgroup--find-record configuration session-id)))
-            (handler-case
-                (localgroup-attach-record configuration record ':control)
-              (serious-condition (condition)
-                ;; The freshly spawned session has no other owner yet, so
-                ;; a failed first attach would leak it as an idle
-                ;; detached process.
-                (ignore-errors (localgroup-query-record record ':kill))
-                (error condition))))
+          (let* ((record (localgroup--find-record configuration session-id))
+                 (exit
+                   (handler-case
+                       (localgroup-attach-record configuration record ':control)
+                     (serious-condition (condition)
+                       ;; The freshly spawned session has no other owner yet, so
+                       ;; a failed first attach would leak it as an idle
+                       ;; detached process.
+                       (ignore-errors (localgroup-query-record record ':kill))
+                       (error condition)))))
+            (localgroup-relay-exit exit ':control))
           (return-from main--start-session nil))))
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*
@@ -848,32 +876,30 @@ dependencies."
           (format *error-output* "Intentional crash capsule: ~A~%" capsule)
           (uiop:quit *main-fatal-recovery-status*)))
       (handler-case
-          (application-run
-           *active-application*
-           :initial-command (and resume-command-p
-                                 (null effective-resume-id)
-                                 "(resume)")
-           :initial-input
-           (if handoff-record
-               (localgroup-handoff-initial-input handoff-record)
-               (main--initial-image-input image-values))
-           :recovery-diagnosis recovery-diagnosis
-           :resume-offer-p resume-command-p)
-        (rollback-requested (condition)
-          (format *error-output*
-                  "Autolith is rolling back to retained generation ~A.~%"
-                  (rollback-requested-generation-id condition))
-          (uiop:quit *main-rollback-recovery-status*))
-        (update-requested (condition)
-          (format *error-output*
-                  "Autolith will update to ~A after restoring the terminal.~%"
-                  (subseq (update-requested-tag condition) 1))
-          (uiop:quit *main-update-request-status*))
-        (fatal-control-path-error (condition)
-          (format *error-output*
-                  "Autolith entered recovery after a fatal error. Capsule: ~A~%"
-                  (fatal-control-path-error-capsule-pathname condition))
-          (uiop:quit *main-fatal-recovery-status*)))))
+          ;; A detached session's launcher only logs this exit, so tell the
+          ;; attached terminals before the session unwinds and closes them.
+          (handler-bind ((main-launcher-exit-condition
+                           (lambda (condition)
+                             (multiple-value-bind (status message)
+                                 (main--launcher-exit condition)
+                               (localgroup-finish-attachments *active-application*
+                                                              :status  status
+                                                              :message message)))))
+            (application-run
+             *active-application*
+             :initial-command (and resume-command-p
+                                   (null effective-resume-id)
+                                   "(resume)")
+             :initial-input
+             (if handoff-record
+                 (localgroup-handoff-initial-input handoff-record)
+                 (main--initial-image-input image-values))
+             :recovery-diagnosis recovery-diagnosis
+             :resume-offer-p resume-command-p))
+        (main-launcher-exit-condition (condition)
+          (multiple-value-bind (status message) (main--launcher-exit condition)
+            (format *error-output* "~A~%" message)
+            (uiop:quit status))))))
   nil)
 
 (-> main--client-session-p

@@ -472,7 +472,9 @@ HEADER-P renders field labels rather than status values."
   nil)
 
 (defun localgroup--attach-terminal-loop (socket-stream terminal mode &key socket)
-  "Run the attachment loop, restoring client screen ownership even after connection loss."
+  "Run the attachment loop, restoring client screen ownership even after connection loss.
+
+Return the session's exit plist when it ended the attachment while exiting."
   (let ((output (make-instance 'fullscreen-output-stream :output *standard-output*)))
     (unwind-protect
          (image-daemon:daemon-attach-client-run
@@ -516,7 +518,10 @@ HEADER-P renders field labels rather than status values."
      (sleep 0.05))))
 
 (defun localgroup-attach-record (configuration entry mode)
-  "Attach the current interactive terminal to endpoint ENTRY with MODE."
+  "Attach the current interactive terminal to endpoint ENTRY with MODE.
+
+Return the session's (:STATUS STATUS :MESSAGE MESSAGE) exit when it ended the
+attachment by exiting toward its launcher, and NIL after a detach or disconnect."
   (let* ((record (rest entry))
          (socket nil)
          (socket-stream nil)
@@ -586,7 +591,23 @@ HEADER-P renders field labels rather than status values."
       (when terminal (ignore-errors (terminal-stop terminal)))
       (when socket-stream (ignore-errors (close socket-stream)))
       (when (and socket (null socket-stream))
-        (ignore-errors (sb-bsd-sockets:socket-close socket)))))
+        (ignore-errors (sb-bsd-sockets:socket-close socket))))))
+
+(-> localgroup-relay-exit ((option list) keyword) null)
+(defun localgroup-relay-exit (exit mode)
+  "Finish this relaying process as the detached session did when EXIT is present.
+
+A controlling terminal reports EXIT's message and exits with its status, so the
+outer launcher updates, rolls back, or recovers exactly as it would for a
+foreground session. A read-only observer only reports the message, leaving
+that action to the controlling terminal."
+  (when exit
+    (let ((message (getf exit :message)))
+      (when message
+        (format *error-output* "~&~A~%" message)
+        (finish-output *error-output*)))
+    (unless (eq mode ':read-only)
+      (uiop:quit (getf exit :status))))
   nil)
 
 
@@ -688,13 +709,15 @@ HEADER-P renders field labels rather than status values."
          (error 'localgroup-error
                 :message "Choose at most one of --read-only and --take-over."
                 :operation ':arguments))
-       (let ((configuration (localgroup--client-configuration)))
-         (localgroup-attach-record
-          configuration
-          (localgroup--find-record configuration session-id)
-          (cond (read-only-p ':read-only)
-                (take-over-p ':take-over)
-                (t ':control))))))))
+       (let ((configuration (localgroup--client-configuration))
+             (mode (cond (read-only-p ':read-only)
+                         (take-over-p ':take-over)
+                         (t ':control))))
+         (localgroup-relay-exit
+          (localgroup-attach-record configuration
+                                    (localgroup--find-record configuration session-id)
+                                    mode)
+          mode))))))
 
 (-> localgroup--operation-command (string string keyword) clingon:command)
 (defun localgroup--operation-command (name description operation)

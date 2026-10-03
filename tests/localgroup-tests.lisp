@@ -573,3 +573,94 @@
       (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
                                              ':ignore)))
   nil)
+
+(-> test-localgroup-session-exit-relay () null)
+(defun test-localgroup-session-exit-relay ()
+  "Test a detached session's launcher exit reaches its controlling terminal."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let* ((terminal (localgroup-terminal-create))
+           (ui (terminal-ui-create :terminal terminal))
+           (application
+             (make-instance 'application :configuration configuration
+                                         :conversation (conversation-create configuration)
+                                         :ui ui))
+           (controller
+             (make-instance 'application-input-controller :application application
+                                                          :main-thread (current-thread)))
+           (message "Autolith will update to 9.9.9 after restoring the terminal.")
+           (socket nil)
+           (stream nil))
+      (setf (application-input-controller application) controller)
+      (unwind-protect
+           (progn
+             (configuration-ensure-directories configuration)
+             (terminal-ui-start ui)
+             (multiple-value-bind (attached-socket attached-stream response)
+                 (test-localgroup--attach (localgroup-start application) ':control)
+               (setf socket attached-socket
+                     stream attached-stream)
+               (test-assert (eq (first response) ':attached)
+                            "the detached session accepts a controlling terminal"))
+             (test-assert (localgroup-finish-attachments application
+                                                         :status  76
+                                                         :message message)
+                          "a detached session finishes its relay attachments")
+             (test-assert
+              (equal (loop for packet = (test-localgroup--read-packet stream)
+                           until (eq (first packet) ':exit)
+                           finally (return packet))
+                     (list :exit :status 76 :message message))
+              "the controlling terminal receives the launcher status and message")
+             (multiple-value-bind (plain plain-controller)
+                 (test-localgroup--application configuration)
+               (unwind-protect
+                    (test-assert
+                     (not (localgroup-finish-attachments plain :status 76 :message message))
+                     "a session without a relay has no attachments to finish")
+                 (application-input-controller-stop plain-controller)
+                 (application-release-conversation-lease plain))))
+        (when stream (ignore-errors (close stream)))
+        (when (and socket (null stream))
+          (ignore-errors (sb-bsd-sockets:socket-close socket)))
+        (when (application-localgroup-session application) (localgroup-stop application))
+        (application-input-controller-stop controller)
+        (ignore-errors (terminal-ui-stop ui))
+        (application-release-conversation-lease application))))
+  nil)
+
+(-> test-localgroup-relay-exit () null)
+(defun test-localgroup-relay-exit ()
+  "Test the relaying process exits like its session, and observers only report it."
+  (let ((statuses nil)
+        (exit (list :status 76 :message "Autolith will update to 9.9.9.")))
+    (test-call-with-function-replacements
+     (list (list 'uiop:quit (lambda (&optional (status 0) &rest ignored)
+                              (declare (ignore ignored))
+                              (push status statuses))))
+     (lambda ()
+       (let ((report (with-output-to-string (*error-output*)
+                       (localgroup-relay-exit exit ':control)
+                       (localgroup-relay-exit exit ':read-only)
+                       (localgroup-relay-exit nil ':control))))
+         (test-assert (equal statuses '(76))
+                      "only the controlling terminal exits with the session's status")
+         (test-assert (= 2 (count #\Newline report))
+                      "every attached terminal reports the session's exit message")))))
+  (dolist (case '((:update 76 "update to 1.2.3")
+                  (:rollback 75 "retained generation G1")
+                  (:fatal 70 "Capsule: ")))
+    (destructuring-bind (kind status text) case
+      (multiple-value-bind (actual-status message)
+          (main--launcher-exit
+           (ecase kind
+             (:update (make-condition 'update-requested :message "Update." :tag "v1.2.3"))
+             (:rollback (make-condition 'rollback-requested :message "Roll back."
+                                                            :generation-id "G1"))
+             (:fatal (make-condition 'fatal-control-path-error
+                                     :message "Fatal."
+                                     :cause (make-condition 'simple-error)
+                                     :capsule-pathname #P"/tmp/capsule.sexp"))))
+        (test-assert (and (= actual-status status) (search text message))
+                     (format nil "a ~(~A~) exit maps to launcher status ~D" kind status)))))
+  nil)
