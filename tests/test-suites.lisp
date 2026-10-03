@@ -389,6 +389,7 @@
 
 (define-test-suite active-image
   test-active-image-build-record
+  test-active-image-process-command
   test-image-commit-surface-battery
   test-image-commit-replay-probe)
 

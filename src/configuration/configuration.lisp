@@ -134,6 +134,16 @@ exist yet, and is only put in directory form."
              (declare (ignore configuration))
              (platform-application-root *platform* ':data)))
 
+(define-setting :active-image-core (absolute-file-setting)
+  :label "Active image core"
+  :group :paths
+  :documentation "The preloaded active image that starts fresh Autolith processes."
+  :environment "AUTOLITH_ACTIVE_CORE"
+  :visible-p nil
+  :default (lambda (configuration)
+             (merge-pathnames "active/autolith-active.core"
+                              (config :data-root configuration))))
+
 (define-setting :state-root (directory-setting)
   :label "State root"
   :group :paths

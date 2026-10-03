@@ -204,7 +204,10 @@ provider request --> semantic events --> agent --> validated tool calls
   bundled native helper outside writable scopes. Both Windows authorization
   modes execute commands through native PowerShell.
 - Search is one supervised native helper per fff registry.
-- =lisp.*= operations run in named persistent SBCL subprocesses.
+- =lisp.*= operations run in named persistent SBCL subprocesses. A pristine
+  worker, like the private replay probe, boots the installed active core when
+  its manifest matches the source and runtime exactly, and loads the system
+  from source otherwise; the choice is made again at every start.
 - Worker images never participate in active startup or recovery
 - =sexp-config= reads skills, MCP configuration, child roles, etc.
 - Tasks use =cl-jobpond= for admission, threads, deadlines, and
@@ -304,7 +307,8 @@ stable launcher
    +--> explicit generation or rollback --> recovery --> retained generation
 #+END_SRC
 
-- =active-image.lisp= builds the preloaded image for normal startup
+- =active-image.lisp= builds the preloaded image for normal startup and for
+  every fresh Autolith process, such as pristine =lisp.*= workers
 - =script/bootstrap= finds a supported SBCL, builds the pristine recovery
   core and a separate active image, and boot-probes both
 - Updates validate provenance and refresh a readable availability cache.

@@ -864,26 +864,18 @@ signal and the middle is the safe part to drop."
 A failing probe keeps its complete output beside SCRIPT in
 replay-probe.log and carries the output tail in the signaled error, so
 the failure stays diagnosable after the tool call ends."
-  (let* ((source-root (config :source-root configuration))
-         (entry (merge-pathnames "bin/autolith-active" source-root))
-         (configured-command (uiop:getenv "AUTOLITH_SBCL"))
-         (sbcl-command (if (non-empty-string-p configured-command)
-                           configured-command
-                           "sbcl"))
-         (expected (image-commit-replay-probe-output identifier))
+  (let* ((expected (image-commit-replay-probe-output identifier))
          (log-pathname (merge-pathnames
                         "replay-probe.log"
                         (uiop:pathname-directory-pathname script))))
     (multiple-value-bind (output error-output exit-code)
         (handler-case
             (uiop:run-program
-             (list sbcl-command
-                   "--noinform"
-                   "--script"
-                   (namestring entry)
-                   *image-commit-replay-probe-argument*
-                   (namestring script)
-                   identifier)
+             (active-image-process-command
+              configuration
+              (list *image-commit-replay-probe-argument*
+                    (namestring script)
+                    identifier))
              :input nil
              :output ':string
              :error-output ':output

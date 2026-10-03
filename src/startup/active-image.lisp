@@ -183,6 +183,68 @@
         :architecture (getf (rest build-record) :architecture)))
 
 
+;;;; -- Installed Image Selection --
+
+(-> active-image-installed-build-record (pathname) (option list))
+(defun active-image-installed-build-record (core-pathname)
+  "Return the build record in CORE-PATHNAME's manifest, or NIL when it is unusable."
+  (let ((manifest (merge-pathnames "manifest.sexp" core-pathname)))
+    (handler-case
+        (when (probe-file manifest)
+          (multiple-value-bind (form sole-form-p) (snapshot-read manifest)
+            (when (and sole-form-p (consp form) (eq (first form) :active-image))
+              (let ((record
+                      (cons :active-image-build
+                            (loop for key in '(:version :source-commit :source-clean-p
+                                               :source-files :sbcl-version
+                                               :operating-system
+                                               :operating-system-version
+                                               :architecture)
+                                  append (list key (getf (rest form) key))))))
+                (and (active-image-build-record-p record) record)))))
+      (error ()
+        nil))))
+
+(-> active-image-current-core (configuration) (option pathname))
+(defun active-image-current-core (configuration)
+  "Return CONFIGURATION's installed active core when it matches the source, else NIL.
+
+The manifest beside the core carries the build record that the core embeds, so
+the exact source and runtime comparison needs no extra boot of the image."
+  (let ((core (config :active-image-core configuration)))
+    (and (probe-file core)
+         (let ((record (active-image-installed-build-record core)))
+           (and record
+                (active-image-build-record-compatible-p
+                 record (config :source-root configuration))))
+         core)))
+
+(-> active-image-process-command (configuration list) list)
+(defun active-image-process-command (configuration arguments)
+  "Return the argv running a fresh Autolith with command-line ARGUMENTS.
+
+The process boots the current active core when one matches the source, which
+takes a fraction of a second, and otherwise loads the system from source."
+  (let* ((configured-command (uiop:getenv "AUTOLITH_SBCL"))
+         (sbcl-command (if (non-empty-string-p configured-command)
+                           configured-command
+                           "sbcl"))
+         (source-root (config :source-root configuration))
+         (core (active-image-current-core configuration)))
+    (if core
+        (list* sbcl-command
+               "--noinform"
+               "--core" (namestring core)
+               "--end-runtime-options"
+               (namestring source-root)
+               arguments)
+        (list* sbcl-command
+               "--noinform"
+               "--script"
+               (namestring (merge-pathnames "bin/autolith-active" source-root))
+               arguments))))
+
+
 ;;;; -- Image Entry and Publication --
 
 (-> active-image-main () null)

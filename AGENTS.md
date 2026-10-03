@@ -86,6 +86,11 @@ copy their architecture wholesale.
   evaluation fails until that entry exists.
 - Source is authoritative for clean rebuilds. Saved cores preserve exact
   working live states, but never replace tracked source.
+- Dumped images are the normal way to start Autolith. Fresh Autolith
+  processes, including pristine workers and test children, boot a saved core
+  whose recorded provenance matches the source; loading FASLs is only the
+  fallback when no matching core exists. Do not add launch paths or test
+  fixtures that load the whole system in every child.
 - Operate on Lisp forms for durable source edits. Do not use blind regular
   expression replacement of source code.
 - Keep platform-specific behavior behind narrow adapters.

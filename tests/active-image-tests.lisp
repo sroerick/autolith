@@ -45,6 +45,46 @@
        "active-image compatibility rejects another OS version")))
   nil)
 
+(-> test-active-image-process-command () null)
+(defun test-active-image-process-command ()
+  "Test fresh Autolith processes boot a matching active core and fall back to source."
+  (with-test-configuration (configuration root)
+    (let* ((core (merge-pathnames "active/autolith-active.core" root))
+           (configuration (configuration-copy configuration :active-image-core core))
+           (source-root (config :source-root configuration))
+           (record (active-image-build-record-create source-root)))
+      (flet ((command ()
+               "Return the fresh-process argv for one worker argument."
+               (active-image-process-command configuration '("--worker")))
+             (install (record)
+               "Install an empty core whose manifest names RECORD."
+               (ensure-directories-exist core)
+               (with-open-file (stream core :direction ':output
+                                            :if-exists ':supersede
+                                            :if-does-not-exist ':create)
+                 (write-string "core" stream))
+               (snapshot-write (merge-pathnames "manifest.sexp" core)
+                               (active-image-manifest-form core record))))
+        (test-assert (and (member "--script" (command) :test #'string=)
+                          (string= "--worker" (car (last (command)))))
+                     "without an installed core the process loads from source")
+        (install record)
+        (test-assert (equal (rest (command))
+                            (list "--noinform" "--core" (namestring core)
+                                  "--end-runtime-options" (namestring source-root)
+                                  "--worker"))
+                     "a core whose manifest matches the source boots directly")
+        (let ((stale (copy-tree record)))
+          (setf (second (first (getf (rest stale) :source-files)))
+                "0000000000000000000000000000000000000000")
+          (install stale)
+          (test-assert (member "--script" (command) :test #'string=)
+                       "a core built from other source is never booted"))
+        (snapshot-write (merge-pathnames "manifest.sexp" core) '(:active-image :version 1))
+        (test-assert (member "--script" (command) :test #'string=)
+                     "an incomplete manifest falls back to source"))))
+  nil)
+
 (-> test-image-commit-surface-battery () null)
 (defun test-image-commit-surface-battery ()
   "Test the replay surface battery passes live and names missing pieces."

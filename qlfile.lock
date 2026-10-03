@@ -164,8 +164,8 @@
   :version "git-f4fb761c233b8599d1f9f572281bced26c114e82"))
 ("sbcl-workers" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-workers.git" :ref "b7f6d84daed6886c15eda002789a76ee85f167b4")
-  :version "git-b7f6d84daed6886c15eda002789a76ee85f167b4"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-workers.git" :ref "2aaa1bd6700fd10b2521af04afd43c77209ddb7c")
+  :version "git-2aaa1bd6700fd10b2521af04afd43c77209ddb7c"))
 ("structlisp" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/structlisp.git" :ref "66bbfbe947b69f3105f71f5e4293637decc91746")
