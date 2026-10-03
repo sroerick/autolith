@@ -837,6 +837,149 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                "a malformed map element is refused before any frame runs")
   nil)
 
+(-> inference-tests--map-interruption (keyword (integer 1)) null)
+(defun inference-tests--map-interruption (mode concurrency)
+  "Interrupt a map with running and queued frames and verify complete cleanup."
+  (let* ((owner-pool (make-job-pool :maximum-concurrency 1 :start-threads-p nil))
+         (create-pool (symbol-function 'make-job-pool))
+         (await-job (symbol-function 'job-await))
+         (lock (make-lock "Inference map interruption test"))
+         (entered 0)
+         (unwound 0)
+         (map-pool nil))
+    (labels ((ready-p ()
+               (with-lock-held (lock)
+                 (= entered concurrency)))
+
+             (run-map ()
+               (rlm-map '("one" "two" "three" "four" "five" "six")
+                        :concurrency concurrency
+                        :provider (make-instance 'rlm-map-test-provider)
+                        :configuration (test-configuration))))
+      (unwind-protect
+           (test-call-with-function-replacements
+            (list
+             (list 'make-job-pool
+                   (lambda (&rest arguments)
+                     (setf map-pool (apply create-pool arguments))))
+             (list 'rlm-map--run-item
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     (unwind-protect
+                          (progn
+                            (with-lock-held (lock)
+                              (incf entered))
+                            (loop (sleep 0.01)))
+                       (with-lock-held (lock)
+                         (incf unwound)))))
+             (list 'job-await
+                   (lambda (job &key timeout-seconds)
+                     (if (eq mode ':escape)
+                         (progn
+                           (test-assert (task-tests--wait-until #'ready-p 5)
+                                        "frames enter before the caller escapes")
+                           (throw 'map-caller-escape ':escaped))
+                         (funcall await-job job :timeout-seconds timeout-seconds)))))
+            (lambda ()
+              (if (eq mode ':escape)
+                  (test-assert (eq (catch 'map-caller-escape (run-map)) ':escaped)
+                               "map cleanup preserves the caller's nonlocal exit")
+                  (let ((owner
+                          (first
+                           (job-pool-submit-batch
+                            owner-pool
+                            (list (list :function
+                                        (lambda (job)
+                                          (declare (ignore job))
+                                          (run-map))))))))
+                    (unwind-protect
+                         (progn
+                           (test-assert (task-tests--wait-until #'ready-p 5)
+                                        "frames enter before the owner is cancelled")
+                           (test-assert (= (job-pool-queued-count map-pool)
+                                           (- 6 concurrency))
+                                        "excess frames are queued under the concurrency cap")
+                           (job-cancel owner :reason ':user)
+                           (let ((snapshot (funcall await-job owner :timeout-seconds 5)))
+                             (test-assert (eq (getf snapshot :state) ':aborted)
+                                          "owner cancellation is not a successful map result")
+                             (test-assert (eq (getf snapshot :cancellation-reason) ':user)
+                                          "the owner keeps its cancellation reason")))
+                      (job-pool-close owner-pool))))
+              (test-assert (eq (job-pool-lifecycle-state map-pool) ':closed)
+                           "the interrupted map stops its worker pool")
+              (test-assert (and (zerop (job-pool-live-count map-pool))
+                                (zerop (job-pool-active-count map-pool)))
+                           "no running or queued map frame survives interruption")
+              (test-assert (= entered unwound concurrency)
+                           "running frames unwind and queued frames never start")
+              (test-assert
+               (every (lambda (job) (eq (job-state job) ':aborted))
+                      (job-pool-list-jobs map-pool))
+               "interruption aborts every unfinished frame")))
+        (job-pool-close owner-pool)
+        (when map-pool
+          (job-pool-close map-pool)))))
+  nil)
+
+(-> test-rlm-map-supervision () null)
+(defun test-rlm-map-supervision ()
+  "Test frame supervision and map cleanup on cancellation and nonlocal escape."
+  (dolist (case '((:cancel 1) (:cancel 2) (:escape 2)))
+    (inference-tests--map-interruption (first case) (second case)))
+  (test-call-with-function-replacements
+   (list
+    (list 'rlm-map--run-item
+          (lambda (item &rest arguments)
+            (declare (ignore arguments))
+            (cond
+              ((string= (getf item :task) "failed")
+               (error 'rlm-inference-error :message "supervised frame failure"))
+              ((string= (getf item :task) "aborted")
+               (error 'job-aborted :identifier "frame"
+                                   :reason ':user
+                                   :message "frame cancelled"))
+              (t
+               (list :task (getf item :task) :value "done"))))))
+   (lambda ()
+     (let ((results
+             (rlm-map (append '("failed" "aborted")
+                              (loop repeat 20 collect "completed"))
+                      :concurrency 2
+                      :provider (make-instance 'rlm-map-test-provider)
+                      :configuration (test-configuration))))
+       (test-assert (search "supervised frame failure" (getf (first results) :error))
+                    "a failed supervised job is a per-frame error")
+       (test-assert (getf (second results) :error)
+                    "an aborted frame is reported without dropping its siblings")
+       (test-assert (and (= (length results) 22)
+                         (every (lambda (result) (equal (getf result :value) "done"))
+                                (rest (rest results))))
+                    "all admitted siblings finish beyond the library's default batch bound"))))
+  (let ((pool (make-job-pool :start-threads-p nil))
+        (close-pool (symbol-function 'job-pool-close))
+        (attempts 0))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list (list 'job-pool-close
+                      (lambda (observed)
+                        (if (= (incf attempts) 1)
+                            nil
+                            (funcall close-pool observed)))))
+          (lambda ()
+            (handler-bind
+                ((rlm-map-shutdown-error
+                   (lambda (condition)
+                     (test-assert (eq (rlm-map-shutdown-error-pool condition) pool)
+                                  "an incomplete shutdown retains the pool for recovery")
+                     (invoke-restart 'retry-close))))
+              (rlm-map--close-pool pool))
+            (test-assert (and (= attempts 2)
+                              (eq (job-pool-lifecycle-state pool) ':closed))
+                         "retry-close completes bounded shutdown")))
+      (funcall close-pool pool)))
+  nil)
+
 (-> test-rlm-map-tool () null)
 (defun test-rlm-map-tool ()
   "Test rlm.map fans tool tasks out and bounds the fan width."

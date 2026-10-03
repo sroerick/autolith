@@ -488,6 +488,7 @@
   test-rlm-infer-tool
   test-rlm-tool-routing
   test-rlm-map
+  test-rlm-map-supervision
   test-rlm-map-tool
   test-rlm-policies
   test-rlm-distill-validation

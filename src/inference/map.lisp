@@ -55,6 +55,33 @@
       (error (condition)
         (list ':task task ':error (format nil "~A" condition))))))
 
+(-> rlm-map--job-result (list job) list)
+(defun rlm-map--job-result (item job)
+  "Await JOB and return its frame outcome, including supervised failures."
+  (let ((snapshot (job-await job)))
+    (case (getf snapshot :state)
+      (:completed
+       (getf snapshot :result))
+      (otherwise
+       (list :task (getf item :task)
+             :error (or (getf snapshot :condition-report)
+                        (format nil "Inference frame ~A (~A)."
+                                (getf snapshot :state)
+                                (getf snapshot :cancellation-reason))))))))
+
+(-> rlm-map--close-pool (job-pool) null)
+(defun rlm-map--close-pool (pool)
+  "Stop POOL, retaining it in a recoverable condition if shutdown times out."
+  (loop
+    (when (job-pool-close pool)
+      (return nil))
+    (restart-case
+        (error 'rlm-map-shutdown-error
+               :pool pool
+               :message "Inference map workers did not stop before the shutdown deadline.")
+      (retry-close ()
+        :report "Retry stopping the inference map workers."))))
+
 (-> rlm-map
     (list &key (:context t)
                (:contract t)
@@ -95,31 +122,51 @@ return (:task ... :error ...). Finished siblings are never discarded."
                    (when (eq capabilities ':read)
                      (rlm--environment-registry))))
              (budget (or budget (rlm-budget-create)))
-             (results (make-array (length items) :initial-element nil))
-             (next 0)
-             (claim-lock (make-lock "Autolith inference map"))
              (worker-count (max 1 (min concurrency
                                        *rlm-map-maximum-concurrency*
-                                       (length items)))))
-        (flet ((work ()
-                 (loop
-                   (let ((index
-                           (with-lock-held (claim-lock)
-                             (when (< next (length items))
-                               (prog1 next (incf next))))))
-                     (unless index
-                       (return))
-                     (setf (aref results index)
-                           (rlm-map--run-item
-                            (aref items index) context contract budget
-                            capabilities provider configuration source-registry
-                            :index index
-                            :total (length items)
-                            :activity-callback activity-callback))))))
-          (if (= worker-count 1)
-              (work)
-              (mapc #'join-thread
-                    (loop repeat worker-count
-                          collect (make-thread #'work
-                                               :name "autolith-rlm-map")))))
-        (coerce results 'list)))))
+                                       (length items))))
+             (pool (make-job-pool
+                    :name "Autolith inference map"
+                    :maximum-concurrency worker-count
+                    :maximum-batch-size (length items)
+                    :maximum-live-jobs (length items)
+                    :maximum-runtime-milliseconds 0
+                    :terminal-retention-limit (length items)
+                    :start-threads-p nil)))
+        (unwind-protect
+             (let ((jobs
+                     (job-pool-submit-batch
+                      pool
+                      (loop for item across items
+                            for index from 0
+                            collect
+                            (let ((item item)
+                                  (index index))
+                              (list
+                               :name (format nil "Inference frame ~D/~D"
+                                             (1+ index) (length items))
+                               :function
+                               (lambda (job)
+                                 (declare (ignore job))
+                                 (rlm-map--run-item
+                                  item context contract budget
+                                  capabilities provider configuration source-registry
+                                  :index index
+                                  :total (length items)
+                                  :activity-callback activity-callback))))))))
+               (loop for item across items
+                     for job in jobs
+                     collect (rlm-map--job-result item job)))
+          (rlm-map--close-pool pool))))))
+
+
+;;;; -- Shutdown Failure --
+
+(define-condition rlm-map-shutdown-error (rlm-inference-error)
+  ((pool
+    :initarg :pool
+    :reader rlm-map-shutdown-error-pool
+    :type job-pool
+    :documentation "The map pool still owning workers after bounded shutdown."))
+  (:documentation
+   "An inference map could not stop its workers; RETRY-CLOSE retries shutdown."))

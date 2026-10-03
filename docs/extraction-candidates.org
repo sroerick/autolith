@@ -255,9 +255,11 @@ result ledger. The worker's packet framing is in =environment.lisp= because
 its image does not load image-daemon.
 
 ** DONE rlm-map fans out on raw threads (cl-jobpond)
-=src/inference/map.lisp= 61-125 is a hand-rolled pool with a claimed index
-under a lock and no cancellation or supervision. cl-jobpond makes inference
-frames cancellable.
+=rlm-map= admits one cl-jobpond job per frame into a bounded local pool and
+collects outcomes in input order. Caller cancellation or nonlocal escape
+closes the pool, aborting running and queued frames. Shared budgets and
+partial sibling results retain their existing semantics; an incomplete
+shutdown exposes the pool with a =retry-close= restart.
 
 ** Static API-key credentials (cl-rfc8628 for the source and manager types, clinedi for the hidden prompt)
 =src/provider/api-key.lisp= 375-468 (environment source and static manager),
