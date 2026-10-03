@@ -23,7 +23,5 @@
                  "hyperlinks leave the visible text unchanged")
     (test-assert (not (search (format nil "~C]8;;" #\Escape)
                               (terminal--render-spans plain-terminal spans)))
-                 "unstyled output carries no OSC 8 controls")
-    (test-assert (eq spans (terminal--presentation-spans spans))
-                 "span lists without widgets pass through unchanged"))
+                 "unstyled output carries no OSC 8 controls"))
   nil)

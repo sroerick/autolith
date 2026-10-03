@@ -72,11 +72,12 @@ and key sets by hand; =sexp-store:record-check= already does that. The same
 pattern recurs in =user-operation-context.lisp= 59 and
 =state/data-transfer.lisp= 52.
 
-** Clickable widget spans (cl-termdown spans)
-=src/terminal/style.lisp= 344-457 and the region bookkeeping in =ui.lisp=
-2200-2236 and 2391-2412. Labels carrying action payloads whose character
-extents survive concatenation. Only worth moving together with the viewport;
-the =terminal-style= type would become an open role as cl-termdown spans are.
+** DONE Clickable widget spans (cl-termdown spans)
+cl-termdown 681f4bc adds widgets (=make-widget= with a role, label and action),
+which every span function presents as their label, plus =widget-regions=,
+=shift-regions= and =region-action=. Autolith keeps its closed
+=terminal-style= by checking widget roles in =terminal-styled-text-p=. The
+fullscreen viewport that consumes the regions remains its own candidate.
 
 ** Smaller items
 - JSON to readable Lisp form writer with budgets, depth and item limits

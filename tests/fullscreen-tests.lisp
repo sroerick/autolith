@@ -192,7 +192,7 @@
        (list (terminal-span ':plain "see https://example.com/doc now")
              (terminal-span ':plain (string #\Newline))
              (terminal-span ':dim "  ``` ")
-             (terminal-widget ':code-copy "⧉ copy" '(:copy "(+ 1 2)"))))
+             (termdown:make-widget ':code-copy "⧉ copy" '(:copy "(+ 1 2)"))))
       (terminal-ui-process-event ui '(:click 10 1))
       (test-assert (equal '(:open-url "https://example.com/doc") (first actions))
                    "clicking a URL opens it")
@@ -206,7 +206,7 @@
       (terminal-ui-stream-update
        ui
        :rows (list (list (terminal-span ':plain "streamed ")
-                         (terminal-widget ':code-copy "⧉ copy" '(:copy "streamed source"))))
+                         (termdown:make-widget ':code-copy "⧉ copy" '(:copy "streamed source"))))
        :tail nil)
       (terminal-ui-process-event ui '(:click 12 4))
       (test-assert (equal '(:copy "streamed source") (first actions))
@@ -230,7 +230,7 @@
       (setf (terminal-ui-live-output-suspended-p ui) t)
       (terminal-ui-append-finalized
        ui ':deferred
-       (list (terminal-widget ':code-copy "⧉ copy" '(:copy "deferred"))))
+       (list (termdown:make-widget ':code-copy "⧉ copy" '(:copy "deferred"))))
       (setf (terminal-ui-live-output-suspended-p ui) nil)
       (terminal-ui--paint-live ui)
       (terminal-ui-process-event ui ':scroll-bottom)

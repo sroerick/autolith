@@ -1906,9 +1906,9 @@ the fence's raw source; that span becomes a widget copying the source."
         (loop for row in rows
               collect (loop for span in row
                             collect (if (eq (terminal-span-style span) ':code-copy)
-                                        (terminal-widget ':code-copy
-                                                         (terminal-span-text span)
-                                                         (list ':copy source))
+                                        (termdown:make-widget ':code-copy
+                                                              (terminal-span-text span)
+                                                              (list ':copy source))
                                         span))))))
 
 (-> application--markdown-body (application string) list)

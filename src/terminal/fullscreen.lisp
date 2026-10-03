@@ -418,7 +418,7 @@ the separator, and the composer have no actions."
              (end (min (length text) (+ start (fullscreen-row-length anchor))))
              (index (terminal-ui-fullscreen--column-character-index text start end column)))
         (when index
-          (or (terminal--region-action regions index)
+          (or (termdown:region-action regions index)
               (let ((url (url-at text index)))
                 (and url (list ':open-url url)))))))))
 
@@ -493,7 +493,7 @@ lock, because copying and browser launches present notices of their own."
              (text (concatenate 'string deferred-text appended-text))
              (display (concatenate 'string (terminal-ui-deferred-live-appended-display ui) appended-display))
              (regions (append (terminal-ui-deferred-live-appended-regions ui)
-                              (terminal--shift-regions appended-regions (length deferred-text)))))
+                              (termdown:shift-regions appended-regions (length deferred-text)))))
         (terminal-ui-fullscreen--ensure-width ui (max 1 (terminal-columns terminal)))
         (let ((chunk-count (length (fullscreen-terminal-ui-chunks ui)))
               (row-count (length (fullscreen-terminal-ui-rows ui)))

@@ -8413,12 +8413,12 @@
                      (application--markdown-rows renderer "```lisp")
                      (application--markdown-rows renderer "(+ 1 2)")
                      (application--markdown-rows renderer "```")))
-             (widget (find-if #'terminal-widget-p (first rows))))
+             (widget (find-if #'termdown:widget-p (first rows))))
         (test-assert (and widget
-                          (equal '(:copy "(+ 1 2)") (terminal-widget-action widget))
-                          (eq ':code-copy (terminal-widget-style widget)))
+                          (equal '(:copy "(+ 1 2)") (termdown:widget-action widget))
+                          (eq ':code-copy (termdown:widget-role widget)))
                      "a closing fence renders a widget copying its source"))
-      (test-assert (find-if #'terminal-widget-p
+      (test-assert (find-if #'termdown:widget-p
                             (application--markdown-body
                              application
                              (format nil "intro~%```sh~%ls~%```~%outro")))

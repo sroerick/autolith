@@ -405,7 +405,7 @@ emergency terminal input responsive while another thread owns presentation."
 (-> terminal--spans-text (list) string)
 (defun terminal--spans-text (spans)
   "Return sanitized visible text for semantic SPANS and widgets."
-  (termdown:spans-text (terminal--presentation-spans spans)))
+  (termdown:spans-text spans))
 
 
 (-> terminal--render-spans (terminal list) string)
@@ -415,7 +415,7 @@ emergency terminal input responsive while another thread owns presentation."
 Styled terminals also receive OSC 8 hyperlinks around the web URLs in each
 span, so native modifier-clicks open them wherever the terminal supports it."
   (termdown:render-spans
-   (terminal--presentation-spans spans)
+   spans
    :style-function
    (when (terminal-styled-p terminal)
      (lambda (role text)
@@ -2208,12 +2208,12 @@ Every row ends on a fresh line and regions index the plain output."
     (dolist (row rows)
       (let* ((safe-row
                (loop for item in row
-                     collect (if (terminal-widget-p item)
-                                 (terminal-widget
-                                  (terminal-widget-style item)
-                                  (sanitize-text (terminal-widget-label item)
+                     collect (if (termdown:widget-p item)
+                                 (termdown:make-widget
+                                  (termdown:widget-role item)
+                                  (sanitize-text (termdown:widget-label item)
                                                  :single-line-p t)
-                                  (terminal-widget-action item))
+                                  (termdown:widget-action item))
                                  (terminal-span
                                   (terminal-span-style item)
                                   (sanitize-text (terminal-span-text item)
@@ -2225,8 +2225,7 @@ Every row ends on a fresh line and regions index the plain output."
         (write-char #\Newline display-stream)
         (setf regions
               (append regions
-                      (terminal--shift-regions (terminal--widget-regions safe-row)
-                                               offset)))
+                      (termdown:widget-regions safe-row :start offset)))
         (incf offset (1+ (length plain)))))
     (values (get-output-stream-string plain-stream)
             (get-output-stream-string display-stream)
@@ -2280,7 +2279,7 @@ removes it."
   (when (plusp (length text))
     (setf (terminal-ui-deferred-live-appended-regions ui)
           (append (terminal-ui-deferred-live-appended-regions ui)
-                  (terminal--shift-regions
+                  (termdown:shift-regions
                    regions
                    (length (terminal-ui-deferred-live-appended-text ui))))
           (terminal-ui-deferred-live-appended-text ui)
@@ -2398,7 +2397,7 @@ The texts end with a blank separator row. Regions index the plain text."
                     entry))
          (plain (terminal--spans-text spans))
          (display (terminal--render-spans terminal spans))
-         (regions (terminal--widget-regions spans)))
+         (regions (termdown:widget-regions spans)))
     (unless (and (plusp (length plain))
                  (char= (char plain (1- (length plain))) #\Newline))
       (setf plain (concatenate 'string plain (string #\Newline))
@@ -2716,7 +2715,7 @@ REGIONS only matter to the fullscreen viewport, which owns mouse reporting."
               (write-string display display-stream)
               (setf regions
                     (append regions
-                            (terminal--shift-regions entry-regions offset)))
+                            (termdown:shift-regions entry-regions offset)))
               (incf offset (length text))))
           (let ((text (get-output-stream-string text-stream))
                 (display (get-output-stream-string display-stream)))
