@@ -46,14 +46,9 @@
   (let ((source (json-get call "arguments")))
     (when (non-empty-string-p source)
       (handler-case
-          (with-input-from-string (stream source)
-            (let ((yason:*parse-json-arrays-as-vectors* t)
-                  (end (gensym "END")))
-              (let ((arguments (yason:parse stream)))
-                (and (eq (peek-char t stream nil end) end)
-                     (json-object-p arguments)
-                     arguments))))
-        (error ()
+          (let ((arguments (json-decode source)))
+            (and (json-object-p arguments) arguments))
+        (json-error ()
           nil)))))
 
 (defparameter *application-provider-form-source-characters* 65536
@@ -116,17 +111,9 @@
                (<= (length source)
                    *application-provider-form-source-characters*))
       (handler-case
-          (with-input-from-string (stream source)
-            (let ((yason:*parse-json-arrays-as-vectors* t)
-                  (yason:*parse-json-booleans-as-symbols* t)
-                  (yason:*parse-json-null-as-keyword* t)
-                  (yason:true t)
-                  (end (gensym "END")))
-              (let ((arguments (yason:parse stream)))
-                (and (eq (peek-char t stream nil end) end)
-                     (json-object-p arguments)
-                     arguments))))
-        (error ()
+          (let ((arguments (json-decode source)))
+            (and (json-object-p arguments) arguments))
+        (json-error ()
           nil)))))
 
 (-> application--lisp-simple-symbol-name-p (string) boolean)
@@ -184,7 +171,7 @@
   (cond
     ((eq value t)
      (application--provider-form-write stream "t" budget))
-    ((eq value false)
+    ((json-false-p value)
      (application--provider-form-write stream "nil" budget))
     ((or (null value) (eq value ':null))
      (application--provider-form-write stream ":null" budget))
@@ -455,7 +442,7 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
      (format nil "~:D item~:P" (length value)))
     ((eq value t)
      "true")
-    ((eq value false)
+    ((json-false-p value)
      "false")
     ((null value)
      "null")
@@ -825,7 +812,7 @@ structural discriminator as a readable heading instead."
      (cond
        ((not present-p) ':synchronous)
        ((eq value t) ':detached)
-       ((eq value false) ':synchronous)
+       ((json-false-p value) ':synchronous)
        (t ':invalid))
      present-p)))
 
