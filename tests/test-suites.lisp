@@ -44,7 +44,6 @@
   test-terminal-fullscreen-exit-epilogue)
 
 (define-test-suite hyperlinks
-  test-text-url-ranges
   test-hyperlinked-rendering)
 (define-test-suite stream
   test-bounded-character-reads)

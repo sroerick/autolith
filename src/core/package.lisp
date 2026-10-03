@@ -530,6 +530,9 @@
                 #:wrap-text
                 #:wrap-styled-text
                 #:wrap-styled-editor-text
+                #:url-at
+                #:web-url-p
+                #:ansi-link-urls
                 #:screen-position
                 #:live-region
                 #:make-live-region

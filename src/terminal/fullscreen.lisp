@@ -419,7 +419,7 @@ the separator, and the composer have no actions."
              (index (terminal-ui-fullscreen--column-character-index text start end column)))
         (when index
           (or (terminal--region-action regions index)
-              (let ((url (text-url-at text index)))
+              (let ((url (url-at text index)))
                 (and url (list ':open-url url)))))))))
 
 (-> terminal-ui-fullscreen--click (fullscreen-terminal-ui integer integer) boolean)

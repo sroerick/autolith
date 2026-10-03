@@ -179,7 +179,6 @@
                              (:file "terminal/protocol")
                              (:file "terminal/input")
                              (:file "terminal/style")
-                             (:file "terminal/hyperlinks")
                              (:file "terminal/syntax-highlighting")
                              (:file "terminal/layout")
                              (:file "terminal/stream")

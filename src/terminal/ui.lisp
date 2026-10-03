@@ -420,7 +420,7 @@ span, so native modifier-clicks open them wherever the terminal supports it."
    (when (terminal-styled-p terminal)
      (lambda (role text)
        (let ((sequence (terminal-style-sequence role))
-             (linked (terminal--hyperlinked-text text)))
+             (linked (ansi-link-urls text)))
          (if sequence
              (concatenate 'string sequence linked *terminal-style-reset*)
              linked))))))
