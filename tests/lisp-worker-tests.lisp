@@ -224,11 +224,12 @@
                           "(:request :id 7 :operation :source :arguments (:name ~
                            \"CL:MAPCAR\" :kind \"function\"))~%"))
                (uiop:run-program
-                (list "env"
-                      "-u"
-                      "AUTOLITH_SBCL_SOURCE_ROOT"
-                      (namestring launcher)
-                      "--worker")
+                (append (list "env"
+                              "-u"
+                              "AUTOLITH_SBCL_SOURCE_ROOT")
+                        (test-active-core-environment)
+                        (list (namestring launcher)
+                              "--worker"))
                 :input input
                 :output ':string
                 :error-output *error-output*))))
@@ -263,13 +264,14 @@
                                   "(:request :id 8 :operation :source :arguments ~
                                    (:name \"CL:MAPCAR\" :kind \"function\"))~%"))
                        (uiop:run-program
-                        (list "env"
-                              (format nil "XDG_DATA_HOME=~A" data-home)
-                              (format nil "XDG_STATE_HOME=~A" state-home)
-                              (format nil "AUTOLITH_SBCL_SOURCE_ROOT=~A"
-                                      runtime-source)
-                              (namestring launcher)
-                              "--worker")
+                        (append (list "env"
+                                      (format nil "XDG_DATA_HOME=~A" data-home)
+                                      (format nil "XDG_STATE_HOME=~A" state-home)
+                                      (format nil "AUTOLITH_SBCL_SOURCE_ROOT=~A"
+                                              runtime-source))
+                                (test-active-core-environment)
+                                (list (namestring launcher)
+                                      "--worker"))
                         :input input
                         :output ':string
                         :error-output *error-output*))))

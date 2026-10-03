@@ -134,7 +134,8 @@ process-global fixture parent on exit; parallel runs need separate processes."
     ;; truename-resolved working directory, even when the platform temporary
     ;; directory is a symlink (macOS maps /var to /private/var).
     (setf root (uiop:ensure-directory-pathname (truename root)))
-    (make-configuration
+    (apply
+     #'make-configuration
      :source-root source-root
      :working-directory source-root
      :config-root (merge-pathnames "config/" root)
@@ -143,7 +144,23 @@ process-global fixture parent on exit; parallel runs need separate processes."
      :state-root (merge-pathnames "state/" root)
      :cache-root (merge-pathnames "cache/" root)
      :codex-auth-path (merge-pathnames "missing-auth.json" root)
-     :grok-bootstrap-auth-path (merge-pathnames "missing-grok-auth.json" root))))
+     :grok-bootstrap-auth-path (merge-pathnames "missing-grok-auth.json" root)
+     ;; The check runner builds one active core per run, so fresh Autolith
+     ;; processes boot it instead of loading the system from source.
+     (let ((active-core (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")))
+       (when (non-empty-string-p active-core)
+         (list :active-image-core (uiop:parse-native-namestring active-core)))))))
+
+(-> test-active-core-environment () list)
+(defun test-active-core-environment ()
+  "Return environment entries giving a launched Autolith this run's active core.
+
+Launcher cases that are not about core selection boot the core the check runner
+built instead of loading the system; outside the runner this is empty."
+  (let ((active-core (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")))
+    (when (non-empty-string-p active-core)
+      (list (format nil "AUTOLITH_ACTIVE_CORE=~A" active-core)))))
+
 (-> test-configuration-root (configuration) pathname)
 (defun test-configuration-root (configuration)
   "Return the common temporary root containing CONFIGURATION's data directory."

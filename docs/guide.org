@@ -205,7 +205,8 @@ With Quicklisp in =~/quicklisp=, bootstrap and check the checkout:
 
 The check runs FiveAM tests in isolated SBCL processes, defaulting to the available
 logical CPU count (one worker if detection fails), and verifies the pristine
-recovery image. List or select test suites and individual cases with:
+recovery image. Each run first saves an active image of the checked source, so
+cases that start a fresh Autolith boot that core instead of loading the system. List or select test suites and individual cases with:
 
 #+BEGIN_SRC sh
 ./script/check --list

@@ -395,9 +395,14 @@ against its own build record."
   "Atomically replace PATHNAME with portable active-image manifest FORM."
   (snapshot-write pathname form :mode #o444))
 
-(-> active-image-install (pathname pathname) pathname)
-(defun active-image-install (source-root core-pathname)
-  "Build, validate, and atomically install a preloaded active image."
+(-> active-image-install
+    (pathname pathname &key (:saver (member :automatic :fresh-process)))
+    pathname)
+(defun active-image-install (source-root core-pathname &key (saver ':automatic))
+  "Build, validate, and atomically install a preloaded active image.
+
+SAVER :AUTOMATIC forks this process where the host can; :FRESH-PROCESS always
+loads the system in a new SBCL, so the image holds nothing else from this heap."
   (setf source-root (uiop:ensure-directory-pathname (platform-truename *platform* source-root))
         core-pathname (pathname core-pathname))
   (let* ((directory (uiop:pathname-directory-pathname core-pathname))
@@ -407,11 +412,14 @@ against its own build record."
                     (current-process-id))
             directory))
          (manifest (merge-pathnames "manifest.sexp" directory))
-         (identity-before (active-image-build-record-create source-root)))
+         (identity-before (active-image-build-record-create source-root))
+         (fresh-process-p
+           (or (eq saver ':fresh-process)
+               (not (platform-supports-p *platform* ':forked-image-saver)))))
     (ensure-directories-exist core-pathname)
     (when (probe-file temporary)
       (delete-file temporary))
-    (unless (checkpoint-single-threaded-p)
+    (unless (or fresh-process-p (checkpoint-single-threaded-p))
       (error 'active-image-build-error
              :message "Building an active image requires one live Lisp thread."
              :stage ':fork
@@ -420,7 +428,8 @@ against its own build record."
     (finish-output *error-output*)
     (unwind-protect
          (let ((saved-p
-                 (if (platform-supports-p *platform* ':forked-image-saver)
+                 (if fresh-process-p
+                     (active-image--save-in-fresh-process source-root temporary)
                      (handler-case
                          (platform-run-image-saver
                           *platform*
@@ -439,8 +448,7 @@ against its own build record."
                                                      "Could not wait for the active-image saver: ~A"
                                                      condition)
                                     :stage ':save
-                                    :pathname temporary))))
-                     (active-image--save-in-fresh-process source-root temporary))))
+                                    :pathname temporary)))))))
            (unless (and saved-p (probe-file temporary))
              (error 'active-image-build-error
                     :message "The active-image saver child failed."

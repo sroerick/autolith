@@ -1398,62 +1398,45 @@ dead conversation owner."
     (test-assert clean-exit-p "the child conversation owner exited cleanly"))
   nil)
 
+(-> test-conversation--worker-eval (configuration string) list)
+(defun test-conversation--worker-eval (configuration form)
+  "Evaluate FORM in a fresh pristine Lisp worker and return its rendered values.
+
+The worker stays alive until the caller stops it; this returns it as the
+second value so callers can keep state such as a lease in its process."
+  (let ((worker (lisp-worker-create configuration :name "conversation-child")))
+    (handler-case
+        (let ((response (lisp-worker-request worker ':eval (list :form form))))
+          (unless (eq (getf (rest response) :status) ':ok)
+            (error "The conversation child failed: ~A"
+                   (or (getf (rest response) :message) response)))
+          (values (getf (rest response) :values) worker))
+      (error (condition)
+        (lisp-worker-stop worker)
+        (error condition)))))
+
 (-> test-conversation--call-with-child-lease/process
     (configuration string function)
     null)
 (defun test-conversation--call-with-child-lease/process
     (configuration identifier function)
-  "Call FUNCTION while an external SBCL holds IDENTIFIER until released.
+  "Call FUNCTION while a pristine worker process holds IDENTIFIER.
 
-SBCL cannot fork once any non-main thread exists, so multi-threaded suites use a
-fresh process and file-based synchronization instead of SB-POSIX:FORK."
-  (let* ((root (test-configuration-root configuration))
-         (ready-path (merge-pathnames "lease-child-ready" root))
-         (release-path (merge-pathnames "lease-child-release" root))
-         (output-path (merge-pathnames "lease-child-output" root))
-         (process nil))
-    (dolist (pathname (list ready-path release-path output-path))
-      (when (probe-file pathname)
-        (delete-file pathname)))
-    (setf process
-          (uiop:launch-program
-           (test-conversation--child-command
-            (format
-             nil
-             "(let ((configuration ~A)) (autolith::conversation-lease-acquire configuration ~S) (with-open-file (stream ~S :direction :output :if-exists :supersede :if-does-not-exist :create) (write-line \"ready\" stream)) (loop until (probe-file ~S) do (sleep 0.05)) (uiop:quit 0))"
-             (test-conversation--child-configuration-form configuration)
-             identifier
-             (namestring ready-path)
-             (namestring release-path)))
-           :output output-path
-           :error-output ':output))
+SBCL cannot fork once any non-main thread exists, so multi-threaded suites keep
+the lease in a worker booted from the active core. Stopping the worker kills its
+process without releasing the lease, exercising kernel cleanup."
+  (multiple-value-bind (values worker)
+      (test-conversation--worker-eval
+       configuration
+       (format nil "(progn (conversation-lease-acquire ~A ~S) t)"
+               (test-conversation--child-configuration-form configuration)
+               identifier))
     (unwind-protect
          (progn
-           ;; The child loads the whole system from fasls, which takes tens
-           ;; of seconds on Windows while the parallel check loads the host.
-           (loop with deadline = (+ (get-internal-real-time)
-                                    (* 90 internal-time-units-per-second))
-                 until (or (probe-file ready-path)
-                           (not (uiop:process-alive-p process)))
-                 do (when (> (get-internal-real-time) deadline)
-                      (error "Timed out waiting for the child lease holder."))
-                    (sleep 0.05))
-           (test-assert (probe-file ready-path)
+           (test-assert (equal values '("T"))
                         "the child process acquired its conversation lease")
            (funcall function))
-      (ignore-errors
-        (with-open-file (stream release-path
-                                :direction ':output
-                                :if-exists ':supersede
-                                :if-does-not-exist ':create)
-          (write-line "release" stream)))
-      (let ((status (uiop:wait-process process)))
-        (test-assert
-         (zerop status)
-         (format nil "the child conversation owner exited cleanly:~%~A"
-                 (if (probe-file output-path)
-                     (uiop:read-file-string output-path)
-                      "<no child output>"))))))
+      (lisp-worker-stop worker)))
   nil)
 
 (-> test-conversation--call-with-child-lease
@@ -1486,13 +1469,14 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                     0)
                 (conversation-in-use ()
                   2)))))
-      (zerop
-       (test-conversation--run-child-form
-        (format
-         nil
-         "(handler-case (progn (let ((configuration ~A)) (autolith::conversation-lease-acquire configuration ~S)) (uiop:quit 0)) (autolith::conversation-in-use () (uiop:quit 2)) (serious-condition () (uiop:quit 1)))"
-         (test-conversation--child-configuration-form configuration)
-         identifier)))))
+      (multiple-value-bind (values worker)
+          (test-conversation--worker-eval
+           configuration
+           (format nil "(handler-case (progn (conversation-lease-release (conversation-lease-acquire ~A ~S)) :acquired) (conversation-in-use () :in-use))"
+                   (test-conversation--child-configuration-form configuration)
+                   identifier))
+        (lisp-worker-stop worker)
+        (equal values '(":ACQUIRED")))))
 
 (-> test-conversation-process-lease () null)
 (defun test-conversation-process-lease ()

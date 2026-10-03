@@ -269,10 +269,25 @@ inherited XDG or HOME entry would silently defeat an override placed first."
                        (sb-ext:posix-environ))
             overrides)))
 
-(defun check--run-workers (cases &key source-root temporary-root
+(defun check--build-active-core (source-root temporary-root)
+  "Build this run's active image from the checked source and return its core.
+
+Cases that start a fresh Autolith, such as pristine Lisp workers, boot this core
+instead of loading every FASL. A fresh process saves it, so it holds nothing
+from this runner's heap."
+  (let ((core (merge-pathnames "active/autolith-active.core" temporary-root)))
+    (format t "~&Building this run's active image.~%")
+    (finish-output)
+    (uiop:symbol-call '#:autolith '#:active-image-install source-root core
+                      :saver ':fresh-process)
+    core))
+
+(defun check--run-workers (cases &key source-root temporary-root active-core
                                     (jobs (check--processor-count)) (timeout 600))
   "Run CASES in fresh SBCL processes and remove their owned fixture directories.
-Parent cleanup follows process-group termination, including crashes and timeouts."
+Parent cleanup follows process-group termination, including crashes and timeouts.
+Workers receive ACTIVE-CORE as AUTOLITH_TEST_ACTIVE_CORE, which only test
+configurations read; launchers under test keep their own core selection."
   (let ((entries nil) (results nil) (fixture-roots nil) (successful-p t))
     (unwind-protect
          (progn
@@ -297,7 +312,9 @@ Parent cleanup follows process-group termination, including crashes and timeouts
                            ;; because the runtime launcher lives below it.
                            :environment (check--environment-with
                                          (list (format nil "XDG_CONFIG_HOME=~Aconfig/" directory)
-                                               (format nil "XDG_STATE_HOME=~Astate/" directory)))
+                                               (format nil "XDG_STATE_HOME=~Astate/" directory)
+                                               (format nil "AUTOLITH_TEST_ACTIVE_CORE=~A"
+                                                       (uiop:native-namestring active-core))))
                            ;; Leave TMPDIR alone: native Unix-domain sockets need short paths.
                            :command (append (check--runtime-command source-root)
                                             (list (namestring (merge-pathnames "script/test-worker.lisp" source-root))
@@ -489,6 +506,8 @@ Parent cleanup follows process-group termination, including crashes and timeouts
               (unwind-protect
                    (let ((passed-p (check--run-workers
                                     cases :source-root source-root :temporary-root temporary-root
+                                    :active-core (check--build-active-core source-root
+                                                                           temporary-root)
                                     :jobs jobs :timeout timeout)))
                      (unless (or suites tests)
                        (check--run-recovery :source-root source-root :temporary-root temporary-root
