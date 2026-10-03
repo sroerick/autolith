@@ -100,7 +100,9 @@
     (write-string (concatenate 'string enter "frame" leave) stream)
     (test-assert (not (fullscreen-output-stream-active-p stream)) "remote leave releases ownership")
     (let ((set-background (format nil "~C]11;rgb:19/3C/B8~C" #\Escape #\Bel))
-          (resets (format nil "~C]110~C~C]111~C" #\Escape #\Bel #\Escape #\Bel)))
+          (resets (concatenate 'string
+                               (default-color-reset-sequence ':foreground)
+                               (default-color-reset-sequence ':background))))
       (get-output-stream-string destination)
       (write-string (subseq set-background 0 4) stream)
       (write-string (subseq set-background 4) stream)

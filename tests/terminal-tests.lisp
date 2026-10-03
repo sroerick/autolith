@@ -2363,16 +2363,9 @@ Resize tests drive size changes through COLUMNS and LINES."
 
 (-> test-terminal-window-title () null)
 (defun test-terminal-window-title ()
-  "Test OSC 0 window-title output and control sanitization."
-  (let ((title-sequence
-          (format nil "~C]0;~~/src~C~C"
-                  *terminal-escape-character*
-                  *terminal-escape-character*
-                  #\\))
-        (terminal (make-instance 'recording-terminal :columns 80)))
-    (test-assert
-     (string= (terminal--window-title-sequence "~/src") title-sequence)
-     "window title uses OSC 0 with ST terminator")
+  "Test OSC 0 window-title output on interactive terminals only."
+  (let ((title-sequence (window-title-sequence "~/src"))
+        (terminal       (make-instance 'recording-terminal :columns 80)))
     (setf (terminal-interactive-p terminal) t)
     (test-assert
      (and (terminal-write-window-title terminal "~/src")
@@ -2381,12 +2374,11 @@ Resize tests drive size changes through COLUMNS and LINES."
      "an interactive window title writes exactly once")
     (recording-terminal-reset terminal)
     (test-assert
-     (and (terminal-write-window-title
-           terminal
-           (format nil "foo~Cbar~C" #\Newline *terminal-escape-character*))
-          (equal (recording-terminal-chunks terminal)
-                 (list (terminal--window-title-sequence "foo bar"))))
-     "window title sanitizes newlines and escape characters")
+     (and (not (terminal-write-window-title
+                terminal
+                (format nil "~C~C" #\Bel *terminal-escape-character*)))
+          (null (recording-terminal-chunks terminal)))
+     "a title made only of control characters writes nothing")
     (recording-terminal-reset terminal)
     (setf (terminal-interactive-p terminal) nil)
     (test-assert

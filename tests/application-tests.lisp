@@ -5438,7 +5438,7 @@
       (test-assert
        (and (application-sync-window-title application)
             (equal (recording-terminal-chunks terminal)
-                   (list (terminal--window-title-sequence title))))
+                   (list (window-title-sequence title))))
        "a started UI writes autolith - workspace as the window title")))
   nil)
 

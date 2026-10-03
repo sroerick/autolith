@@ -271,25 +271,16 @@ fullscreen viewport is active, or NIL to leave the terminal's own defaults."
           *terminal-style-table* (terminal-theme-style-table theme))
     theme))
 
-(-> terminal-theme--default-color-sequence (integer color) string)
-(defun terminal-theme--default-color-sequence (code color)
-  "Return the OSC CODE control that sets a terminal default to 24-bit COLOR."
-  (ecase (color-kind color)
-    (:rgb
-     (destructuring-bind (red green blue) (color-value color)
-       (format nil "~C]~D;rgb:~2,'0X/~2,'0X/~2,'0X~C"
-               #\Escape code red green blue #\Bel)))))
-
 (-> terminal-theme-enter-sequence (terminal-theme) string)
 (defun terminal-theme-enter-sequence (theme)
   "Return the controls imposing THEME's default colors, or an empty string."
   (concatenate
    'string
    (if (terminal-theme-foreground theme)
-       (terminal-theme--default-color-sequence 10 (terminal-theme-foreground theme))
+       (default-color-sequence ':foreground (terminal-theme-foreground theme))
        "")
    (if (terminal-theme-background theme)
-       (terminal-theme--default-color-sequence 11 (terminal-theme-background theme))
+       (default-color-sequence ':background (terminal-theme-background theme))
        "")))
 
 (-> terminal-theme-leave-sequence (terminal-theme) string)
@@ -298,10 +289,10 @@ fullscreen viewport is active, or NIL to leave the terminal's own defaults."
   (concatenate
    'string
    (if (terminal-theme-foreground theme)
-       (format nil "~C]110~C" #\Escape #\Bel)
+       (default-color-reset-sequence ':foreground)
        "")
    (if (terminal-theme-background theme)
-       (format nil "~C]111~C" #\Escape #\Bel)
+       (default-color-reset-sequence ':background)
        "")))
 
 (defparameter *terminal-style-reset*

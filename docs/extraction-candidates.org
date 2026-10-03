@@ -26,11 +26,11 @@ backends but no terminal route, and "host, else terminal" is the standard
 remote-session answer. Takes a writer function instead of the UI; notices stay
 in Autolith; base64 would come from cl-base64 directly.
 
-** Remaining xterm controls (clinedi ansi.lisp)
-OSC 10/11 default colors and their resets (=style.lisp= 268-298), OSC 0 window
-title and the =redraw=0= override of clinedi's OSC 133 prompt marker
-(=protocol.lisp= 422-460). Small; expose =redraw=0= as a clinedi option rather
-than overriding.
+** DONE Remaining xterm controls (clinedi ansi.lisp)
+clinedi 1b75c6b adds =window-title-sequence=, =default-color-sequence=,
+=default-color-reset-sequence= and a =:redraw-p= option on
+=semantic-prompt-marker-sequence=, so Autolith no longer writes OSC 0, 10, 11,
+110, 111 or its own =redraw=0= prompt marker.
 
 ** Layered source-tagged registry (new library, or structlisp)
 =src/application/command.lisp= 492-746. Ordered registration layers keyed by

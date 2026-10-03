@@ -20,8 +20,6 @@
                 #:sophisticated-clipboard-error)
   (:import-from #:cl-colorist
                 #:color
-                #:color-kind
-                #:color-value
                 #:effective-color-level
                 #:hex-color
                 #:indexed-color
@@ -524,6 +522,9 @@
                 #:enable-bracketed-paste
                 #:disable-bracketed-paste
                 #:semantic-prompt-marker-sequence
+                #:window-title-sequence
+                #:default-color-sequence
+                #:default-color-reset-sequence
                 #:read-event
                 #:sanitize-text
                 #:text-cell-width

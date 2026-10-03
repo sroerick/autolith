@@ -617,7 +617,8 @@ lock, because copying and browser launches present notices of their own."
         (output (fullscreen-output-stream-output stream)))
     (when colors-p
       (setf (fullscreen-output-stream-theme-colors-p stream) nil)
-      (write-string (format nil "~C]110~C~C]111~C" #\Escape #\Bel #\Escape #\Bel) output))
+      (write-string (default-color-reset-sequence ':foreground) output)
+      (write-string (default-color-reset-sequence ':background) output))
     (when active-p
       (setf (fullscreen-output-stream-active-p stream) nil)
       (write-string (format nil "~C[0m~C[?7h~C[?25h~C[?1006l~C[?1000l~C[?1049l"
