@@ -1208,3 +1208,34 @@
       (lisp-worker-pool-stop-all pool)
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+(-> test-lisp-worker-failure-diagnostics () null)
+(defun test-lisp-worker-failure-diagnostics ()
+  "Test a failed system load reports the compiler diagnostic that caused it."
+  (with-test-configuration (configuration root)
+    (let ((asd (merge-pathnames "diagnostic-fixture/autolith-diagnostic-fixture.asd" root))
+          (worker (lisp-worker-create configuration :name "diagnostics")))
+      (ensure-directories-exist asd)
+      (with-open-file (stream asd :direction ':output :if-exists ':supersede)
+        (write-line "(asdf:defsystem #:autolith-diagnostic-fixture :components ((:file \"broken\")))" stream))
+      (with-open-file (stream (merge-pathnames "broken.lisp" asd)
+                              :direction ':output :if-exists ':supersede)
+        (write-line "(defun autolith-diagnostic-fixture () (cl-user::list (uiop:autolith-not-external-symbol)))" stream))
+      (unwind-protect
+           (let ((result (worker-response-tool-result
+                          (lisp-worker-request worker ':load-system
+                                               (list :system "autolith-diagnostic-fixture"
+                                                     :asd-pathname (namestring asd))))))
+             (test-assert (not (tool-result-success-p result))
+                          "a system with a compile error fails to load")
+             (let* ((content (tool-result-content result))
+                    (output-start (search "Output:" content))
+                    (output (and output-start
+                                 (subseq content output-start
+                                         (search "Backtrace:" content
+                                                 :start2 output-start)))))
+               (test-assert (and output
+                                 (search "AUTOLITH-NOT-EXTERNAL-SYMBOL" (string-upcase output)))
+                            "the failed load reports the compiler diagnostic, not only the condition")))
+        (lisp-worker-stop worker))))
+  nil)

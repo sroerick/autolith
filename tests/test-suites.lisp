@@ -346,7 +346,8 @@
   test-lisp-execution-jobs
   test-lisp-busy-worker-operations
   test-lisp-scratchpad-tools
-  test-lisp-worker-image-snapshot)
+  test-lisp-worker-image-snapshot
+  test-lisp-worker-failure-diagnostics)
 
 (define-test-suite prompt
   test-system-prompt

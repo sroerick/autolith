@@ -366,6 +366,10 @@
         (tool-failure
          (with-output-to-string (stream)
            (format stream "~A" (or message "Worker operation failed."))
+           ;; Compiler diagnostics and test reports are printed before the
+           ;; error, so they explain a failed load or test run.
+           (when (non-empty-string-p output)
+             (format stream "~%~%Output:~%~A" output))
            (when (non-empty-string-p backtrace)
              (format stream "~%~%Backtrace:~%~A" backtrace)))))))
 
