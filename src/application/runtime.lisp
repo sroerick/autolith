@@ -374,44 +374,6 @@
   (platform-unsetenv "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
   nil)
 
-(-> terminal--positive-integer-or-nil ((option string)) (option integer))
-(defun terminal--positive-integer-or-nil (value)
-  "Parse VALUE as a positive integer, returning NIL on failure."
-  (handler-case
-      (let ((parsed (and (non-empty-string-p value)
-                         (parse-integer value :junk-allowed t))))
-        (and parsed (plusp parsed) parsed))
-    (error ()
-      nil)))
-
-(-> terminal--query-dimension (string) (option integer))
-(defun terminal--query-dimension (capability)
-  "Return positive TPUT CAPABILITY output when a terminal is attached."
-  (when (interactive-stream-p *terminal-io*)
-    (handler-case
-        (terminal--positive-integer-or-nil
-         (uiop:run-program (list "tput" capability)
-                           :output ':string
-                           :error-output ':output))
-      (error ()
-        nil))))
-
-(-> terminal-current-size () (values integer integer))
-(defun terminal-current-size ()
-  "Return current terminal rows and columns, preferring its kernel dimensions."
-  (multiple-value-bind (terminal-rows terminal-columns)
-      (terminal-file-descriptor-size
-       (terminal-standard-input-file-descriptor))
-    (values
-     (or terminal-rows
-         (terminal--query-dimension "lines")
-         (terminal--positive-integer-or-nil (uiop:getenv "LINES"))
-         *terminal-default-rows*)
-     (or terminal-columns
-         (terminal--query-dimension "cols")
-         (terminal--positive-integer-or-nil (uiop:getenv "COLUMNS"))
-         *terminal-default-columns*))))
-
 (-> application-pending-terminal-size
     ()
     (option (cons (integer 1) (integer 1))))

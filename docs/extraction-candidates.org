@@ -95,8 +95,8 @@ the =terminal-style= type would become an open role as cl-termdown spans are.
   (=runtime.lisp= 1516 and =commands.lisp= 549).
 - DONE =--proper-list-p= exists in nine copies across application, task, localgroup,
   mcp, lsp and conversation files; one definition in core.
-- DONE Terminal size lookup with the =tput= and environment fallbacks (=runtime.lisp=
-  378-416) belongs next to =clinedi:terminal-file-descriptor-size=.
+- DONE Terminal size lookup uses =clinedi:terminal-current-size= for native geometry,
+  =tput= and environment fallbacks; Autolith supplies its size defaults.
 
 * Core, configuration and state
 

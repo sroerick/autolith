@@ -2094,21 +2094,18 @@
 
 (-> terminal-tests--call-without-host-size (function) t)
 (defun terminal-tests--call-without-host-size (function)
-  "Call FUNCTION while kernel and tput terminal sizes are unavailable.
+  "Call FUNCTION with native geometry unavailable and noninteractive I/O.
 
-Resize tests drive size changes through COLUMNS and LINES, which the real
-resolution only consults after the kernel and tput sizes. Masking those host
-sources keeps the tests deterministic under an interactive terminal."
-  (test-call-with-function-replacements
-   (list (list 'terminal-file-descriptor-size
-               (lambda (file-descriptor)
-                 (declare (ignore file-descriptor))
-                 (values nil nil)))
-         (list 'terminal--query-dimension
-               (lambda (capability)
-                 (declare (ignore capability))
-                 nil)))
-   function))
+Resize tests drive size changes through COLUMNS and LINES."
+  (with-open-stream (*terminal-io*
+                      (make-two-way-stream (make-string-input-stream "")
+                                           (make-string-output-stream)))
+    (test-call-with-function-replacements
+     (list (list 'clinedi:terminal-file-descriptor-size
+                 (lambda (file-descriptor)
+                   (declare (ignore file-descriptor))
+                   (values nil nil))))
+     function)))
 
 
 

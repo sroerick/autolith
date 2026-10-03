@@ -2,10 +2,13 @@
 
 ;;;; -- Application transport adapter --
 
-(-> terminal-file-descriptor-size (integer) (values (option integer) (option integer)))
-(defun terminal-file-descriptor-size (file-descriptor)
-  "Read native terminal dimensions through Clinedi's POSIX adapter."
-  (clinedi:terminal-file-descriptor-size file-descriptor))
+(-> terminal-current-size () (values integer integer))
+(defun terminal-current-size ()
+  "Return current terminal rows and columns through Clinedi's size lookup."
+  (clinedi:terminal-current-size
+   :file-descriptor (terminal-standard-input-file-descriptor)
+   :default-rows *terminal-default-rows*
+   :default-columns *terminal-default-columns*))
 
 (defmethod terminal--write ((terminal stream-terminal) (text string))
   "Write trusted application presentation to the stream transport."
