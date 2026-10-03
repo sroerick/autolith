@@ -806,3 +806,71 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (tool-test--grok-web-run)
   nil)
+
+(-> test-workspace-tool-outside-paths () null)
+(defun test-workspace-tool-outside-paths ()
+  "Test tool paths outside the workspace and source roots follow full-access approval."
+  (with-test-configuration (base-configuration root)
+    (let* ((workspace     (merge-pathnames "workspace/" root))
+           (configuration (configuration-copy base-configuration :working-directory workspace))
+           (sibling-asd   (merge-pathnames "sibling/sibling.asd" root))
+           (registry      (make-default-tool-registry))
+           (requests      nil))
+      (flet ((context (decision)
+               "Return a tool context whose command authorization answers DECISION."
+               (make-instance 'tool-context
+                              :configuration configuration
+                              :worker nil
+                              :conversation nil
+                              :registry registry
+                              :command-authorization-function
+                              (lambda (command directory)
+                                (declare (ignore directory))
+                                (push command requests)
+                                decision)))
+             (asd-path (context)
+               "Resolve the sibling ASD as lisp.load-system does."
+               (lisp-tool-asd-pathname context
+                                       (json-object "asd" (uiop:native-namestring sibling-asd))
+                                       "lisp.load-system")))
+        (unwind-protect
+             (let ((sibling-native nil))
+               (ensure-directories-exist workspace)
+               (ensure-directories-exist sibling-asd)
+               (with-open-file (stream sibling-asd :direction ':output :if-exists ':supersede)
+                 (write-line "(asdf:defsystem #:sibling)" stream))
+               (setf sibling-native (uiop:native-namestring (truename sibling-asd)))
+               (test-assert (uiop:pathname-equal (asd-path (context ':full-access))
+                                                 (truename sibling-asd))
+                            "full access lets lisp.load-system load an ASD outside the workspace")
+               (test-assert (equal requests
+                                   (list (format nil "lisp.load-system -- ~A"
+                                                 (uiop:escape-shell-token sibling-native))))
+                            "the approval request names the tool and the exact path")
+               (dolist (decision '(:deny :sandboxed))
+                 (test-assert
+                  (handler-case (progn (asd-path (context decision)) nil)
+                    (tool-error (condition)
+                      (search "requires full-access approval" (princ-to-string condition))))
+                  (format nil "a ~(~A~) decision refuses an outside path" decision)))
+               (let* ((full-access (context ':full-access))
+                      (tool (tool-registry-find registry "lisp" "paren-check")))
+                 (setf requests nil)
+                 (test-assert
+                  (and (tool-result-success-p
+                        (tool-execute tool full-access (json-object "path" sibling-native)))
+                       (= (length requests) 1))
+                  "lisp.paren-check checks an approved file outside the workspace")
+                 (setf requests nil)
+                 (workspace-tool-path full-access (uiop:native-namestring workspace))
+                 (test-assert (null requests)
+                              "paths inside the workspace need no approval")
+                 (test-assert
+                  (handler-case
+                      (progn (workspace-tool-confined-path full-access sibling-native)
+                             nil)
+                    (tool-error ()
+                      t))
+                  "the sandbox's confined path stays inside the roots even with full access")))
+          (tool-registry-close-runtime-state registry)))))
+  nil)

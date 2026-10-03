@@ -126,13 +126,17 @@ trailing slash, and the separator is a slash whatever the host writes natively."
             (config :source-root
              (tool-context-configuration context)))))
 
-(-> workspace-tool-path (tool-context (option string)) pathname)
-(defun workspace-tool-path (context path)
-  "Return PATH resolved against CONTEXT's working directory.
+(-> workspace-tool-confined-path
+    (tool-context (option string) &key (:tool-name non-empty-string))
+    pathname)
+(defun workspace-tool-confined-path (context path &key (tool-name "resource"))
+  "Return PATH resolved against CONTEXT's working directory, strictly inside its roots.
 
 When *WORKSPACE-TOOL-READABLE-ROOTS* is NIL, confine access to CONTEXT's
 workspace and source roots. Otherwise use the dynamically supplied roots. Resolve
-existing symlinks and the nearest existing parent before checking the boundary."
+existing symlinks and the nearest existing parent before checking the boundary.
+Only callers that cannot work elsewhere, such as the command sandbox, or that
+already authorized the path, use this instead of WORKSPACE-TOOL-PATH."
   (let* ((roots (workspace-tool-readable-roots context))
          (canonical (workspace-tool-resolve-path context path)))
     (unless (workspace-tool--read-path-allowed-p canonical roots)
@@ -140,7 +144,45 @@ existing symlinks and the nearest existing parent before checking the boundary."
              :message
              (format nil "Path ~A is outside the allowed workspace roots."
                      canonical)
-             :tool-name "resource"))
+             :tool-name tool-name))
+    canonical))
+
+(-> workspace-tool-authorize-outside-path (tool-context pathname non-empty-string) boolean)
+(defun workspace-tool-authorize-outside-path (context path tool-name)
+  "Return true when full access covers TOOL-NAME reaching PATH outside the roots.
+
+The request is the command \"TOOL-NAME -- PATH\", so a full-access session
+passes without a prompt, saved permissions apply, and ask mode asks once. A
+sandboxed decision is not enough, because the tool itself runs unsandboxed."
+  (handler-case
+      (eq (tool-context-authorize-command
+           context
+           (format nil "~A -- ~A"
+                   tool-name
+                   (uiop:escape-shell-token (uiop:native-namestring path)))
+           (config :working-directory (tool-context-configuration context)))
+          ':full-access)
+    (command-authorization-unavailable ()
+      nil)))
+
+(-> workspace-tool-path
+    (tool-context (option string) &key (:tool-name non-empty-string))
+    pathname)
+(defun workspace-tool-path (context path &key (tool-name "resource"))
+  "Return PATH resolved against CONTEXT's working directory for TOOL-NAME.
+
+A path inside the workspace or source roots is returned directly. Any other path
+needs full access, through WORKSPACE-TOOL-AUTHORIZE-OUTSIDE-PATH, so a session
+with full permissions never refuses one."
+  (let ((canonical (workspace-tool-resolve-path context path)))
+    (unless (or (workspace-tool--read-path-allowed-p
+                 canonical (workspace-tool-readable-roots context))
+                (workspace-tool-authorize-outside-path context canonical tool-name))
+      (error 'tool-error
+             :message
+             (format nil "~A requires full-access approval for path ~A outside the workspace and source roots."
+                     tool-name canonical)
+             :tool-name tool-name))
     canonical))
 
 (-> workspace-tool-integer-argument
@@ -262,7 +304,8 @@ existing symlinks and the nearest existing parent before checking the boundary."
           (let ((configuration (tool-context-configuration context))
                 (output-limit *shell-maximum-output-characters*))
             (when (eq authorization ':sandboxed)
-              (workspace-tool-path context directory-argument))
+              (workspace-tool-confined-path context directory-argument
+                                            :tool-name "shell.run"))
             (tool-execution-invoke
              (tool-context-execution-runtime context)
              (tool-context-agent context)

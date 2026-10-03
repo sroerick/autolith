@@ -46,16 +46,26 @@
 
 (-> lsp-tool--path (tool-context string) pathname)
 (defun lsp-tool--path (context path)
-  "Resolve an existing regular source file strictly inside the current workspace."
+  "Resolve an existing regular source file, authorizing one outside the workspace."
   (unless (non-empty-string-p path)
-    (error 'lsp-error :message "LSP path must name a workspace source file."))
-  (let* ((resolved (workspace-tool-path context path))
-         (root (workspace-tool--canonical-path
-                (config :working-directory (tool-context-configuration context)))))
-    (unless (and (workspace-tool--read-path-allowed-p resolved (list root))
-                 (eq (workspace-file--path-kind resolved) ':file))
-      (error 'lsp-error :message "LSP path must be a regular file inside the current workspace."))
+    (error 'lsp-error :message "LSP path must name a source file."))
+  (let ((resolved (workspace-tool-path context path :tool-name "lsp")))
+    (unless (eq (workspace-file--path-kind resolved) ':file)
+      (error 'lsp-error :message "LSP path must be an existing regular file."))
     resolved))
+
+(-> lsp-tool--root-boundary (tool-context pathname) pathname)
+(defun lsp-tool--root-boundary (context path)
+  "Return the directory above which PATH's project-root search never climbs.
+
+That is the workspace for a file inside it, and the filesystem root of PATH for
+an authorized file elsewhere, as an editor opening that file would search."
+  (let ((workspace (workspace-tool--canonical-path
+                    (config :working-directory (tool-context-configuration context)))))
+    (if (workspace-tool--read-path-allowed-p path (list workspace))
+        workspace
+        (make-pathname :directory '(:absolute) :name nil :type nil :version nil
+                       :defaults path))))
 
 (-> lsp-tool--matching-configurations (lsp-manager tool-context pathname) list)
 (defun lsp-tool--matching-configurations (manager context path)
@@ -72,15 +82,14 @@
   "Run FUNCTION for each matching server and return independent success or failure rows."
   (with-recursive-lock-held ((lsp-manager-lock manager))
     (let* ((configurations (lsp-tool--matching-configurations manager context path))
-           (workspace (workspace-tool--canonical-path
-                       (config :working-directory (tool-context-configuration context)))))
+           (boundary (lsp-tool--root-boundary context path)))
       (unless configurations
         (error 'lsp-error :message "No enabled language server matches this file; configure lsp.sexp."))
       (map 'vector
            (lambda (configuration)
              (let ((name (lsp-server-configuration-name configuration)))
                (handler-case
-                   (let* ((root (lsp-project-root path workspace
+                   (let* ((root (lsp-project-root path boundary
                                                   (lsp-server-configuration-root-markers configuration)))
                           (client (lsp-manager-client manager configuration root)))
                      (lsp-client-resync client)

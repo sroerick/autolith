@@ -329,7 +329,8 @@
 (define-test-suite tool
   test-tool-registry
   test-tool-result-overflow
-  test-workspace-tools)
+  test-workspace-tools
+  test-workspace-tool-outside-paths)
 
 (define-test-suite search-tool
   test-search-tools

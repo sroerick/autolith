@@ -33,7 +33,7 @@
              :tool-name "lisp.paren-check"))
     (multiple-value-bind (success-p content)
         (lisp-paren-check-path
-         (workspace-tool-path context requested)
+         (workspace-tool-path context requested :tool-name "lisp.paren-check")
          :readable-roots *workspace-tool-readable-roots*)
       (if success-p
           (tool-success content)

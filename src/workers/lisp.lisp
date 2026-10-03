@@ -389,7 +389,7 @@
                                 "The ~A asd argument must be a non-empty string."
                                 tool-name)
                :tool-name tool-name))
-      (let ((path (workspace-tool-path context requested)))
+      (let ((path (workspace-tool-path context requested :tool-name tool-name)))
         (unless (uiop:file-exists-p path)
           (error 'tool-error
                  :message (format nil

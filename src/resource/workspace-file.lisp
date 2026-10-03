@@ -246,7 +246,8 @@
    :validation-function
    (and context
         (lambda ()
-          (workspace-tool-path context (uiop:native-namestring path))))))
+          (workspace-tool-confined-path context (uiop:native-namestring path)
+                                        :tool-name "resource.read")))))
 
 (-> workspace-file--directory-entry-row (pathname string) (option string))
 (defun workspace-file--directory-entry-row (directory name)
@@ -1015,17 +1016,6 @@ the final check-to-rename window. Missing-file publication rejects that race."
 
 ;;;; -- Resource Tool Methods --
 
-(-> workspace-file--authorization-command
-    ((member :read :edit) pathname)
-    string)
-(defun workspace-file--authorization-command (operation path)
-  "Return the command-shaped permission request for OPERATION on PATH."
-  (format nil "~A -- ~A"
-          (ecase operation
-            (:read "resource.read")
-            (:edit "resource.edit"))
-          (uiop:escape-shell-token (uiop:native-namestring path))))
-
 (-> workspace-file--call-with-authorized-access
     (workspace-file-resource tool-context (member :read :edit) function)
     t)
@@ -1036,18 +1026,11 @@ the final check-to-rename window. Missing-file publication rejects that race."
          (roots (workspace-file-resource-access-roots resource context)))
     (if (workspace-tool--read-path-allowed-p path roots)
         (funcall function)
-        (let* ((tool-name
-                 (ecase operation
-                   (:read "resource.read")
-                   (:edit "resource.edit")))
-               (command
-                 (workspace-file--authorization-command operation path))
-               (decision
-                 (tool-context-authorize-command
-                  context command
-                  (config :working-directory
-                   (tool-context-configuration context)))))
-          (unless (eq decision ':full-access)
+        (let ((tool-name
+                (ecase operation
+                  (:read "resource.read")
+                  (:edit "resource.edit"))))
+          (unless (workspace-tool-authorize-outside-path context path tool-name)
             (error 'tool-error
                    :message
                    (format nil "~A requires full-access approval for path ~A outside the workspace and source roots."

@@ -76,6 +76,11 @@ copy their architecture wholesale.
   modify the stable launcher or pristine recovery artifacts.
 - Treat process separation as an accidental-damage and reliability boundary,
   never as a security sandbox.
+- Tool paths outside the workspace and source roots are a permission question,
+  never a hard refusal. Resolve every tool path through `workspace-tool-path`,
+  which asks command authorization for `TOOL -- PATH`, so full access never
+  refuses. Only the command sandbox, which cannot run elsewhere, and callers
+  that already authorized a path use `workspace-tool-confined-path`.
 - Keep provider authentication and transport behind a replaceable interface.
   Do not launch or bundle the Codex CLI to implement subscription access.
 - Keep credentials out of saved cores, conversation files, and Git.
