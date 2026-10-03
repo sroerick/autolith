@@ -585,31 +585,40 @@
 
 (-> generation-tests--test-active-image-single-thread-check () null)
 (defun generation-tests--test-active-image-single-thread-check ()
-  "Test active-image installation refuses to fork with another live Lisp thread."
+  "Test only a forked active-image saver requires one live Lisp thread."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (source-root   (asdf:system-source-directory :autolith))
          (core-pathname (merge-pathnames "active/autolith.core" root)))
-    (unwind-protect
-         (test-assert
-          (test-call-with-function-replacements
-           (list
-            (list 'active-image-build-record-create
-                  (lambda (active-source-root)
-                    (declare (ignore active-source-root))
-                    '(:active-image-build-test)))
-            (list 'checkpoint-single-threaded-p (lambda () nil)))
-           (lambda ()
-             (handler-case
-                 (progn
-                   (active-image-install source-root core-pathname)
-                   nil)
-               (active-image-build-error (condition)
-                 (and (eq (active-image-build-error-stage condition) ':fork)
-                      (equal (active-image-build-error-pathname condition)
-                             core-pathname))))))
-          "active-image installation checks for one live thread before forking")
-      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+    (flet ((install-stage (saver)
+             "Install with SAVER on a multi-threaded host; return its failure stage and pathname."
+             (test-call-with-function-replacements
+              (list
+               (list 'active-image-build-record-create
+                     (lambda (active-source-root)
+                       (declare (ignore active-source-root))
+                       '(:active-image-build-test)))
+               (list 'checkpoint-single-threaded-p (lambda () nil))
+               (list 'active-image--save-in-fresh-process
+                     (lambda (saver-source-root temporary)
+                       (declare (ignore saver-source-root temporary))
+                       nil)))
+              (lambda ()
+                (handler-case
+                    (progn
+                      (active-image-install source-root core-pathname :saver saver)
+                      nil)
+                  (active-image-build-error (condition)
+                    (list (active-image-build-error-stage condition)
+                          (active-image-build-error-pathname condition))))))))
+      (unwind-protect
+           (progn
+             (with-platform-capability (':forked-image-saver "forked active-image saver")
+               (test-assert (equal (install-stage ':automatic) (list ':fork core-pathname))
+                            "active-image installation checks for one live thread before forking"))
+             (test-assert (eq (first (install-stage ':fresh-process)) ':save)
+                          "a fresh-process active-image saver needs no single-threaded host"))
+        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 (-> generation-tests--test-autolith-error-translation () null)
