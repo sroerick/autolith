@@ -481,19 +481,6 @@ nothing is listening there, and PLATFORM-CAPABILITY-UNAVAILABLE without the
               (platform-file-status-identity right))
        t))
 
-(-> platform-file-status-unchanged-p
-    (platform-file-status platform-file-status)
-    boolean)
-(defun platform-file-status-unchanged-p (before after)
-  "Return true when one object stayed unchanged between observations BEFORE and AFTER."
-  (and (platform-file-status-same-object-p before after)
-       (= (platform-file-status-size before)
-          (platform-file-status-size after))
-       (= (platform-file-status-modification-time before)
-          (platform-file-status-modification-time after))
-       (= (platform-file-status-change-time before)
-          (platform-file-status-change-time after))))
-
 
 ;;;; -- Shared File Methods --
 

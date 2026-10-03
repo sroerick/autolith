@@ -13,60 +13,39 @@
     (path &key maximum-bytes tool-name description validation-function)
   "Read a bounded regular PATH file as stable UTF-8 text.
 
-VALIDATION-FUNCTION runs after opening the file and before confirming that
-PATH still names the opened object."
+ls-compat opens PATH without following links, enforces MAXIMUM-BYTES, runs
+VALIDATION-FUNCTION after opening, and confirms that PATH still names the
+opened, unchanged object. Each of its conditions becomes a TOOL-ERROR naming
+TOOL-NAME and DESCRIPTION."
   (let ((native-path (uiop:native-namestring path)))
-    (labels ((fail (control &rest arguments)
-               (error 'tool-error
-                      :message (apply #'format nil control arguments)
-                      :tool-name tool-name))
-
-             (changed ()
-               (fail "~A ~A changed while it was being read. Reread it and retry."
-                     description native-path)))
-      (let ((stream nil))
-        (unwind-protect
-             (handler-case
-                 (multiple-value-bind (opened status)
-                     (platform-open-regular-file *platform* path)
-                   (setf stream opened)
-                   (when (> (platform-file-status-size status) maximum-bytes)
-                     (fail "~A ~A is ~:D bytes; ~A reads exact UTF-8 files only up to ~:D bytes."
-                           description
-                           native-path
-                           (platform-file-status-size status)
-                           tool-name
-                           maximum-bytes))
-                   (when validation-function
-                     (funcall validation-function))
-                   (let ((current (platform-path-status *platform* path
-                                                        :follow-links-p t)))
-                     (unless (and current
-                                  (platform-file-status-same-object-p status
-                                                                      current))
-                       (changed)))
-                   (let* ((length (platform-file-status-size status))
-                          (octets (make-array length
-                                              :element-type '(unsigned-byte 8))))
-                     (unless (= (read-sequence octets stream) length)
-                       (changed))
-                     (unless (platform-file-status-unchanged-p
-                              status
-                              (platform-stream-status *platform* stream))
-                       (changed))
-                     (handler-case
-                         (sb-ext:octets-to-string octets :external-format ':utf-8)
-                       (error ()
-                         (fail "~A ~A is not valid UTF-8 text."
-                               description native-path)))))
-               (platform-error (condition)
-                 (if (eq (platform-error-reason condition) ':not-regular)
-                     (fail "~A ~A is not a regular file."
-                           description native-path)
-                     (fail "Could not read ~A ~A as an exact regular file: ~A"
-                           description native-path condition))))
-          (when stream
-            (close stream)))))))
+    (flet ((fail (control &rest arguments)
+             (error 'tool-error
+                    :message (apply #'format nil control arguments)
+                    :tool-name tool-name)))
+      (handler-case
+          (read-file-text path
+                          :maximum-octets maximum-bytes
+                          :validation-function validation-function)
+        (file-too-large (condition)
+          (fail "~A ~A is ~:D bytes; ~A reads exact UTF-8 files only up to ~:D bytes."
+                description
+                native-path
+                (file-too-large-size condition)
+                tool-name
+                maximum-bytes))
+        (file-changed ()
+          (fail "~A ~A changed while it was being read. Reread it and retry."
+                description native-path))
+        (file-not-utf-8 ()
+          (fail "~A ~A is not valid UTF-8 text." description native-path))
+        (not-regular-file (condition)
+          (if (eq (not-regular-file-kind condition) ':symbolic-link)
+              (fail "Could not read ~A ~A as an exact regular file: ~A"
+                    description native-path condition)
+              (fail "~A ~A is not a regular file." description native-path)))
+        (file-error (condition)
+          (fail "Could not read ~A ~A as an exact regular file: ~A"
+                description native-path condition))))))
 
 
 ;;;; -- Bounded Text Windows --

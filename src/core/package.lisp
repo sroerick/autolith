@@ -841,8 +841,13 @@
                 #:sbcl-worker-stop
                 #:sbcl-worker-used-image-identifier)
   (:import-from #:ls-compat.files
+                #:file-changed
+                #:file-not-utf-8
+                #:file-too-large
+                #:file-too-large-size
                 #:publish-file
-                #:publish-pathname)
+                #:publish-pathname
+                #:read-file-text)
   (:import-from #:ls-compat.posix
                 #:current-process-id
                 #:descendant-process-ids
