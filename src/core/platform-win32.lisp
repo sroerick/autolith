@@ -40,7 +40,6 @@
 (win32--define win32--format-message "FormatMessageW" win32-dword
   (flags win32-dword) (source (* t)) (message-id win32-dword)
   (language win32-dword) (buffer (* t)) (size win32-dword) (arguments (* t)))
-(win32--define win32--local-free "LocalFree" (* t) (memory (* t)))
 (win32--define win32--close-handle "CloseHandle" win32-bool (handle win32-handle))
 (win32--define win32--create-job-object "CreateJobObjectW" win32-handle
   (security (* t)) (name win32-wide-string))
@@ -81,13 +80,6 @@
   (name win32-wide-string) (access win32-dword) (share win32-dword)
   (security (* t)) (disposition win32-dword) (flags win32-dword)
   (template win32-handle))
-(win32--define win32--get-file-information-by-handle "GetFileInformationByHandle"
-    win32-bool
-  (handle win32-handle) (information (* t)))
-(win32--define win32--get-file-information-by-handle-ex
-    "GetFileInformationByHandleEx" win32-bool
-  (handle win32-handle) (class sb-alien:int) (information (* t))
-  (size win32-dword))
 (win32--define win32--get-file-attributes "GetFileAttributesW" win32-dword
   (name win32-wide-string))
 (win32--define win32--set-file-attributes "SetFileAttributesW" win32-bool
@@ -95,23 +87,12 @@
 (win32--define win32--set-environment-variable "SetEnvironmentVariableW" win32-bool
   (name win32-wide-string) (value win32-wide-string))
 (win32--define win32--wputenv "_wputenv" sb-alien:int (entry win32-wide-string))
-(win32--define win32--get-file-type "GetFileType" win32-dword (handle win32-handle))
-(win32--define win32--get-final-path-name-by-handle "GetFinalPathNameByHandleW"
-    win32-dword
-  (handle win32-handle) (buffer (* t)) (size win32-dword) (flags win32-dword))
-(win32--define win32--create-hard-link "CreateHardLinkW" win32-bool
-  (new-name win32-wide-string) (existing-name win32-wide-string) (security (* t)))
 (win32--define win32--move-file-ex "MoveFileExW" win32-bool
   (source win32-wide-string) (target win32-wide-string) (flags win32-dword))
 (win32--define win32--set-file-time "SetFileTime" win32-bool
   (handle win32-handle) (creation (* t)) (access (* t)) (write (* t)))
 (win32--define win32--create-directory "CreateDirectoryW" win32-bool
   (name win32-wide-string) (security (* t)))
-(win32--define win32--find-first-file "FindFirstFileW" win32-handle
-  (pattern win32-wide-string) (data (* t)))
-(win32--define win32--find-next-file "FindNextFileW" win32-bool
-  (handle win32-handle) (data (* t)))
-(win32--define win32--find-close "FindClose" win32-bool (handle win32-handle))
 (win32--define win32--open-process "OpenProcess" win32-handle
   (access win32-dword) (inherit win32-bool) (process-id win32-dword))
 (win32--define win32--get-exit-code-process "GetExitCodeProcess" win32-bool
@@ -119,7 +100,6 @@
 (win32--define win32--terminate-process "TerminateProcess" win32-bool
   (handle win32-handle) (code win32-dword))
 (win32--define win32--get-current-process "GetCurrentProcess" win32-handle)
-(win32--define win32--get-current-process-id "GetCurrentProcessId" win32-dword)
 (win32--define win32--duplicate-handle "DuplicateHandle" win32-bool
   (source-process win32-handle) (source-handle win32-handle)
   (target-process win32-handle) (target-handle (* win32-handle))
@@ -133,20 +113,6 @@
 (win32--define win32--get-console-screen-buffer-info "GetConsoleScreenBufferInfo"
     win32-bool
   (handle win32-handle) (information (* t)))
-(win32--define win32--open-process-token "OpenProcessToken" win32-bool
-  (process win32-handle) (access win32-dword) (token (* win32-handle)))
-(win32--define win32--get-token-information "GetTokenInformation" win32-bool
-  (token win32-handle) (class sb-alien:int) (buffer (* t)) (size win32-dword)
-  (returned (* win32-dword)))
-(win32--define win32--get-length-sid "GetLengthSid" win32-dword (sid (* t)))
-(win32--define win32--get-security-info "GetSecurityInfo" win32-dword
-  (handle win32-handle) (type sb-alien:int) (information win32-dword)
-  (owner (* (* t))) (group (* (* t))) (dacl (* (* t))) (sacl (* (* t)))
-  (descriptor (* (* t))))
-(win32--define win32--get-acl-information "GetAclInformation" win32-bool
-  (acl (* t)) (information (* t)) (size win32-dword) (class sb-alien:int))
-(win32--define win32--get-ace "GetAce" win32-bool
-  (acl (* t)) (index win32-dword) (ace (* (* t))))
 (win32--define win32--generate-random "SystemFunction036" (sb-alien:unsigned 8)
   (buffer (* t)) (size win32-dword))
 
@@ -162,14 +128,8 @@
 (defparameter *win32-generic-write* #x40000000
   "GENERIC_WRITE, which includes READ_CONTROL for security queries.")
 
-(defparameter *win32-file-read-attributes* #x80
-  "FILE_READ_ATTRIBUTES, enough access to inspect an object.")
-
 (defparameter *win32-file-write-attributes* #x100
   "FILE_WRITE_ATTRIBUTES, enough access to change file times.")
-
-(defparameter *win32-read-control* #x20000
-  "READ_CONTROL, the access needed to read an object's security descriptor.")
 
 (defparameter *win32-share-all* 7
   "FILE_SHARE_READ, FILE_SHARE_WRITE, and FILE_SHARE_DELETE together.")
@@ -189,23 +149,14 @@
 (defparameter *win32-file-attribute-normal* #x80
   "FILE_ATTRIBUTE_NORMAL.")
 
-(defparameter *win32-file-attribute-reparse-point* #x400
-  "FILE_ATTRIBUTE_REPARSE_POINT, carried by symbolic links and junctions.")
-
 (defparameter *win32-file-flag-backup-semantics* #x02000000
   "FILE_FLAG_BACKUP_SEMANTICS, required to open a directory handle.")
-
-(defparameter *win32-file-flag-open-reparse-point* #x00200000
-  "FILE_FLAG_OPEN_REPARSE_POINT, which opens a link itself instead of its target.")
 
 (defparameter *win32-invalid-file-attributes* #xFFFFFFFF
   "The GetFileAttributesW result meaning failure.")
 
 (defparameter *win32-error-environment-variable-not-found* 203
   "ERROR_ENVVAR_NOT_FOUND, reported when removing a variable that is absent.")
-
-(defparameter *win32-file-type-disk* 1
-  "The GetFileType result for a regular disk file.")
 
 (defparameter *win32-move-file-replace-existing* 1
   "MOVEFILE_REPLACE_EXISTING.")
@@ -245,32 +196,6 @@
 
 (defparameter *win32-enable-echo-input* #x4
   "ENABLE_ECHO_INPUT in a console input mode.")
-
-(defparameter *win32-token-query* #x8
-  "TOKEN_QUERY access for OpenProcessToken.")
-
-(defparameter *win32-token-user* 1
-  "The TokenUser information class.")
-
-(defparameter *win32-se-file-object* 1
-  "SE_FILE_OBJECT for the security information functions.")
-
-(defparameter *win32-owner-and-dacl-information* 5
-  "OWNER_SECURITY_INFORMATION and DACL_SECURITY_INFORMATION together.")
-
-(defparameter *win32-file-write-data* #x2
-  "FILE_WRITE_DATA, the access right an unwritable object withholds from its owner.")
-
-(defparameter *win32-administrators-sid-octets*
-  (coerce '(1 2 0 0 0 0 0 5 32 0 0 0 32 2 0 0) '(simple-array (unsigned-byte 8) (16)))
-  "S-1-5-32-544, the Administrators group that owns what an elevated process creates.")
-
-(defparameter *win32-token-elevation* 20
-  "The TokenElevation information class.")
-
-(defparameter *win32-system-sid-octets*
-  (coerce '(1 1 0 0 0 0 0 5 18 0 0 0) '(simple-array (unsigned-byte 8) (*)))
-  "The octets of the well-known NT AUTHORITY\\SYSTEM identifier S-1-5-18.")
 
 (defparameter *win32-filetime-epoch-offset* 9435484800
   "Seconds from the FILETIME epoch of 1601 to the universal-time epoch of 1900.")
@@ -740,135 +665,6 @@ protocol."
 
 ;;;; -- Security --
 
-(defvar *win32-user-sid* nil
-  "The current user's SID octets paired with the process identifier that read them.")
-
-(-> win32--sid-octets (sb-sys:system-area-pointer) (simple-array (unsigned-byte 8) (*)))
-(defun win32--sid-octets (sid)
-  "Copy the security identifier at SID into a fresh octet vector."
-  (let* ((length (win32--get-length-sid (sb-alien:sap-alien sid (* t))))
-         (octets (make-array length :element-type '(unsigned-byte 8))))
-    (dotimes (index length octets)
-      (setf (aref octets index) (sb-sys:sap-ref-8 sid index)))))
-
-(-> win32--current-user-sid () (simple-array (unsigned-byte 8) (*)))
-(defun win32--current-user-sid ()
-  "Return the current process token's user SID octets, cached per process."
-  (let ((process-id (win32--get-current-process-id)))
-    (unless (and *win32-user-sid* (= (first *win32-user-sid*) process-id))
-      (sb-alien:with-alien ((token win32-handle))
-        (when (zerop (win32--open-process-token (win32--get-current-process)
-                                                *win32-token-query*
-                                                (sb-alien:addr token)))
-          (win32--fail ':security nil))
-        (unwind-protect
-             (sb-alien:with-alien ((buffer (sb-alien:array (sb-alien:unsigned 8) 256))
-                                   (returned win32-dword))
-               (when (zerop (win32--get-token-information
-                             token *win32-token-user* (sb-alien:alien-sap buffer)
-                             256 (sb-alien:addr returned)))
-                 (win32--fail ':security nil))
-               (setf *win32-user-sid*
-                     (list process-id
-                           (win32--sid-octets
-                            (sb-sys:int-sap
-                             (sb-sys:sap-ref-64 (sb-alien:alien-sap buffer) 0))))))
-          (win32--close-handle token))))
-    (second *win32-user-sid*)))
-
-(defvar *win32-elevated-p* ':unknown
-  "Whether this process runs elevated, read from its token once.")
-
-(-> win32--elevated-p () boolean)
-(defun win32--elevated-p ()
-  "Return whether this process runs with an elevated token.
-
-Windows makes the Administrators group the owner of what an elevated process
-creates, so ownership checks treat that group as the user then."
-  (when (eq *win32-elevated-p* ':unknown)
-    (sb-alien:with-alien ((token win32-handle))
-      (when (zerop (win32--open-process-token (win32--get-current-process)
-                                              *win32-token-query*
-                                              (sb-alien:addr token)))
-        (win32--fail ':security nil))
-      (unwind-protect
-           (sb-alien:with-alien ((elevation win32-dword)
-                                 (returned win32-dword))
-             (setf *win32-elevated-p*
-                   (and (not (zerop (win32--get-token-information
-                                     token *win32-token-elevation*
-                                     (sb-alien:addr elevation) 4
-                                     (sb-alien:addr returned))))
-                        (not (zerop elevation)))))
-        (win32--close-handle token))))
-  *win32-elevated-p*)
-
-(-> win32--owner-p ((simple-array (unsigned-byte 8) (*))) boolean)
-(defun win32--owner-p (owner)
-  "Return whether OWNER, a SID, counts as the current user."
-  (or (equalp owner (win32--current-user-sid))
-      (and (equalp owner *win32-administrators-sid-octets*)
-           (win32--elevated-p))))
-
-(-> win32--acl-entries (sb-sys:system-area-pointer) list)
-(defun win32--acl-entries (acl)
-  "Return ACL's entries as (TYPE MASK . SID-OCTETS), TYPE being :ALLOW or :OTHER."
-  (sb-alien:with-alien ((information (sb-alien:array (sb-alien:unsigned 8) 12)))
-    (when (zerop (win32--get-acl-information (sb-alien:sap-alien acl (* t))
-                                             (sb-alien:alien-sap information) 12 2))
-      (win32--fail ':security nil))
-    (loop for index below (sb-sys:sap-ref-32 (sb-alien:alien-sap information) 0)
-          collect (sb-alien:with-alien ((ace (* t)))
-                    (when (zerop (win32--get-ace (sb-alien:sap-alien acl (* t))
-                                                 index (sb-alien:addr ace)))
-                      (win32--fail ':security nil))
-                    (let ((sap (sb-alien:alien-sap ace)))
-                      (list* (if (zerop (sb-sys:sap-ref-8 sap 0)) ':allow ':other)
-                             (sb-sys:sap-ref-32 sap 4)
-                             (win32--sid-octets (sb-sys:sap+ sap 8))))))))
-
-(-> win32--handle-privacy (integer) (values boolean boolean boolean))
-(defun win32--handle-privacy (handle)
-  "Return whether the object behind HANDLE is owned by the user, private to the
-user, and withholds write access from the user.
-
-Every value is false when the security descriptor cannot be read, which
-happens for objects the user may see but not inspect. Write access is judged
-only for private objects, whose access control list ls-compat wrote."
-  (sb-alien:with-alien ((owner (* t)) (dacl (* t)) (descriptor (* t)))
-    (let ((status (win32--get-security-info handle *win32-se-file-object*
-                                            *win32-owner-and-dacl-information*
-                                            (sb-alien:addr owner) nil
-                                            (sb-alien:addr dacl) nil
-                                            (sb-alien:addr descriptor))))
-      (if (not (zerop status))
-          (values nil nil nil)
-          (unwind-protect
-               (let* ((user (win32--current-user-sid))
-                      (owned-p (win32--owner-p (win32--sid-octets (sb-alien:alien-sap owner))))
-                      (entries (if (zerop (sb-sys:sap-int (sb-alien:alien-sap dacl)))
-                                   ':unrestricted
-                                   (win32--acl-entries (sb-alien:alien-sap dacl))))
-                      (private-p
-                        (and owned-p
-                             (listp entries)
-                             (every (lambda (entry)
-                                      (and (eq (first entry) ':allow)
-                                           (or (equalp (cddr entry) user)
-                                               (equalp (cddr entry)
-                                                       *win32-system-sid-octets*))))
-                                    entries)
-                             t)))
-                 (values owned-p
-                         private-p
-                         (and private-p
-                              (notany (lambda (entry)
-                                        (and (equalp (cddr entry) user)
-                                             (logtest (second entry)
-                                                      *win32-file-write-data*)))
-                                      entries))))
-            (win32--local-free descriptor))))))
-
 (-> win32--mode (pathname) (integer 0 #o777))
 (defun win32--mode (pathname)
   "Return the permission bits ls-compat derives from PATHNAME's access control list."
@@ -942,49 +738,6 @@ process did not inherit."
   (declare (ignore platform))
   (uiop:parse-native-namestring string))
 
-(-> win32--final-path-namestring (string) string)
-(defun win32--final-path-namestring (final)
-  "Return FINAL, a kernel final path, without its verbatim prefix."
-  (cond ((uiop:string-prefix-p "\\\\?\\UNC\\" final)
-         (concatenate 'string "\\\\" (subseq final 8)))
-        ((uiop:string-prefix-p "\\\\?\\" final)
-         (subseq final 4))
-        (t
-         final)))
-
-(defmethod platform-truename ((platform win32-platform) pathname)
-  "Ask the kernel for PATHNAME's final path, which resolves links and junctions.
-
-GetFinalPathNameByHandleW reports the normalized on-disk name of what a handle
-opened with backup semantics refers to, so directories and files alike resolve
-through every symbolic link on the way."
-  (declare (ignore platform))
-  (let ((handle (win32--create-file (win32--namestring pathname) 0 *win32-share-all*
-                                    nil *win32-open-existing*
-                                    *win32-file-flag-backup-semantics* 0)))
-    (when (= handle *win32-invalid-handle*)
-      (win32--fail ':resolve pathname))
-    (unwind-protect
-         (sb-alien:with-alien ((buffer (sb-alien:array (sb-alien:unsigned 16) 32768)))
-           (let ((length (win32--get-final-path-name-by-handle
-                          handle (sb-alien:alien-sap buffer) 32768 0)))
-             (when (or (zerop length) (> length 32768))
-               (win32--fail ':resolve pathname))
-             (let* ((final
-                      (win32--final-path-namestring
-                       (coerce (loop for index below length
-                                     collect (code-char
-                                              (sb-sys:sap-ref-16 (sb-alien:alien-sap buffer)
-                                                                 (* 2 index))))
-                               'string)))
-                    (attributes (win32--get-file-attributes final)))
-               (uiop:parse-native-namestring
-                final
-                :ensure-directory (and (/= attributes *win32-invalid-file-attributes*)
-                                       (logtest attributes
-                                                *win32-file-attribute-directory*))))))
-      (win32--close-handle handle))))
-
 (defmethod platform-application-root ((platform win32-platform) kind)
   "Honour an absolute XDG variable, and otherwise use the application data folders.
 
@@ -1010,127 +763,6 @@ state, and cache under the local one, each in its own subdirectory."
        (if xdg
            (merge-pathnames "autolith/" xdg)
            (merge-pathnames "autolith/cache/" (win32--known-folder "LOCALAPPDATA")))))))
-
-(-> win32--filetime->seconds (integer) integer)
-(defun win32--filetime->seconds (filetime)
-  "Return FILETIME as whole seconds, the resolution compared across observations."
-  (floor filetime 10000000))
-
-(-> win32--handle-status (integer &key (:link-p boolean)) platform-file-status)
-(defun win32--handle-status (handle &key link-p)
-  "Return the status of the object behind HANDLE, reported as a link when LINK-P."
-  (sb-alien:with-alien ((information (sb-alien:array (sb-alien:unsigned 8) 64))
-                        (basic (sb-alien:array (sb-alien:unsigned 8) 40)))
-    (let ((sap (sb-alien:alien-sap information))
-          (basic-sap (sb-alien:alien-sap basic)))
-      (when (zerop (win32--get-file-information-by-handle handle sap))
-        (win32--fail ':status nil))
-      (when (zerop (win32--get-file-information-by-handle-ex handle 0 basic-sap 40))
-        (win32--fail ':status nil))
-      (let* ((attributes (sb-sys:sap-ref-32 sap 0))
-             (kind (cond
-                     ((or link-p (logtest attributes *win32-file-attribute-reparse-point*))
-                      ':symbolic-link)
-                     ((logtest attributes *win32-file-attribute-directory*)
-                      ':directory)
-                     ((= (win32--get-file-type handle) *win32-file-type-disk*)
-                      ':file)
-                     (t
-                      ':other))))
-        (multiple-value-bind (owned-p private-p unwritable-p)
-            (win32--handle-privacy handle)
-          (make-instance 'platform-file-status
-                         :kind kind
-                         :identity (cons (sb-sys:sap-ref-32 sap 28)
-                                         (logior (ash (sb-sys:sap-ref-32 sap 44) 32)
-                                                 (sb-sys:sap-ref-32 sap 48)))
-                         :size (logior (ash (sb-sys:sap-ref-32 sap 32) 32)
-                                       (sb-sys:sap-ref-32 sap 36))
-                         :modification-time (sb-sys:sap-ref-64 basic-sap 16)
-                         :change-time (sb-sys:sap-ref-64 basic-sap 24)
-                         :owned-p owned-p
-                         :private-p private-p
-                         :read-only-p (or unwritable-p
-                                          (logtest attributes
-                                                   *win32-file-attribute-readonly*))))))))
-
-(-> win32--open-for-status (pathname boolean) integer)
-(defun win32--open-for-status (pathname follow-links-p)
-  "Open PATHNAME for inspection, returning its handle or signaling for absence."
-  (let ((native (win32--namestring pathname))
-        (flags (logior *win32-file-flag-backup-semantics*
-                       (if follow-links-p 0 *win32-file-flag-open-reparse-point*))))
-    (let ((handle (win32--create-file native
-                                      (logior *win32-file-read-attributes*
-                                              *win32-read-control*)
-                                      *win32-share-all* nil *win32-open-existing*
-                                      flags 0)))
-      (when (and (= handle *win32-invalid-handle*)
-                 (= (win32--get-last-error) *win32-error-access-denied*))
-        (setf handle (win32--create-file native *win32-file-read-attributes*
-                                         *win32-share-all* nil *win32-open-existing*
-                                         flags 0)))
-      (when (= handle *win32-invalid-handle*)
-        (win32--fail ':status pathname))
-      handle)))
-
-(defmethod platform-path-status ((platform win32-platform) pathname
-                                 &key follow-links-p)
-  "Open PATHNAME for inspection, following reparse points only when asked."
-  (handler-case
-      (let ((handle (win32--open-for-status pathname follow-links-p)))
-        (unwind-protect
-             (win32--handle-status handle)
-          (win32--close-handle handle)))
-    (platform-error (condition)
-      (if (eq (platform-error-reason condition) ':missing)
-          nil
-          (error condition)))))
-
-(defmethod platform-stream-status ((platform win32-platform) stream)
-  "Inspect the handle behind STREAM."
-  (win32--handle-status (sb-sys:fd-stream-fd stream)))
-
-(defmethod platform-open-regular-file ((platform win32-platform) pathname
-                                       &key follow-links-p)
-  "Open PATHNAME for reading, refusing reparse points unless FOLLOW-LINKS-P."
-  (let ((handle (win32--create-file (win32--namestring pathname)
-                                    *win32-generic-read* *win32-share-all* nil
-                                    *win32-open-existing*
-                                    (logior *win32-file-attribute-normal*
-                                            (if follow-links-p
-                                                0
-                                                *win32-file-flag-open-reparse-point*))
-                                    0)))
-    (when (= handle *win32-invalid-handle*)
-      (win32--fail ':open pathname))
-    (unwind-protect
-         (let ((status (win32--handle-status handle)))
-           (case (platform-file-status-kind status)
-             (:symbolic-link
-              (error 'platform-error
-                     :message (format nil "~A is a symbolic link or junction."
-                                      (win32--namestring pathname))
-                     :operation ':open
-                     :pathname pathname
-                     :reason ':symbolic-link))
-             (:file
-              nil)
-             (t
-              (error 'platform-error
-                     :message (format nil "~A is not a regular file."
-                                      (win32--namestring pathname))
-                     :operation ':open
-                     :pathname pathname
-                     :reason ':not-regular)))
-           (let ((stream (sb-sys:make-fd-stream handle
-                                                :input t
-                                                :element-type '(unsigned-byte 8)
-                                                :auto-close t)))
-             (setf handle nil)
-             (values stream status)))
-      (when handle
-        (win32--close-handle handle)))))
 
 (defmethod platform-create-private-file ((platform win32-platform) pathname)
   "Create PATHNAME exclusively and restrict it to the current user."
@@ -1216,15 +848,6 @@ Autolith publishes read-only lives below a private root anyway."
       (win32--close-handle handle)))
   nil)
 
-(defmethod platform-publish-new-file ((platform win32-platform) source target)
-  "Hard-link SOURCE to TARGET, which fails atomically when TARGET exists.
-
-Hard links need an NTFS volume; other filesystems report the failure typed."
-  (when (zerop (win32--create-hard-link (win32--namestring target)
-                                        (win32--namestring source) nil))
-    (win32--fail ':publish target))
-  nil)
-
 (-> win32--clear-read-only-attribute (pathname) null)
 (defun win32--clear-read-only-attribute (pathname)
   "Clear PATHNAME's read-only attribute when it carries one."
@@ -1286,38 +909,6 @@ Hard links need an NTFS volume; other filesystems report the failure typed."
                        :operation ':create
                        :pathname parent
                        :reason ':exists)))
-
-(defmethod platform-list-directory ((platform win32-platform) pathname
-                                    &key (limit most-positive-fixnum))
-  "Enumerate PATHNAME with FindFirstFileW and FindNextFileW."
-  (sb-alien:with-alien ((data (sb-alien:array (sb-alien:unsigned 8) 640)))
-    (let* ((sap (sb-alien:alien-sap data))
-           (handle (win32--find-first-file
-                    (concatenate 'string (win32--namestring pathname) "\\*") sap))
-           (names nil)
-           (count 0)
-           (more-p nil))
-      (when (= handle *win32-invalid-handle*)
-        (win32--fail ':list pathname))
-      (unwind-protect
-           (loop
-             (let ((name (coerce (loop for index from 0 below 260
-                                       for code = (sb-sys:sap-ref-16 sap (+ 44 (* 2 index)))
-                                       until (zerop code)
-                                       collect (code-char code))
-                                 'string)))
-               (unless (member name '("." "..") :test #'string=)
-                 (if (< count limit)
-                     (progn
-                       (push name names)
-                       (incf count))
-                     (progn
-                       (setf more-p t)
-                       (return)))))
-             (when (zerop (win32--find-next-file handle sap))
-               (return)))
-        (win32--find-close handle))
-      (values (nreverse names) more-p))))
 
 (defmethod platform-shared-library-file-name ((platform win32-platform)
                                               base-name)

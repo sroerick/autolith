@@ -186,128 +186,10 @@
         (posix--environment-directory "XDG_CACHE_HOME"
                                       (merge-pathnames ".cache/" home)))))))
 
-(-> posix--status (t) platform-file-status)
-(defun posix--status (stat)
-  "Return the platform file status described by SB-POSIX STAT."
-  (let* ((mode (sb-posix:stat-mode stat))
-         (owned-p (= (sb-posix:stat-uid stat) (sb-posix:getuid))))
-    (make-instance 'platform-file-status
-                   :kind (cond
-                           ((sb-posix:s-isreg mode)
-                            ':file)
-                           ((sb-posix:s-isdir mode)
-                            ':directory)
-                           ((sb-posix:s-islnk mode)
-                            ':symbolic-link)
-                           ((sb-posix:s-issock mode)
-                            ':socket)
-                           (t
-                            ':other))
-                   :identity (cons (sb-posix:stat-dev stat)
-                                   (sb-posix:stat-ino stat))
-                   :size (sb-posix:stat-size stat)
-                   :modification-time (sb-posix:stat-mtime stat)
-                   :change-time (sb-posix:stat-ctime stat)
-                   :owned-p owned-p
-                   :private-p (and owned-p (zerop (logand mode #o077)))
-                   :read-only-p (zerop (logand mode #o200)))))
-
 (defmethod platform-parse-namestring ((platform posix-platform) string)
   "Read STRING as a Unix namestring, as UIOP does for pathname designators."
   (declare (ignore platform))
   (uiop:parse-unix-namestring string))
-
-(defmethod platform-truename ((platform posix-platform) pathname)
-  "Resolve PATHNAME with TRUENAME, which follows every link here."
-  (declare (ignore platform))
-  (handler-case (truename pathname)
-    (file-error (condition)
-      (error 'platform-error
-             :message (princ-to-string condition)
-             :operation ':resolve
-             :pathname (pathname pathname)
-             :reason (if (ignore-errors (probe-file pathname))
-                         ':failed
-                         ':missing)))))
-
-(defmethod platform-path-status ((platform posix-platform) pathname
-                                 &key follow-links-p)
-  "Observe PATHNAME with STAT, or LSTAT unless FOLLOW-LINKS-P."
-  (let ((native (posix--namestring pathname)))
-    (handler-case
-        (posix--status (if follow-links-p
-                           (sb-posix:stat native)
-                           (sb-posix:lstat native)))
-      (sb-posix:syscall-error (condition)
-        (if (= (sb-posix:syscall-errno condition) sb-posix:enoent)
-            nil
-            (posix--signal ':status pathname condition))))))
-
-(defmethod platform-stream-status ((platform posix-platform) stream)
-  "Observe STREAM's descriptor with FSTAT."
-  (posix--call ':status nil
-               (lambda ()
-                 (posix--status (sb-posix:fstat (sb-sys:fd-stream-fd stream))))))
-
-(defmethod platform-open-regular-file ((platform posix-platform) pathname
-                                       &key follow-links-p)
-  "Open PATHNAME read-only without blocking, refusing links unless FOLLOW-LINKS-P."
-  (let* ((native (posix--namestring pathname))
-         (descriptor
-           (posix--call ':open pathname
-                        (lambda ()
-                          (sb-posix:open native
-                                         (logior sb-posix:o-rdonly
-                                                 sb-posix:o-nonblock
-                                                 (if follow-links-p
-                                                     0
-                                                     sb-posix:o-nofollow)))))))
-    (unwind-protect
-         (let ((status
-                 (posix--call ':open pathname
-                              (lambda ()
-                                (posix--status (sb-posix:fstat descriptor))))))
-           (unless (eq (platform-file-status-kind status) ':file)
-             (error 'platform-error
-                    :message (format nil "~A is not a regular file." native)
-                    :operation ':open
-                    :pathname pathname
-                    :reason ':not-regular))
-           (let ((stream (sb-sys:make-fd-stream descriptor
-                                                :input t
-                                                :element-type '(unsigned-byte 8)
-                                                :auto-close t)))
-             (setf descriptor nil)
-             (values stream status)))
-      (when descriptor
-        (ignore-errors (sb-posix:close descriptor))))))
-
-(defmethod platform-list-directory ((platform posix-platform) pathname
-                                    &key (limit most-positive-fixnum))
-  "Enumerate PATHNAME with OPENDIR and READDIR."
-  (let ((handle nil)
-        (names nil)
-        (count 0)
-        (more-p nil))
-    (posix--call ':list pathname
-                 (lambda ()
-                   (unwind-protect
-                        (progn
-                          (setf handle (sb-posix:opendir (posix--namestring pathname)))
-                          (loop for entry = (sb-posix:readdir handle)
-                                until (sb-alien:null-alien entry)
-                                for name = (sb-posix:dirent-name entry)
-                                unless (member name '("." "..") :test #'string=)
-                                  do (if (< count limit)
-                                         (progn
-                                           (push name names)
-                                           (incf count))
-                                         (progn
-                                           (setf more-p t)
-                                           (return)))))
-                     (when handle
-                       (sb-posix:closedir handle)))))
-    (values (nreverse names) more-p)))
 
 (defmethod platform-create-private-file ((platform posix-platform) pathname)
   "Create PATHNAME with O_EXCL and mode 0600."
@@ -368,14 +250,6 @@
                  (lambda ()
                    (sb-posix:utime (posix--namestring pathname)
                                    unix-time unix-time))))
-  nil)
-
-(defmethod platform-publish-new-file ((platform posix-platform) source target)
-  "Hard-link SOURCE to TARGET, which fails atomically when TARGET exists."
-  (posix--call ':publish target
-               (lambda ()
-                 (sb-posix:link (posix--namestring source)
-                                (posix--namestring target))))
   nil)
 
 (defmethod platform-replace-file ((platform posix-platform) source target)

@@ -845,7 +845,26 @@
                 #:publish-pathname)
   (:import-from #:ls-compat.posix
                 #:current-process-id
-                #:descendant-process-ids)
+                #:descendant-process-ids
+                #:directory-names
+                #:file-information
+                #:file-information-change-time
+                #:file-information-identity
+                #:file-information-kind
+                #:file-information-modification-time
+                #:file-information-owned-p
+                #:file-information-private-p
+                #:file-information-read-only-p
+                #:file-information-size
+                #:file-operation-failed
+                #:file-operation-failed-code
+                #:file-operation-failed-reason
+                #:link-file
+                #:link-target-exists
+                #:not-regular-file
+                #:not-regular-file-kind
+                #:resolve-pathname
+                #:stream-file-information)
   (:import-from #:ls-flock
                 #:call-with-file-lock
                 #:file-lock-busy

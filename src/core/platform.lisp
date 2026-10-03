@@ -495,6 +495,101 @@ nothing is listening there, and PLATFORM-CAPABILITY-UNAVAILABLE without the
           (platform-file-status-change-time after))))
 
 
+;;;; -- Shared File Methods --
+
+;;; File status, opening, listing, publication, and link resolution are the
+;;; same protocol on every host through ls-compat, whose POSIX and Win32
+;;; backends carry the host differences. Each adapter inherits these methods.
+
+(-> platform--file-status (file-information) platform-file-status)
+(defun platform--file-status (information)
+  "Return the platform file status ls-compat observation INFORMATION describes."
+  (make-instance 'platform-file-status
+                 :kind (file-information-kind information)
+                 :identity (file-information-identity information)
+                 :size (file-information-size information)
+                 :modification-time (file-information-modification-time information)
+                 :change-time (file-information-change-time information)
+                 :owned-p (file-information-owned-p information)
+                 :private-p (file-information-private-p information)
+                 :read-only-p (file-information-read-only-p information)))
+
+(-> platform--file-failure (keyword t file-error) nil)
+(defun platform--file-failure (operation pathname condition)
+  "Signal PLATFORM-ERROR for ls-compat file CONDITION raised by OPERATION on PATHNAME."
+  (error 'platform-error
+         :message (princ-to-string condition)
+         :operation operation
+         :pathname (and pathname (pathname pathname))
+         :reason (typecase condition
+                   (file-operation-failed
+                    (file-operation-failed-reason condition))
+                   (not-regular-file
+                    (if (eq (not-regular-file-kind condition) ':symbolic-link)
+                        ':symbolic-link
+                        ':not-regular))
+                   (link-target-exists
+                    ':exists)
+                   (t
+                    ':failed))
+         :code (and (typep condition 'file-operation-failed)
+                    (file-operation-failed-code condition))))
+
+(defmethod platform-path-status ((platform platform) pathname &key follow-links-p)
+  "Observe PATHNAME through ls-compat, reporting a missing object as NIL."
+  (declare (ignore platform))
+  (handler-case
+      (platform--file-status (file-information pathname :follow-links-p follow-links-p))
+    (file-operation-failed (condition)
+      (if (eq (file-operation-failed-reason condition) ':missing)
+          nil
+          (platform--file-failure ':status pathname condition)))))
+
+(defmethod platform-stream-status ((platform platform) stream)
+  "Observe the open file behind STREAM through ls-compat."
+  (declare (ignore platform))
+  (handler-case
+      (platform--file-status (stream-file-information stream))
+    (file-error (condition)
+      (platform--file-failure ':status nil condition))))
+
+(defmethod platform-open-regular-file ((platform platform) pathname &key follow-links-p)
+  "Open regular file PATHNAME through ls-compat for non-blocking octet input."
+  (declare (ignore platform))
+  (handler-case
+      (multiple-value-bind (stream information)
+          (ls-compat.posix:open-regular-file pathname :follow-links-p follow-links-p)
+        (values stream (platform--file-status information)))
+    (file-error (condition)
+      (platform--file-failure ':open pathname condition))))
+
+(defmethod platform-list-directory ((platform platform) pathname
+                                    &key (limit most-positive-fixnum))
+  "Enumerate PATHNAME's entry names through ls-compat without inspecting them."
+  (declare (ignore platform))
+  (handler-case
+      (directory-names pathname :limit limit)
+    (file-error (condition)
+      (platform--file-failure ':list pathname condition))))
+
+(defmethod platform-publish-new-file ((platform platform) source target)
+  "Hard-link SOURCE to absent TARGET through ls-compat, refusing an occupied TARGET."
+  (declare (ignore platform))
+  (handler-case
+      (link-file source target)
+    (file-error (condition)
+      (platform--file-failure ':publish target condition)))
+  nil)
+
+(defmethod platform-truename ((platform platform) pathname)
+  "Resolve PATHNAME through every symbolic link, junction included, with ls-compat."
+  (declare (ignore platform))
+  (handler-case
+      (resolve-pathname pathname)
+    (file-error (condition)
+      (platform--file-failure ':resolve pathname condition))))
+
+
 ;;;; -- Conditions --
 
 (define-condition platform-error (autolith-error)
