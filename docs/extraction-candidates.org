@@ -1,28 +1,6 @@
 #+TITLE: Extraction candidates in the Autolith sources
 
 * Terminal and application
-
-** DONE Fullscreen viewport (clinedi, next to live-region)
-2026-10-04. clinedi now holds the generic parts: alternate screen and SGR mouse
-controls (324f136), the mode-tracking stream restoring a dropped relay client
-(b803c6b), the reflowing =transcript-viewport= with layout, scrolling, jumps
-by row predicate, click hit-testing and rollback (8b779b7, a2551e6), and the
-=frame-painter= rewriting changed rows (3ef2ffd, 7bf98ad, 194cf8b). Autolith
-3cad5145, f5146ee5, 7553117b and e1337636 use them and keep the frame
-composer, legend, welcome panel, message-header predicate and URL fallback.
-
-** DONE OSC 52 clipboard route (sophisticated-clipboard)
-sophisticated-clipboard 756b65f adds =terminal-backend=, which writes OSC 52
-through a writer function, and =clipboard-copy-text=, which copies to the host
-clipboard and the terminal together. Autolith keeps only the UI writer in
-=src/terminal/clipboard.lisp= and its notices.
-
-** DONE Remaining xterm controls (clinedi ansi.lisp)
-clinedi 1b75c6b adds =window-title-sequence=, =default-color-sequence=,
-=default-color-reset-sequence= and a =:redraw-p= option on
-=semantic-prompt-marker-sequence=, so Autolith no longer writes OSC 0, 10, 11,
-110, 111 or its own =redraw=0= prompt marker.
-
 ** Layered source-tagged registry (new library, or structlisp)
 =src/application/command.lisp= 492-746. Ordered registration layers keyed by
 source and name, shadowing, an effective index with collision checks,
@@ -31,16 +9,6 @@ times: commands, =agent/context.lisp= 241 and 403, =provider/registry.lisp=
 148-178 and 444-531, and the MCP registry; =startup/user-init.lisp= 87-90 calls
 all four remove-by-source functions in a row. Cut: the extension transaction
 macro, =configuration-error=, and the command validation hook.
-
-** Live restart debugger core (new library)
-=src/application/lisp-machine.lisp= 99-309 with helpers at 27-45 and 70-97.
-Runs a thunk with the failing stack kept live, routes every condition through
-a selector callback instead of SBCL's debugger, and supports retry,
-return-values and abort recoveries through catch tags. Cut: the Autolith
-control-condition predicate, =application-present= as the failure callback, the
-recovery object protocol, =self-read-form=, and the package. The LLM diagnosis
-(=debugger.lisp=) and the terminal modal (lisp-machine.lisp 437-764) are product
-UI and stay.
 
 ** Bounded, sanitising, throttled capture streams (new library, or ls-compat)
 2026-10-03: the two copies are one. =bounded-output-stream= in
@@ -60,42 +28,13 @@ modal pickers needs this, and clinedi's selection session already takes
 and condition variable with the work queue, the interrupt hint, the resize
 callback, and =configuration-error=. The work queue itself is product-specific.
 
-** DONE Record validation re-implements sexp-store (sexp-store record-check)
-=src/application/recovery-input-vault.lisp= 39-110 and 280 check tags, versions
-and key sets by hand; =sexp-store:record-check= already does that. The same
-pattern recurs in =user-operation-context.lisp= 59 and
-=state/data-transfer.lisp= 52.
-
-** DONE Clickable widget spans (cl-termdown spans)
-cl-termdown 681f4bc adds widgets (=make-widget= with a role, label and action),
-which every span function presents as their label, plus =widget-regions=,
-=shift-regions= and =region-action=. Autolith keeps its closed
-=terminal-style= by checking widget roles in =terminal-styled-text-p=. The
-fullscreen viewport that consumes the regions remains its own candidate.
-
 ** Smaller items
-- DONE 2026-10-03: JSON to readable Lisp form writer with budgets, depth and
-  item limits (=tool-presentation.lisp= 133-239, 447-558) and the reverse
-  direction in =operation.lisp= 719-790. Not argo material: the forms use the
-  local tool-call convention (=nil= is false, =:null= is null, lowercase keyword
-  arguments), the reverse of argo's value model, and the reverse direction's
-  coercion of pathnames, symbols and characters is local tool policy. The
-  duplicated part, the writer's own depth, item, string and key bounds, is now
-  argo's =json-limits= applied while decoding the arguments.
 - Grouped multi-column picker rows (=ui.lisp= 696-820) are the natural renderer
   for clinedi's =selector-arrange=.
 - Path completion under a root with dotfile and =..= policy
   (=path-completion.lisp=): only if clinedi grows a completion protocol.
 - Terminal-backed Gray streams for provider authentication (=commands.lisp=
   1852-1985) minus the relay lock check.
-
-** Duplications to fix in place
-- =application--abbreviated-directory= is defined twice, identically
-  (=runtime.lisp= 1516 and =commands.lisp= 549).
-- DONE =--proper-list-p= exists in nine copies across application, task, localgroup,
-  mcp, lsp and conversation files; one definition in core.
-- DONE Terminal size lookup uses =clinedi:terminal-current-size= for native geometry,
-  =tput= and environment fallbacks; Autolith supplies its size defaults.
 
 * Core, configuration and state
 
@@ -125,38 +64,6 @@ is =get-universal-time= plus CL =random=, which is predictable, while
 =data-transfer--temporary= calls its staging names unpredictable. Build a
 UUIDv4 from =ironclad:random-data= or use idsmall, and both platform methods go.
 
-** Re-implementations of pinned libraries
-- =readable-state-property-present-p= (=state/records.lisp= 5-9) equals the
-  already imported =sexp-store:record-property-present-p=.
-- Hand-written form validators covered by =record-check=, =record-shape-p= or
-  =snapshot-read-record=: =preferences--form-p=,
-  =project-adaptation--proper-plist-with-keys-p=, =data-transfer--properties-p=,
-  =update-state--form-p=. Preferences, permissions and project adaptations also
-  hand-roll read, validate, wrap and lock; agendas, memories and papercuts
-  already sit on =snapshot-store= and =log-store= transactions.
-- Atomic text and byte publication that sexp-store should offer as text or
-  octet snapshot writes: =image-commit--write-atomically= (not private, not
-  exclusive, bypasses =platform-replace-file=), =project-adaptation-notes-create=
-  (temp names from pid plus =random=), =data-transfer--write-export=.
-- DONE 2026-10-03 (d9915e93): every =sb-posix:getpid= outside the platform
-  files now calls =ls-compat.posix:current-process-id=, and the one
-  =sb-posix:rmdir= uses =uiop:delete-empty-directory=.
-- DONE 2026-10-03 (ls-compat 52c959f, Autolith cade840b and b5eabc64): the
-  28 direct =sb-ext= UTF-8 octet conversions now call
-  =ls-compat:utf8-string-to-octets= and =utf8-octets-to-string=, which use
-  =sb-ext= on SBCL (so a lone surrogate is still refused) and babel with an
-  explicit surrogate check elsewhere, signaling =utf8-conversion-failed=.
-- The =~/common-lisp/sexp-store= checkout is older than the pinned 778ce80 and
-  lacks the store and record-check API; compare against the pinned version.
-
-** Duplications to fix in place
-- The SipHash workspace identifier appears in =configuration/workspace.lisp=
-  22-36 and =state/data-transfer.lisp= 277-285.
-- Two version comparators: =core/version.lisp= 5-40 and =state/updates.lisp=
-  15-53.
-- The Unix-epoch conversion in =core/time.lisp= also lives in cl-rfc8628; low
-  value together with the RFC 3339 parser. =core/text-buffer.lisp= is trivia.
-
 * Provider, conversation and inference
 
 Compared against the library versions Autolith pins through qlot, not the
@@ -164,20 +71,6 @@ older checkouts under =~/common-lisp=: the pinned cl-llm-provider-api already
 has a =/wire= system (Responses, Chat Completions, Anthropic Messages, SSE,
 contracts) and the pinned cl-rfc8628 has a managed credential manager, JWT
 helpers, redaction, browser opening and request helpers.
-
-** DONE Browser OAuth login written twice (new system beside cl-rfc8628)
-=src/provider/chatgpt/authentication.lisp= 37-341 and 344-538,
-=src/provider/gemini/authentication.lisp= 67-251 and 407-463, shared helpers in
-=provider/authentication.lisp= 96-135. Authorization code with S256 PKCE, a
-loopback listener, bounded callback wait, state check, code exchange. This is
-RFC 7636 plus RFC 8252 for installed apps and would reuse cl-rfc8628's
-credentials, manager, redaction and browser opening. Cut:
-=authentication-error=, =call-with-secret-use=, =bounded-string=, the response
-deadline wrapper, product strings, and the OpenAI extras (originator header,
-=id_token_add_organizations=, =codex_cli_simplified_flow=, the onboarding
-state variant) as caller parameters; fixed versus ephemeral port becomes a
-policy option. Merging also fixes the Gemini copy, which reads the callback
-with an unbounded =read-line= and accepts a single connection.
 
 ** Token refresh repeated across providers, partly copying cl-rfc8628
 Refresh exchanges in chatgpt (289-410), =grok/authentication.lisp= 110-221,
@@ -245,21 +138,6 @@ input discounted, next to the budget settlement); =inference/tools.lisp=
 existing direction). Cut: the task output-schema wrappers and
 =rlm-inference-error=.
 
-** DONE Inference endpoint re-implements image-daemon (image-daemon)
-=rlm-endpoint= now subclasses =image-daemon:daemon-runtime= with
-=:publish-p nil=. image-daemon owns the listener, authentication, client
-threads and bounded shutdown without a registry record. Request-validation
-and error-response methods preserve the inference wire protocol and partial
-result ledger. The worker's packet framing is in =environment.lisp= because
-its image does not load image-daemon.
-
-** DONE rlm-map fans out on raw threads (cl-jobpond)
-=rlm-map= admits one cl-jobpond job per frame into a bounded local pool and
-collects outcomes in input order. Caller cancellation or nonlocal escape
-closes the pool, aborting running and queued frames. Shared budgets and
-partial sibling results retain their existing semantics; an incomplete
-shutdown exposes the pool with a =retry-close= restart.
-
 ** Static API-key credentials (cl-rfc8628 for the source and manager types, clinedi for the hidden prompt)
 =src/provider/api-key.lisp= 375-468 (environment source and static manager),
 3-172 (multi-provider private key file, can stay), 175-291 (hidden terminal
@@ -267,12 +145,6 @@ input with echo off and bracketed paste stripped). The five near-identical
 =authentication.lisp= files for anthropic, fireworks, opencode, openrouter and
 mistral (about 75 lines each, differing only in data) should collapse into one
 data-driven definition regardless of extraction.
-
-** Be skeptical: a general recursive-inference library
-=inference/policy.lisp=, =environment.lisp= 5-77 and 79-233. =infer= depends on
-the agent loop, observer, tool registry, traces and the Lisp worker. Extract
-only after the endpoint, map and contracts items, behind an injected frame
-runner. Budget, context and views already live in cl-llm-provider-api.
 
 ** Overrides and copies of pinned libraries
 - =client.lisp= 26-34 and 159-168 re-declare the library's own
@@ -293,19 +165,6 @@ runner. Budget, context and views already live in cl-llm-provider-api.
 * Tools, resources, workers, tasks and the rest
 
 Checked against the pinned versions in =.qlot/dists=, not the older checkouts.
-
-** Line-anchored, revision-gated text edit engine (new library)
-=src/resource/workspace-file.lisp= 329-354, 403-468, 471-478, 481-527, 530-821,
-823-959. Validates and applies =replace-lines=, =insert-before=,
-=insert-after=, =delete-lines= and =replace-empty= against an exact base
-snapshot: operations may only target lines the caller saw, carry four-hex
-SHA-256 anchors corrected within three lines of drift, reject overlaps, apply
-in one pass, and publish atomically with a stale check just before. Any agent
-harness or editor wants this. Cut: =tool-error= over JSON hash tables (take
-normalized plists, signal library conditions), the observation state object,
-platform replace and publish, =daemon-random-token=, the line splitter, and the
-bounded reader. The visible-range code (403-468, 496-510) re-implements
-structlisp's integer interval set.
 
 ** Revision-gated resource protocol (new library, or bundled with the editor)
 =src/resource/protocol.lisp= 5-152 and 254-480, =item-identity.lisp= 10-114.
@@ -352,27 +211,6 @@ a small grammar fixes that regardless of extraction.
   opens regular files safely.
 - =task/agents.lisp= 441-500 re-implements =validate-tree= for better
   diagnostics; improve the library's diagnostics instead.
-
-** DONE Atomic file publication written about twelve times (ls-compat/files)
-CLOSED: [2026-10-03]
-ls-compat 089be111 adds the =ls-compat/files= system: =publish-pathname=
-claims a unique hidden sibling, hands it to a producer, runs an optional
-prepare hook (where Autolith applies =platform-make-private=), then renames
-over the target or hard-links it through the pinned =link-file= so an occupied
-target signals =link-target-exists=; a =publish-function= hook keeps hosts
-whose no-clobber publication lives elsewhere (Autolith's Win32 adapter) on
-the same path, and the temporary never outlives the call. =publish-file=
-writes text, octets or a stream writer the same way. Autolith now uses them
-in =state/image-commits.lisp=, =configuration/project-adaptations.lisp=,
-=self/tools.lisp= (which also fixes the pid-only temporary name and the
-missing cleanup), =skills/tools.lisp=, =task/job-boundary.lisp=,
-=application/recovery.lisp=, both =conversation/identifier-migration.lisp=
-writers and both =conversation/image-input.lisp= writers, removing every
-direct =uiop:rename-file-overwriting-target= and most stray =sb-posix:getpid=
-calls. Still hand-rolled on purpose: =state/data-transfer.lisp= (private
-O_EXCL staging through the platform adapter), =startup/active-image.lisp= (the
-saver child produces the temporary itself) and =resource/workspace-file.lisp=
-(its publication interleaves a stale check that belongs to the edit engine).
 
 ** Live-image introspection and reversible redefinition (new library)
 =self/apropos.lisp= 24-185 and 235-293 (definition kinds, apropos over defined
@@ -450,9 +288,6 @@ storm guard, runtime lifecycle) stays.
   repository; switching it means adding ls-compat as a cl-skills dependency),
   and =handoff.lisp= 219-226 keeps its three-line check because it reads the
   resolved pathname afterwards.
-- DONE =skill.edit= delegates name and source validation to cl-skills'
-  =skill-name-valid-p= and =skill-source-validate=. Validation accepts source
-  text and the intended pathname without probe files or a conversion cache.
 - Locating the pinned fff library (=tools/search.lisp= 50-114): clifff.
 - A unified manager protocol over one worker versus a pool
   (=workers/lisp.lisp= 200-333): sbcl-workers.
@@ -463,10 +298,6 @@ storm guard, runtime lifecycle) stays.
 1. Operating-system layer: the generic half of the platform protocol, atomic
    publication, bounded regular-file reads, process reaping and path
    confinement. Target: ls-compat growing a files package.
-   - DONE 2026-10-03: atomic publication (=ls-compat/files=) and descendant
-     discovery, adopted in Autolith at nine sites; see the two DONE items.
-   - DONE 2026-10-03: the delegation below, the bounded reader and path
-     confinement; see the DONE items above.
    - Noted while doing it: the pinned ls-compat already provides
      =file-information=, =stream-file-information=, =open-regular-file=,
      =directory-entries=, =link-file= and =file-mode= with a Win32 backend, so
@@ -483,20 +314,10 @@ storm guard, runtime lifecycle) stays.
    child result read).
 3. Provider authentication: the loopback OAuth login and the refresh grant are
    each written several times and partly copy cl-rfc8628.
-4. Terminal: the fullscreen viewport, hyperlinks, OSC controls and the input
-   pump are clinedi's natural territory; the clipboard route is
-   sophisticated-clipboard's.
-5. New libraries worth their own repository: the line-anchored edit engine
-   with its resource protocol, the typed settings protocol, the JSON value
-   codec shared by four repos, the live restart debugger core, the SBCL
-   introspection and reversible redefinition set, and prompt image
-   preparation.
-
-** DONE Recurring copies to collapse first, no extraction needed
-=--proper-list-p= in nine files, plist schema checks in five, the layered
-source-ranked registry in four, the atomic publisher in about twelve, the
-SipHash workspace identifier and the version comparator in two each, and the
-five data-only provider authentication files.
+4. New libraries worth their own repository:
+   - the typed settings protocol
+   - the SBCL introspection and reversible redefinition set
+   - prompt image preparation.
 
 ** Correctness findings surfaced by the survey
 - =management-repl-read-frame= uses the full reader before authentication.
@@ -504,8 +325,5 @@ five data-only provider authentication files.
   depth bound.
 - The identifier fallback in =make-identifier= is predictable while staging
   names claim unpredictability.
-- =self/tools.lisp= 1424-1441 can collide on its temporary name across threads.
 - The Gemini loopback callback reader is unbounded; the ChatGPT one is not.
 - =gemini-code-assist--text-parts= drops image parts silently.
-- DONE =provider-family= now uses cl-llm-provider-api's registration-family
-  hook, specialized on Autolith's own registration type.
