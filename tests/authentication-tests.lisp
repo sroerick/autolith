@@ -178,11 +178,11 @@
   nil)
 
 (defclass authentication-test-error-input-stream
-    (sb-gray:fundamental-character-input-stream)
+    (trivial-gray-streams:fundamental-character-input-stream)
   ()
   (:documentation "A test stream that fails as soon as API-key input is read."))
 
-(defmethod sb-gray:stream-read-char
+(defmethod trivial-gray-streams:stream-read-char
     ((stream authentication-test-error-input-stream))
   "Signal a synthetic input failure for STREAM."
   (declare (ignore stream))

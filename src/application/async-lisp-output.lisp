@@ -12,7 +12,7 @@
   "Minimum seconds between live output deliveries.")
 
 (defclass application-async-lisp-output-stream
-    (sb-gray:fundamental-character-output-stream)
+    (trivial-gray-streams:fundamental-character-output-stream)
   ((output-function
     :initarg :output-function :accessor application-async-lisp-output-stream-output-function
     :documentation "Optional sink for sanitized, bounded live output chunks.")
@@ -186,14 +186,14 @@
               (sanitize-text (bounded-string (princ-to-string condition) :limit 512)))))
   nil)
 
-(defmethod sb-gray:stream-write-char ((stream application-async-lisp-output-stream) character)
+(defmethod trivial-gray-streams:stream-write-char ((stream application-async-lisp-output-stream) character)
   "Capture CHARACTER and offer a rate-limited live update."
   (with-lock-held ((application-async-lisp-output-stream-lock stream))
     (application-async-lisp-output-stream--accept stream character))
   (application-async-lisp-output-stream--display stream nil)
   character)
 
-(defmethod sb-gray:stream-write-string
+(defmethod trivial-gray-streams:stream-write-string
     ((stream application-async-lisp-output-stream) string &optional (start 0) end)
   "Capture STRING's selected range without allocating an unbounded copy."
   (with-lock-held ((application-async-lisp-output-stream-lock stream))
@@ -202,17 +202,17 @@
   (application-async-lisp-output-stream--display stream nil)
   string)
 
-(defmethod sb-gray:stream-line-column ((stream application-async-lisp-output-stream))
+(defmethod trivial-gray-streams:stream-line-column ((stream application-async-lisp-output-stream))
   "Return STREAM's synchronized logical output column."
   (with-lock-held ((application-async-lisp-output-stream-lock stream))
     (application-async-lisp-output-stream-column stream)))
 
-(defmethod sb-gray:stream-force-output ((stream application-async-lisp-output-stream))
+(defmethod trivial-gray-streams:stream-force-output ((stream application-async-lisp-output-stream))
   "Offer pending output without bypassing the live display rate limit."
   (application-async-lisp-output-stream--display stream nil)
   nil)
 
-(defmethod sb-gray:stream-finish-output ((stream application-async-lisp-output-stream))
+(defmethod trivial-gray-streams:stream-finish-output ((stream application-async-lisp-output-stream))
   "Offer pending output; the job finalizer explicitly drains any throttled tail."
   (application-async-lisp-output-stream--display stream nil)
   nil)

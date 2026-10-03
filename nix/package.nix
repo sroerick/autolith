@@ -485,6 +485,7 @@ let
       orgTemplater
       quri
       serapeum
+      trivial-gray-streams
       clColorist
       clinedi
       clExecSandbox

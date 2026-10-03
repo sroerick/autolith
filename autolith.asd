@@ -55,6 +55,7 @@
                #:sexp-store
                #:sophisticated-clipboard
                #:structlisp
+               #:trivial-gray-streams
                #:usocket)
   :components ((:module "src"
                 :serial t

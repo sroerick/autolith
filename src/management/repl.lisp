@@ -384,7 +384,7 @@
 ;;;; -- Bounded Evaluation Output --
 
 (defclass management-repl-bounded-output-stream
-    (sb-gray:fundamental-character-output-stream)
+    (trivial-gray-streams:fundamental-character-output-stream)
   ((buffer
     :initform (make-array 0
                           :element-type 'character
@@ -404,7 +404,7 @@
     :documentation "Whether further output was discarded."))
   (:documentation "A character output stream that never grows beyond a fixed limit."))
 
-(defmethod sb-gray:stream-write-char
+(defmethod trivial-gray-streams:stream-write-char
     ((stream management-repl-bounded-output-stream) character)
   "Capture CHARACTER when STREAM still has capacity."
   (if (< (fill-pointer (management-repl-output-buffer stream))
@@ -413,7 +413,7 @@
       (setf (management-repl-output-truncated-p stream) t))
   character)
 
-(defmethod sb-gray:stream-write-string
+(defmethod trivial-gray-streams:stream-write-string
     ((stream management-repl-bounded-output-stream) string
      &optional (start 0) end)
   "Capture the bounded slice of STRING accepted by STREAM."

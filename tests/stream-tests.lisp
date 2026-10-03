@@ -3,7 +3,7 @@
 ;;;; -- Bounded Character Read Tests --
 
 (defclass test-short-character-input-stream
-    (sb-gray:fundamental-character-input-stream)
+    (trivial-gray-streams:fundamental-character-input-stream)
   ((content
     :initarg :content
     :reader test-short-character-input-stream-content
@@ -22,9 +22,8 @@
     :documentation "The character counts requested through READ-SEQUENCE."))
   (:documentation "A character stream that records and shortens sequence reads."))
 
-(defmethod sb-gray:stream-read-sequence
-    ((stream test-short-character-input-stream) sequence
-     &optional (start 0) end)
+(defmethod trivial-gray-streams:stream-read-sequence
+    ((stream test-short-character-input-stream) sequence start end &key)
   "Read at most the test stream's configured short-read size into SEQUENCE."
   (let* ((end       (or end (length sequence)))
          (request   (- end start))

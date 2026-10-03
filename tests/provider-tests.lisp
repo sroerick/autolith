@@ -964,7 +964,7 @@
   (format nil "data: ~A~%~%" (json-encode event)))
 
 (defclass test-character-input-stream
-    (sb-gray:fundamental-character-input-stream)
+    (trivial-gray-streams:fundamental-character-input-stream)
   ((source
     :initarg :source
     :reader test-character-input-stream-source
@@ -977,7 +977,7 @@
     :documentation "The next source character offset."))
   (:documentation "A test stream implementing character reads but not line reads."))
 
-(defmethod sb-gray:stream-read-char ((stream test-character-input-stream))
+(defmethod trivial-gray-streams:stream-read-char ((stream test-character-input-stream))
   "Read one character from STREAM, returning the Gray-stream EOF marker at its end."
   (let ((position (test-character-input-stream-position stream))
         (source (test-character-input-stream-source stream)))

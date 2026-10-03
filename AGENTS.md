@@ -84,6 +84,9 @@ copy their architecture wholesale.
 - Keep provider authentication and transport behind a replaceable interface.
   Do not launch or bundle the Codex CLI to implement subscription access.
 - Keep credentials out of saved cores, conversation files, and Git.
+- Gray streams subclass and specialize the portable `trivial-gray-streams`
+  classes and generic functions, never an implementation's own Gray package
+  such as `sb-gray`, so stream code moves into portable libraries unchanged.
 - The qlfile is the only place a git dependency is pinned. `./script/bootstrap`
   writes `qlfile.lock`, and `nix/package.nix` reads that lock for every git
   source, so never copy a ref or hash into Nix. A new git dependency needs only

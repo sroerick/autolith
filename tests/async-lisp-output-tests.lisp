@@ -25,10 +25,10 @@
     (write-string expected stream)
     (test-assert (string= (application-async-lisp-output-text stream) expected)
                  "async output captures ordinary text")
-    (test-assert (= (sb-gray:stream-line-column stream) 11)
+    (test-assert (= (trivial-gray-streams:stream-line-column stream) 11)
                  "async output reports a useful column")
     (write-char #\Return stream)
-    (test-assert (zerop (sb-gray:stream-line-column stream))
+    (test-assert (zerop (trivial-gray-streams:stream-line-column stream))
                  "carriage return resets the logical column")))
 
 (defun test-async-lisp-output-sanitizes-control-text ()

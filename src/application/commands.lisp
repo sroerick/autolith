@@ -1840,7 +1840,7 @@ are forwarded to TERMINAL-UI-SELECT."
    :reasoning-summaries-p (application-reasoning-traces-p application)))
 
 (defclass application-authentication-output-stream
-    (sb-gray:fundamental-character-output-stream)
+    (trivial-gray-streams:fundamental-character-output-stream)
   ((terminal
     :initarg :terminal
     :reader application-authentication-output-stream-terminal
@@ -1848,7 +1848,7 @@ are forwarded to TERMINAL-UI-SELECT."
     :documentation "The terminal receiving authentication output."))
   (:documentation "A character stream routing authentication output through a terminal."))
 
-(defmethod sb-gray:stream-write-char
+(defmethod trivial-gray-streams:stream-write-char
     ((stream application-authentication-output-stream) character)
   "Write CHARACTER through STREAM's terminal."
   (terminal--write
@@ -1856,7 +1856,7 @@ are forwarded to TERMINAL-UI-SELECT."
    (string character))
   character)
 
-(defmethod sb-gray:stream-write-string
+(defmethod trivial-gray-streams:stream-write-string
     ((stream application-authentication-output-stream) string
      &optional (start 0) end)
   "Write STRING's selected range through STREAM's terminal."
@@ -1865,20 +1865,20 @@ are forwarded to TERMINAL-UI-SELECT."
    (subseq string start end))
   string)
 
-(defmethod sb-gray:stream-force-output
+(defmethod trivial-gray-streams:stream-force-output
     ((stream application-authentication-output-stream))
   "Flush STREAM's terminal output."
   (terminal-flush
    (application-authentication-output-stream-terminal stream)))
 
-(defmethod sb-gray:stream-finish-output
+(defmethod trivial-gray-streams:stream-finish-output
     ((stream application-authentication-output-stream))
   "Finish STREAM's terminal output."
   (terminal-flush
    (application-authentication-output-stream-terminal stream)))
 
 (defclass application-authentication-input-stream
-    (sb-gray:fundamental-character-input-stream)
+    (trivial-gray-streams:fundamental-character-input-stream)
   ((terminal
     :initarg :terminal
     :reader application-authentication-input-stream-terminal
@@ -1952,7 +1952,7 @@ are forwarded to TERMINAL-UI-SELECT."
              (return nil))
            (sleep 0.01)))))))
 
-(defmethod sb-gray:stream-read-char
+(defmethod trivial-gray-streams:stream-read-char
     ((stream application-authentication-input-stream))
   "Read the next hidden authentication character from STREAM."
   (loop
@@ -1965,7 +1965,7 @@ are forwarded to TERMINAL-UI-SELECT."
     unless (application-authentication-input-stream--fill stream)
       do (return ':eof)))
 
-(defmethod sb-gray:stream-listen
+(defmethod trivial-gray-streams:stream-listen
     ((stream application-authentication-input-stream))
   "Return true when STREAM has buffered or queued localgroup input."
   (or (< (application-authentication-input-stream-position stream)
