@@ -1151,25 +1151,14 @@ bound policy takes effect without reloading this file."
 (-> mcp--effective-registrations (list) list)
 (defun mcp--effective-registrations (registrations)
   "Return each server's highest-precedence registration layer."
-  (let ((order nil)
-        (seen (make-hash-table :test #'equal))
-        (winners (make-hash-table :test #'equal)))
-    (dolist (registration registrations)
-      (let ((name
-              (mcp-server-configuration-name
-               (mcp-server-registration-configuration registration))))
-        (unless (gethash name seen)
-          (setf (gethash name seen) t)
-          (setf order (nconc order (list name))))
-        (let ((winner (gethash name winners)))
-          (when (or (null winner)
-                    (>=
-                     (mcp--registration-source-rank
-                      (mcp-server-registration-source registration))
-                     (mcp--registration-source-rank
-                      (mcp-server-registration-source winner))))
-            (setf (gethash name winners) registration)))))
-    (mapcar (lambda (name) (gethash name winners)) order)))
+  (layered-registry-effective
+   registrations
+   (lambda (registration)
+     (mcp-server-configuration-name
+      (mcp-server-registration-configuration registration)))
+   (lambda (registration)
+     (mcp--registration-source-rank
+      (mcp-server-registration-source registration)))))
 
 (-> mcp-server-registrations () list)
 (defun mcp-server-registrations ()
@@ -1197,33 +1186,24 @@ their prior layer without destroying shadowed lower layers."
            (etypecase definition
              (mcp-server-configuration definition)
              (list (mcp-configuration--server definition))))
-         (name (mcp-server-configuration-name configuration))
          (replacement
            (make-instance 'mcp-server-registration
                           :configuration configuration
                           :source source)))
     (with-extension-registry-transaction
       (with-lock-held (*mcp-server-registry-lock*)
-        (let ((position
-                (position-if
+        (let ((candidate
+                (layered-registry-replace
+                 *mcp-server-registrations* replacement
+                 :key-function
                  (lambda (registration)
-                   (and
-                    (eq source (mcp-server-registration-source registration))
-                    (string=
-                     name
-                     (mcp-server-configuration-name
-                      (mcp-server-registration-configuration registration)))))
-                 *mcp-server-registrations*)))
-          (let ((candidate
-                  (if position
-                      (append
-                       (subseq *mcp-server-registrations* 0 position)
-                       (list replacement)
-                       (nthcdr (1+ position) *mcp-server-registrations*))
-                      (append *mcp-server-registrations*
-                              (list replacement)))))
-            (mcp--validate-registration-list candidate)
-            (setf *mcp-server-registrations* candidate)))))
+                   (mcp-server-configuration-name
+                    (mcp-server-registration-configuration registration)))
+                 :source-function #'mcp-server-registration-source
+                 :key-test #'string=
+                 :source source)))
+          (mcp--validate-registration-list candidate)
+          (setf *mcp-server-registrations* candidate))))
     configuration))
 
 (-> mcp--registry-snapshot () list)
@@ -1252,7 +1232,7 @@ their prior layer without destroying shadowed lower layers."
   (with-extension-registry-transaction
     (with-lock-held (*mcp-server-registry-lock*)
       (setf *mcp-server-registrations*
-            (remove source
-                    *mcp-server-registrations*
-                    :key #'mcp-server-registration-source))))
+            (layered-registry-remove-source
+             *mcp-server-registrations* source
+             #'mcp-server-registration-source))))
   nil)

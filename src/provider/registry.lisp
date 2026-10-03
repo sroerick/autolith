@@ -734,19 +734,12 @@ The default startup path never performs remote model discovery."
 (defun provider-registrations ()
   "Return the effective provider registrations in stable display order."
   (with-recursive-lock-held (*provider-registry-lock*)
-    (let ((seen (make-hash-table :test #'equal))
-          (effective nil))
-      (dolist (registration
-               (sort (copy-list *provider-registrations*) #'<
-                     :key #'provider-registration-sequence))
-        (let ((key (provider--registration-key
-                    (provider-registration-name registration))))
-          (unless (gethash key seen)
-            (let ((winner (provider--effective-registration-for-name key)))
-              (setf (gethash key seen) t)
-              (when winner
-                (push winner effective))))))
-      (nreverse effective))))
+    (layered-registry-effective
+     (sort (copy-list *provider-registrations*) #'< :key #'provider-registration-sequence)
+     (lambda (registration)
+       (provider--registration-key (provider-registration-name registration)))
+     (lambda (registration)
+       (provider--source-rank (provider-registration-source registration))))))
 
 (-> provider-registration-find (string) (option provider-registration))
 (defun provider-registration-find (name)
@@ -846,9 +839,9 @@ then newest registration order decide which provider is effective."
   "Remove all provider registrations supplied by SOURCE."
   (with-recursive-lock-held (*provider-registry-lock*)
     (setf *provider-registrations*
-          (remove source *provider-registrations*
-                  :test #'eq
-                  :key #'provider-registration-source))
+          (layered-registry-remove-source
+           *provider-registrations* source
+           #'provider-registration-source))
     (provider--refresh-model-settings))
   nil)
 

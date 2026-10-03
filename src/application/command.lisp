@@ -493,26 +493,22 @@
     (values list hash-table))
 (defun application-command--effective-projections (registrations)
   "Return validated effective command order and identifier index."
-  (let ((canonical-order nil)
-        (canonical-seen (make-hash-table :test #'equal))
-        (canonical-winners (make-hash-table :test #'equal)))
-    (dolist (registration registrations)
-      (unless (typep registration 'application-command-registration)
-        (error 'configuration-error
-               :message "The application command registry contains an invalid layer."))
-      (let* ((command
-               (application-command--validate
-                (application-command-registration-command registration)))
-             (name (application-command-name command)))
-        (unless (gethash name canonical-seen)
-          (setf (gethash name canonical-seen) t)
-          (push name canonical-order))
-        (setf (gethash name canonical-winners) command)))
-    (let* ((effective
-             (loop for name in (nreverse canonical-order)
-                   collect (gethash name canonical-winners)))
-           (index (make-hash-table :test #'equal)))
-      (dolist (command effective)
+  (dolist (registration registrations)
+    (unless (typep registration 'application-command-registration)
+      (error 'configuration-error
+             :message "The application command registry contains an invalid layer."))
+    (application-command--validate
+     (application-command-registration-command registration)))
+  (let ((effective
+          (layered-registry-effective
+           registrations
+           (lambda (registration)
+             (application-command-name
+              (application-command-registration-command registration)))
+           (constantly 0)))
+        (index (make-hash-table :test #'equal)))
+    (dolist (registration effective)
+      (let ((command (application-command-registration-command registration)))
         (dolist (identifier
                  (cons (application-command-name command)
                        (application-command-aliases command)))
@@ -525,8 +521,9 @@
                              identifier
                              (application-command-name existing)
                              (application-command-name command)))))
-          (setf (gethash identifier index) command)))
-      (values effective index))))
+          (setf (gethash identifier index) command))))
+    (values (mapcar #'application-command-registration-command effective)
+            index)))
 
 (-> application-command--publish-registrations (list) null)
 (defun application-command--publish-registrations (registrations)
@@ -556,30 +553,20 @@ without changing the registry."
            :message "An application command registration source must be a keyword."))
   (with-extension-registry-transaction
     (with-lock-held (*application-command-lock*)
-      (let* ((definition-name (application-command-definition-name command))
-             (replacement
+      (let* ((replacement
                (make-instance 'application-command-registration
                               :command command
                               :source source))
-             (existing
-               (position-if
-                (lambda (registration)
-                  (and
-                   (eq source
-                       (application-command-registration-source registration))
-                   (eq definition-name
-                       (application-command-definition-name
-                        (application-command-registration-command
-                         registration)))))
-                *application-command-registrations*))
              (candidate
-               (if existing
-                   (append
-                    (subseq *application-command-registrations* 0 existing)
-                    (list replacement)
-                    (nthcdr (1+ existing) *application-command-registrations*))
-                   (append *application-command-registrations*
-                           (list replacement)))))
+               (layered-registry-replace
+                *application-command-registrations* replacement
+                :key-function
+                (lambda (registration)
+                  (application-command-definition-name
+                   (application-command-registration-command registration)))
+                :source-function #'application-command-registration-source
+                :key-test #'eq
+                :source source)))
         (application-command--publish-registrations candidate))))
   command)
 
@@ -603,16 +590,15 @@ without changing the registry."
   (with-extension-registry-transaction
     (with-lock-held (*application-command-lock*)
       (let ((candidate
-              (remove-if
+              (layered-registry-remove
+               *application-command-registrations* definition-name
+               :key-function
                (lambda (registration)
-                 (and
-                  (eq source
-                      (application-command-registration-source registration))
-                  (eq definition-name
-                      (application-command-definition-name
-                       (application-command-registration-command
-                        registration)))))
-               *application-command-registrations*)))
+                 (application-command-definition-name
+                  (application-command-registration-command registration)))
+               :source-function #'application-command-registration-source
+               :key-test #'eq
+               :source source)))
         (if (= (length candidate)
                (length *application-command-registrations*))
             nil

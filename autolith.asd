@@ -60,6 +60,7 @@
                              (:file "core/types")
                              (:file "core/conditions")
                              (:file "core/lists")
+                             (:file "core/layered-registry")
                              (:file "core/version")
                              (:file "localgroup/protocol")
                              (:file "core/bounded-text")

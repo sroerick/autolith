@@ -382,21 +382,13 @@ have the same evaluation behavior as DEFUN."
   "Restore IDENTIFIER to exact SNAPSHOT position or remove it when absent."
   (with-extension-registry-transaction
     (with-lock-held (*context-lock*)
-      (let ((remaining
-              (remove identifier *context-contributors*
-                      :test #'string=
-                      :key (lambda (candidate)
-                             (getf candidate :identifier)))))
-        (setf *context-contributors*
-              (if snapshot
-                  (let* ((position (min (getf snapshot :position)
-                                        (length remaining)))
-                         (registration
-                           (copy-tree (getf snapshot :registration))))
-                    (append (subseq remaining 0 position)
-                            (list registration)
-                            (nthcdr position remaining)))
-                  remaining)))))
+      (setf *context-contributors*
+            (layered-registry-restore-position
+             *context-contributors* identifier snapshot
+             :key-function
+             (lambda (registration) (getf registration :identifier))
+             :key-test #'string=
+             :copy-function #'copy-tree))))
   nil)
 
 (-> context--remove-registration-source (keyword) null)
@@ -405,10 +397,9 @@ have the same evaluation behavior as DEFUN."
   (with-extension-registry-transaction
     (with-lock-held (*context-lock*)
       (setf *context-contributors*
-            (remove source *context-contributors*
-                    :test #'eq
-                    :key (lambda (registration)
-                           (getf registration :source))))))
+            (layered-registry-remove-source
+             *context-contributors* source
+             (lambda (registration) (getf registration :source))))))
   nil)
 
 
