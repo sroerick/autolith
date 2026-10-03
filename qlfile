@@ -28,7 +28,7 @@ git cl-exec-sandbox https://github.com/lambda-symbolics/cl-exec-sandbox.git :ref
 git clifff https://github.com/luciusmagn/clifff.git :ref d73df079acf418e1a6b0b314442a6b1fea784e22
 git colorlisp https://github.com/lambda-symbolics/colorlisp.git :ref 2654ae0fa34aee42cff401693b5a80a86f0942c4
 git colordiff https://github.com/lambda-symbolics/colordiff.git :ref 1e1e85af707690e100e1c140513e042387fecf22
-git parenchek https://github.com/lambda-symbolics/parenchek.git :ref 7f26ccf19131f15584ef4a01cfa3cc6bf54403b9
+git parenchek https://github.com/lambda-symbolics/parenchek.git :ref 60dcd4636cb7c18003f24a5e7192acba55979d6b
 git org-templater https://github.com/lambda-symbolics/org-templater.git :ref 918d456528474e880014fe8377e4810e4a55e6a9
 git image-daemon https://github.com/lambda-symbolics/image-daemon.git :ref fa0c6ae165a4f5f221a83a719581dba1a4d9516f
 git ls-compat https://github.com/lambda-symbolics/ls-compat.git :ref 52c959f2bc00adc30f2970c2fd2226bd0c01730d
