@@ -273,11 +273,7 @@ namestring, so no host directory separator ever has to be split out of a name."
 (-> data-transfer--workspace-identifier (string) string)
 (defun data-transfer--workspace-identifier (directory)
   "Hash a canonical stored workspace key even when its directory is absent."
-  (let ((mac (make-mac ':siphash *workspace-directory-identifier-key*
-                       :digest-length 16)))
-    (update-mac mac (utf8-string-to-octets directory))
-    (with-output-to-string (stream)
-      (loop for byte across (produce-mac mac) do (format stream "~2,'0x" byte)))))
+  (workspace-name-identifier directory))
 
 (-> data-transfer--report (pathname list) list)
 (defun data-transfer--report (pathname archive)
