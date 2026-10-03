@@ -2769,6 +2769,7 @@ esac
          (sbcl (merge-pathnames "sbcl" bin))
          (curl (merge-pathnames "curl" bin))
          (ldd (merge-pathnames "ldd" bin))
+         (bash (release-archive--command-pathname "bash"))
          (script (merge-pathnames "script/build-release-runtime" source-root))
          (path (format nil "~A:/bin:/usr/bin"
                        (string-right-trim "/" (namestring bin)))))
@@ -2803,7 +2804,8 @@ esac
 
              (run-bootstrap (&rest extra)
                (release-script-tests--run
-                (list (namestring script) (namestring installation))
+                (list (namestring bash) (namestring script)
+                      (namestring installation))
                 :environment (apply #'environment extra)
                 :ignore-error-status t)))
       (multiple-value-bind (output error-output status)
@@ -2906,7 +2908,8 @@ esac
       (release-script-tests--write-uname bin "OpenBSD" "amd64")
       (multiple-value-bind (output error-output status)
           (release-script-tests--run
-           (list (namestring script) (namestring installation))
+           (list (namestring bash) (namestring script)
+                 (namestring installation))
            :environment
            (list (format nil "PATH=~A" path)
                  "AUTOLITH_SBCL=/no/such/sbcl")
