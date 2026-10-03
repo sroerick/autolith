@@ -324,8 +324,7 @@
                      (list sessions children memories papercuts agenda-forms plans states))
                     (loop for file in files
                           for text = (ignore-errors
-                                       (sb-ext:octets-to-string (getf file :bytes)
-                                                                :external-format ':utf-8))
+                                       (utf8-octets-to-string (getf file :bytes)))
                           when text collect text)))
           (root (merge-pathnames "inferences/objects/" (config :data-root configuration))))
       (when (uiop:directory-exists-p root)

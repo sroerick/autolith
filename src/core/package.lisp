@@ -840,6 +840,9 @@
                 #:sbcl-worker-start
                 #:sbcl-worker-stop
                 #:sbcl-worker-used-image-identifier)
+  (:import-from #:ls-compat
+                #:utf8-octets-to-string
+                #:utf8-string-to-octets)
   (:import-from #:ls-compat.files
                 #:file-changed
                 #:file-not-utf-8

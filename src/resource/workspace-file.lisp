@@ -93,9 +93,8 @@
     (integer 0))
 (defun workspace-file--observation-retained-bytes (observation)
   "Return the UTF-8 bytes retained by OBSERVATION's exact snapshot."
-  (length (sb-ext:string-to-octets
-           (resource-observation-content observation)
-           :external-format ':utf-8)))
+  (length (utf8-string-to-octets
+           (resource-observation-content observation))))
 
 (defclass workspace-file-observation-state (resource-observation-state)
   ((visible-ranges
@@ -474,7 +473,7 @@ Return NIL when NAME disappears during enumeration."
   (let ((digest
           (ironclad:digest-sequence
            ':sha256
-           (sb-ext:string-to-octets line :external-format ':utf-8))))
+           (utf8-string-to-octets line))))
     (format nil "~2,'0X~2,'0X" (aref digest 0) (aref digest 1))))
 
 
@@ -839,7 +838,7 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
 (-> workspace-file--replacement-octets (string) (simple-array (unsigned-byte 8) (*)))
 (defun workspace-file--replacement-octets (content)
   "Return CONTENT as UTF-8 octets after enforcing the exact replacement limit."
-  (let ((octets (sb-ext:string-to-octets content :external-format ':utf-8)))
+  (let ((octets (utf8-string-to-octets content)))
     (when (> (length octets) *workspace-file-resource-maximum-bytes*)
       (error 'tool-error
              :message

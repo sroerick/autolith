@@ -21,7 +21,7 @@
   "Percent-encode VALUE, retaining octets accepted by LITERAL-OCTET-P."
   (with-output-to-string (stream)
     (loop for octet across
-          (sb-ext:string-to-octets value :external-format ':utf-8)
+          (utf8-string-to-octets value)
           do
              (if (funcall literal-octet-p octet)
                  (write-char (code-char octet) stream)
@@ -42,8 +42,8 @@
 
              (append-character (character)
                (loop for octet across
-                     (sb-ext:string-to-octets
-                      (string character) :external-format ':utf-8)
+                     (utf8-string-to-octets
+                      (string character))
                      do (vector-push-extend octet octets))))
       (loop with index = 0
             while (< index (length encoded))
@@ -68,7 +68,7 @@
                   (append-character character)
                   (incf index))))
       (handler-case
-          (sb-ext:octets-to-string octets :external-format ':utf-8)
+          (utf8-octets-to-string octets)
         (error ()
           (malformed "the percent-encoded identifier is not valid UTF-8"))))))
 

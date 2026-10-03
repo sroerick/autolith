@@ -1510,13 +1510,12 @@ a crash may leave one that a later lease acquisition can reuse safely."
 (defun conversation--inherited-reference-wire-byte-length (messages)
   "Return the UTF-8 wire bytes for MESSAGES and their developer boundary."
   (length
-   (sb-ext:string-to-octets
+   (utf8-string-to-octets
     (json-encode
      (coerce
       (append messages
               (list (conversation--inherited-reference-boundary-item)))
-      'vector))
-    :external-format ':utf-8)))
+      'vector)))))
 
 (-> conversation-inherited-reference-snapshot
     (conversation (integer 1))
@@ -1549,9 +1548,8 @@ copied."
                              (+ wire-bytes
                                 1
                                 (length
-                                 (sb-ext:string-to-octets
-                                  (json-encode message)
-                                  :external-format ':utf-8)))))
+                                 (utf8-string-to-octets
+                                  (json-encode message))))))
                        (if (<= candidate-bytes maximum-wire-bytes)
                            (setf wire-bytes candidate-bytes
                                  selected (cons message selected))

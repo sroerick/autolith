@@ -222,8 +222,8 @@
                (feed-string (string)
                  "Mix one length-delimited UTF-8 STRING into the digest."
                  (let ((octets
-                         (sb-ext:string-to-octets
-                          string :external-format ':utf-8)))
+                         (utf8-string-to-octets
+                          string)))
                    (feed-length (length octets))
                    (update-mac mac octets))))
         (feed-length (length snapshot))
@@ -627,7 +627,7 @@
 (defun mcp-tools--identifier-hash (raw)
   "Return RAW's fixed 64-bit FNV-1a hexadecimal identity."
   (let ((hash #xcbf29ce484222325))
-    (loop for octet across (sb-ext:string-to-octets raw :external-format ':utf-8)
+    (loop for octet across (utf8-string-to-octets raw)
           do
              (setf hash
                    (mod
@@ -1072,9 +1072,8 @@ retained value is credential-redacted or projected."
   (let* ((encoded (json-encode schema))
          (encoded-bytes
            (length
-            (sb-ext:string-to-octets
-             encoded
-             :external-format ':utf-8))))
+            (utf8-string-to-octets
+             encoded))))
     (when (> encoded-bytes *mcp-maximum-tool-schema-bytes*)
       (mcp-tools--server-error
        (mcp-server-runtime-configuration runtime)
@@ -1125,9 +1124,8 @@ retained value is credential-redacted or projected."
                    (mcp-server-runtime-name runtime)))))
       (let ((provider-bytes
               (length
-               (sb-ext:string-to-octets
-                (json-encode copy)
-                :external-format ':utf-8))))
+               (utf8-string-to-octets
+                (json-encode copy)))))
         (when (> provider-bytes *mcp-maximum-tool-schema-bytes*)
           (mcp-tools--server-error
            (mcp-server-runtime-configuration runtime)
@@ -1172,9 +1170,8 @@ retained value is credential-redacted or projected."
                (mcp-tools--provider-schema runtime (mcp-tool-input-schema tool)))
              (prepared-tool (mcp-tools--sanitize-tool tool :input-schema provider-schema))
              (retained-bytes
-               (length (sb-ext:string-to-octets
-                        (json-encode (mcp-tool-input-schema prepared-tool))
-                        :external-format ':utf-8))))
+               (length (utf8-string-to-octets
+                        (json-encode (mcp-tool-input-schema prepared-tool))))))
         (when (> retained-bytes *mcp-maximum-tool-schema-bytes*)
           (mcp-tools--server-error
            (mcp-server-runtime-configuration runtime) nil
@@ -1683,8 +1680,8 @@ retained value is credential-redacted or projected."
                    (rendered-text (format nil "~{~A~^~2%~}" ordered-sections))
                    (rendered-bytes
                      (length
-                      (sb-ext:string-to-octets
-                       rendered-text :external-format ':utf-8))))
+                      (utf8-string-to-octets
+                       rendered-text))))
               (when (> rendered-bytes *mcp-maximum-result-text-bytes*)
                 (error 'tool-error
                        :message

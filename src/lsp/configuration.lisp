@@ -96,7 +96,7 @@
                (when (> count *lsp-configuration-maximum-bytes*)
                  (lsp-configuration--error "The native LSP configuration exceeds its byte bound."
                                            :pathname pathname))
-               (sb-ext:octets-to-string buffer :external-format ':utf-8 :end count))
+               (utf8-octets-to-string buffer :end count))
           (close stream)))
     (sb-sys:deadline-timeout (condition) (error condition))
     (lsp-configuration-error (condition) (error condition))

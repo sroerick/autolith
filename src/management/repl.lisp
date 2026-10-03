@@ -172,7 +172,7 @@
       (let* ((octets (management-repl--read-exactly stream length))
              (source
                (handler-case
-                   (sb-ext:octets-to-string octets :external-format ':utf-8)
+                   (utf8-octets-to-string octets)
                  (error ()
                    (management-repl--protocol-error
                     ':encoding "Management protocol frame is not valid UTF-8.")))))
@@ -217,7 +217,7 @@
       (management-repl--protocol-error
        ':oversized "Management protocol response exceeds the configured frame bound."))
     (let* ((text (management-repl-output-string capture))
-           (octets (sb-ext:string-to-octets text :external-format ':utf-8)))
+           (octets (utf8-string-to-octets text)))
       (when (> (length octets) maximum-size)
         (management-repl--protocol-error
          ':oversized "Management protocol response exceeds the configured frame bound."))
@@ -865,7 +865,7 @@
          (source (getf properties :source)))
     (unless (stringp source)
       (management-repl--protocol-error ':request "Evaluation source must be a string."))
-    (when (> (length (sb-ext:string-to-octets source :external-format ':utf-8))
+    (when (> (length (utf8-string-to-octets source))
              maximum-source-size)
       (management-repl--protocol-error ':oversized "Evaluation source is oversized."))
     source))

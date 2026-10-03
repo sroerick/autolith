@@ -258,7 +258,7 @@
   "Return a keyed full SipHash digest for exact UTF-8 CONTENT."
   (let ((mac (make-mac ':siphash key :digest-length 16)))
     (update-mac mac
-                (sb-ext:string-to-octets content :external-format ':utf-8))
+                (utf8-string-to-octets content))
     (with-output-to-string (stream)
       (loop for octet across (produce-mac mac)
             do (format stream "~2,'0X" octet)))))

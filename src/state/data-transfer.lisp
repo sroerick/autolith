@@ -147,7 +147,7 @@
 (-> data-transfer--forms-bytes (list) vector)
 (defun data-transfer--forms-bytes (forms)
   "Serialize complete FORMS with portable readable syntax and UTF-8."
-  (sb-ext:string-to-octets
+  (utf8-string-to-octets
    (with-output-to-string (stream)
      (let ((*print-readably* nil) (*print-escape* t) (*print-array* t)
            (*print-pretty* nil) (*print-circle* nil)
@@ -155,8 +155,7 @@
            (*package* (find-package '#:keyword)))
        (dolist (form forms)
          (write form :stream stream)
-         (terpri stream))))
-   :external-format ':utf-8))
+         (terpri stream))))))
 
 (-> data-transfer--safe-component-p (t) boolean)
 (defun data-transfer--safe-component-p (value)
@@ -280,7 +279,7 @@ namestring, so no host directory separator ever has to be split out of a name."
   "Hash a canonical stored workspace key even when its directory is absent."
   (let ((mac (make-mac ':siphash *workspace-directory-identifier-key*
                        :digest-length 16)))
-    (update-mac mac (sb-ext:string-to-octets directory :external-format ':utf-8))
+    (update-mac mac (utf8-string-to-octets directory))
     (with-output-to-string (stream)
       (loop for byte across (produce-mac mac) do (format stream "~2,'0x" byte)))))
 

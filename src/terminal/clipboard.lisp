@@ -12,7 +12,7 @@ over SSH or through a localgroup relay, copy on the machine the user sits at."
   (format nil "~C]52;c;~A~C\\"
           #\Escape
           (usb8-array-to-base64-string
-           (sb-ext:string-to-octets text :external-format ':utf-8))
+           (utf8-string-to-octets text))
           #\Escape))
 
 (-> terminal-ui-copy-to-terminal (terminal-ui string) boolean)

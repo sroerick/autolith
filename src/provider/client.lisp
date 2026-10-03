@@ -636,7 +636,7 @@ and codes follow the Codex reference at commit 6f51c65958."
                   body)
                  ((typep body '(vector (unsigned-byte 8)))
                   (handler-case
-                      (sb-ext:octets-to-string body :external-format ':utf-8)
+                      (utf8-octets-to-string body)
                     (error ()
                       nil)))
                  (t

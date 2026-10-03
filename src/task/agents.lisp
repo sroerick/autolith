@@ -413,10 +413,9 @@
          :pathname pathname :source source
          :cause "The native role file exceeds its byte bound."
          :definition-name definition-name))
-      (sb-ext:octets-to-string octets
+      (utf8-octets-to-string octets
                                :start 0
-                               :end count
-                               :external-format ':utf-8))))
+                               :end count))))
 
 (-> task-agent--source-grammar () source-grammar)
 (defun task-agent--source-grammar ()

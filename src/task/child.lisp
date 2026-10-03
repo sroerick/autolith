@@ -370,7 +370,7 @@ boundary cannot fit within that budget."
 
 (defun task--utf8-length (text)
   "Return the UTF-8 byte length of TEXT on the supported SBCL runtime."
-  (length (sb-ext:string-to-octets text :external-format ':utf-8)))
+  (length (utf8-string-to-octets text)))
 
 (defun task--bounded-output (text)
   "Bound TEXT by configured UTF-8 bytes and lines, marking truncation."

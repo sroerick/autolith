@@ -1003,9 +1003,8 @@ bound policy takes effect without reloading this file."
                    (mcp-configuration--error
                     "The native MCP configuration exceeds its byte bound."
                     :pathname pathname))
-                 (sb-ext:octets-to-string
+                 (utf8-octets-to-string
                   buffer
-                  :external-format ':utf-8
                   :start 0
                   :end count)))
           (when stream
