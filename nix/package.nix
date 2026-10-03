@@ -68,11 +68,10 @@ let
     pname = "agentcomms";
     version = qlotVersion "agentcomms";
     src = qlotSource "agentcomms";
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = [ argo ] ++ (with pkgs.sbclPackages; [
       bordeaux-threads
       serapeum
-      yason
-    ];
+    ]);
   };
 
   clColorist = pkgs.sbcl.buildASDFSystem {
@@ -109,13 +108,11 @@ let
     pname = "cl-lsp";
     version = qlotVersion "cl-lsp";
     src = qlotSource "cl-lsp";
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = [ argo ] ++ (with pkgs.sbclPackages; [
       bordeaux-threads
-      flexi-streams
       quri
       serapeum
-      yason
-    ];
+    ]);
   };
 
   clRfc8628 = pkgs.sbcl.buildASDFSystem {
@@ -225,12 +222,11 @@ let
     version = qlotVersion "mcparen";
     src = qlotSource "mcparen";
     systems = [ "mcparen" "mcparen/managed" ];
-    lispLibs = [ lsCompat ] ++ (with pkgs.sbclPackages; [
+    lispLibs = [ argo lsCompat ] ++ (with pkgs.sbclPackages; [
       babel
       bordeaux-threads
       dexador
       serapeum
-      yason
     ]);
   };
 

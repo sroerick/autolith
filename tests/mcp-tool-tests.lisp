@@ -126,11 +126,11 @@
             "properties"
             (json-object
              "value" (json-object "type" "string"))
-            "additionalProperties" false)
+            "additionalProperties" (json-false))
            "annotations"
            (json-object
-            "readOnlyHint" (if read-only-p yason:true false)
-            "destructiveHint" (if destructive-p yason:true false)))))
+            "readOnlyHint" (if read-only-p t (json-false))
+            "destructiveHint" (if destructive-p t (json-false))))))
     (when task-required-p
       (setf
        (gethash "execution" definition)
@@ -150,9 +150,9 @@
          "protocolVersion" "2025-11-25"
          "capabilities"
          (json-object
-          "tools" (json-object "listChanged" false)
-          "resources" (json-object "subscribe" false)
-          "prompts" (json-object "listChanged" false))
+          "tools" (json-object "listChanged" (json-false))
+          "resources" (json-object "subscribe" (json-false))
+          "prompts" (json-object "listChanged" (json-false)))
          "serverInfo"
          (json-object "name" "autolith-test" "version" "1")
          "instructions" "Use only the deterministic test fixture.")))
@@ -204,7 +204,7 @@
                  "text" "second")))
               "structuredContent"
               (json-object "answer" 42)
-              "isError" false)))
+              "isError" (json-false))))
            ((string= name "error")
             (test-mcp--rpc-result
              request
@@ -214,7 +214,7 @@
                (json-object
                 "type" "text"
                 "text" "server-declared failure"))
-              "isError" yason:true)))
+              "isError" t)))
            ((string= name "image")
             (test-mcp--rpc-result
              request
@@ -231,7 +231,7 @@
                (json-object
                 "type" "text"
                 "text" "after image"))
-              "isError" false)))
+              "isError" (json-false))))
            (t
             (test-mcp--rpc-result
              request
@@ -239,7 +239,7 @@
               "content"
               (vector
                (json-object "type" "text" "text" "mutated"))
-              "isError" false))))))
+              "isError" (json-false)))))))
       ((string= method "resources/list")
        (test-mcp--rpc-result
         request
@@ -1336,7 +1336,7 @@
              (json-object
               "type" "string"
               "description" credential))
-            "additionalProperties" false)
+            "additionalProperties" (json-false))
            "outputSchema"
            (json-object
             "type" "object"
@@ -1344,8 +1344,8 @@
            "annotations"
            (json-object
             "title" credential
-            "readOnlyHint" yason:true
-            "destructiveHint" false)
+            "readOnlyHint" t
+            "destructiveHint" (json-false))
            "_meta" (json-object "credential" credential))))))
       ((string= method "tools/call")
        (let* ((params (json-get request "params"))
@@ -1363,7 +1363,7 @@
                (json-object
                 "type" "text"
                 "text" (format nil "Failure echoed ~A." credential)))
-              "isError" yason:true)))
+              "isError" t)))
            (t
             (test-mcp--rpc-result
              request
@@ -1375,7 +1375,7 @@
                 "text" (format nil "Success echoed ~A." credential)))
               "structuredContent"
               (json-object "credential" credential)
-              "isError" false))))))
+              "isError" (json-false)))))))
       ((string= method "resources/list")
        (test-mcp--rpc-result
         request
@@ -1558,10 +1558,10 @@
                         "annotations"
                         (json-object
                          "title" credential
-                         "readOnlyHint" yason:true
-                         "destructiveHint" false
-                         "idempotentHint" yason:true
-                         "openWorldHint" false
+                         "readOnlyHint" t
+                         "destructiveHint" (json-false)
+                         "idempotentHint" t
+                         "openWorldHint" (json-false)
                          "unused" credential)
                         "execution"
                         (json-object
@@ -2995,7 +2995,7 @@
                            (json-object "type" string-type)
                            (json-object "type" "null"))
                           "default"
-                          (mcparen:json-null-value)))
+                          nil))
                        (source-properties (json-object))
                        (source
                          (progn
@@ -3003,7 +3003,7 @@
                                  namespace-schema)
                            (json-object
                             "type" "object"
-                            "additionalProperties" yason:false
+                            "additionalProperties" (json-false)
                             "properties" source-properties))))
                   (multiple-value-bind (projected bytes)
                       (mcp-tools--provider-schema runtime source)
@@ -3021,17 +3021,17 @@
                             (not (eq namespace namespace-schema)))
                        "provider projection returns a detached schema")
                       (test-assert
-                       (eq
-                        (json-get projected "additionalProperties")
-                        yason:false)
+                       (json-false-p
+                        (gethash "additionalProperties" projected))
                        "provider projection preserves JSON false")
                       (test-assert
                        (and
                         (vectorp any-of)
                         (= (length any-of) 2)
-                        (eq
-                         (json-get namespace "default")
-                         (mcparen:json-null-value))
+                        (equal
+                         (multiple-value-list
+                          (json-get-present namespace "default"))
+                         '(nil t))
                         (string= (json-get (aref any-of 1) "type") "null"))
                        "provider projection preserves nullable schema values")
                       (test-assert
@@ -3537,8 +3537,9 @@
                         "{\"flag\":false,\"empty\":null,\"items\":[]}")))
                  (test-assert
                   (and
-                   (eq (json-get decoded "flag") yason:false)
-                   (eq (json-get decoded "empty") :null)
+                   (json-false-p (gethash "flag" decoded))
+                   (equal (multiple-value-list (json-get-present decoded "empty"))
+                          '(nil t))
                    (vectorp (json-get decoded "items"))
                    (zerop (length (json-get decoded "items"))))
                   "MCP argument decoding preserves exact JSON wire values"))
@@ -3549,7 +3550,7 @@
                        read-tool
                        "{\"value\":1} trailing")
                       nil)
-                  (tool-error ()
+                  (json-error ()
                     t))
                 "MCP argument decoding rejects trailing documents")
                (let* ((result

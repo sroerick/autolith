@@ -738,8 +738,8 @@
         (multiple-value-bind (value value-present-p)
             (gethash key source)
           (when (and value-present-p
-                     (or (eq value yason:true)
-                         (eq value yason:false)))
+                     (or (json-true-p value)
+                         (json-false-p value)))
             (setf (gethash key retained) value
                   present-p t)))))
     (and present-p retained)))
@@ -1020,10 +1020,8 @@ retained value is credential-redacted or projected."
                         do (visit child (1+ depth))))
                  ((or (null value)
                       (realp value)
-                      (eq value t)
-                      (eq value yason:true)
-                      (eq value yason:false)
-                      (eq value (mcparen:json-null-value)))
+                      (json-true-p value)
+                      (json-false-p value))
                   nil)
                  (t
                   (mcp-tools--server-error
@@ -1353,38 +1351,6 @@ retained value is credential-redacted or projected."
 (defmethod tool-child-safe-p ((tool mcp-provider-tool))
   "Permit TOOL in a child only through an exact native configuration grant."
   (and (mcp-provider-tool-configured-child-safe-p tool) t))
-
-(defmethod tool-decode-arguments ((tool mcp-provider-tool) source)
-  "Decode exact MCP JSON values without collapsing false, null, or arrays."
-  (handler-case
-      (with-input-from-string (stream source)
-        (let ((arguments
-                (yason:parse
-                 stream
-                 :json-arrays-as-vectors t
-                 :json-booleans-as-symbols t
-                 :json-nulls-as-keyword t)))
-          (loop for character = (read-char stream nil nil)
-                while character
-                unless (find character
-                             '(#\Space #\Tab #\Newline #\Return #\Page))
-                  do
-                     (error 'tool-error
-                            :message
-                            "Unexpected text follows the MCP argument object."
-                            :tool-name (tool-canonical-name tool)))
-          (unless (json-object-p arguments)
-            (error 'tool-error
-                   :message "MCP tool arguments must be one JSON object."
-                   :tool-name (tool-canonical-name tool)))
-          arguments))
-    (tool-error (condition)
-      (error condition))
-    (error (cause)
-      (error 'tool-error
-             :message (format nil "Could not decode MCP tool arguments: ~A"
-                              cause)
-             :tool-name (tool-canonical-name tool)))))
 
 (-> mcp-provider-tool-read-only-p (mcp-provider-tool) boolean)
 (defun mcp-provider-tool-read-only-p (tool)

@@ -917,6 +917,7 @@
                 #:json-object-source-p
                 #:json-string-member-p
                 #:json-string=
+                #:json-true-p
                 #:json-value)
   (:import-from #:ls-compat
                 #:utf8-octets-to-string

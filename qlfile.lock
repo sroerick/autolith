@@ -60,8 +60,8 @@
   :version "ql-2025-06-22"))
 ("agentcomms" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/agentcomms.git" :ref "e2f0cf5931bb35eb070da9077d0144e4ac013947")
-  :version "git-e2f0cf5931bb35eb070da9077d0144e4ac013947"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/agentcomms.git" :ref "f1cf782201f94719c5efd418dc5d769e347b7f38")
+  :version "git-f1cf782201f94719c5efd418dc5d769e347b7f38"))
 ("fetch-gist" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/fetch-gist.git" :ref "0adb33b6801d1218ce6249d2a751b05f88b98c40")
@@ -92,8 +92,8 @@
   :version "git-fd05933ce7950a1b0a2ccbc1c61228d3e633867a"))
 ("cl-lsp" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-lsp.git" :ref "285aa75ae19c4e02de97f5891a398478242b4153")
-  :version "git-285aa75ae19c4e02de97f5891a398478242b4153"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-lsp.git" :ref "9d0afd74511134308dc92cd9174396f10374d931")
+  :version "git-9d0afd74511134308dc92cd9174396f10374d931"))
 ("cl-skills" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-skills.git" :ref "3c219ae44379a1891bbd8f374692763cae9215f8")
@@ -144,8 +144,8 @@
   :version "git-3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9"))
 ("mcparen" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/mcparen.git" :ref "482f87cf0803c4583579eb12c58f0c1078199c94")
-  :version "git-482f87cf0803c4583579eb12c58f0c1078199c94"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/mcparen.git" :ref "e4af00d718a727229fce986c002c608b0a7c5353")
+  :version "git-e4af00d718a727229fce986c002c608b0a7c5353"))
 ("sbcl-generations" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-generations.git" :ref "4cfe637597a90263c6259ad2d114053618312243")
@@ -172,9 +172,9 @@
   :version "git-66bbfbe947b69f3105f71f5e4293637decc91746"))
 ("argo" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/argo.git" :ref "bd7415c7d6df61889147979c7c1964a0246a8f19")
-  :version "git-bd7415c7d6df61889147979c7c1964a0246a8f19"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/argo.git" :ref "3658b947372fb19ae07aca65a439b63b0685ae47")
+  :version "git-3658b947372fb19ae07aca65a439b63b0685ae47"))
 ("setinka" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/setinka.git" :ref "9bdd28f6a7045e0e79eb017a9e4d79480c6d03ab")
-  :version "git-9bdd28f6a7045e0e79eb017a9e4d79480c6d03ab"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/setinka.git" :ref "f896272b4bde04e09385a1f050604a4943525e74")
+  :version "git-f896272b4bde04e09385a1f050604a4943525e74"))
