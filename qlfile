@@ -16,7 +16,7 @@ ql yason 2026-01-01
 git agentcomms https://github.com/lambda-symbolics/agentcomms.git :ref c56cdca0b067eda19ba86f868fbad009f5af4e15
 git fetch-gist https://github.com/lambda-symbolics/fetch-gist.git :ref 0adb33b6801d1218ce6249d2a751b05f88b98c40
 git cl-colorist https://github.com/luciusmagn/cl-colorist.git :ref a70749493fbdbe79d6766f254a664119042102b9
-git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 1b75c6bfb24959c51c1bde47603de40c96078305
+git clinedi https://github.com/lambda-symbolics/clinedi.git :ref b803c6b60b71f746aff102e1a87d4124d0c36af4
 git cl-jobpond https://github.com/luciusmagn/cl-jobpond.git :ref ee2e2eb0bd5080c52db55036f853c00671962178
 git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 08acbc1caaab2beaa0ea824507d722a117ec70b0
 git cl-rfc8252 https://github.com/lambda-symbolics/cl-rfc8252.git :ref b9affbd04c12e2adac4a2403f60a3a2802f9ac45

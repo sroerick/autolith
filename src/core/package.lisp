@@ -535,6 +535,10 @@
                 #:disable-bracketed-paste
                 #:semantic-prompt-marker-sequence
                 #:window-title-sequence
+                #:alternate-screen-enter-sequence
+                #:alternate-screen-leave-sequence
+                #:mouse-reporting-enable-sequence
+                #:mouse-reporting-disable-sequence
                 #:default-color-sequence
                 #:default-color-reset-sequence
                 #:read-event

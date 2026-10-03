@@ -2003,8 +2003,7 @@ are forwarded to TERMINAL-UI-SELECT."
              (progn
                (with-terminal-ui-locked (ui)
                  (setf (terminal-ui-live-output-suspended-p ui) t)
-                 (terminal--write terminal (format nil "~C[?1000l~C[?1006l"
-                                                   #\Escape #\Escape))
+                 (terminal--write terminal (mouse-reporting-disable-sequence))
                  (when stop-ui-p
                    (setf transport-stopped-p t)
                    (terminal-stop terminal))
@@ -2020,8 +2019,7 @@ are forwarded to TERMINAL-UI-SELECT."
                      (terminal-start terminal))
                 (terminal-ui-fullscreen-invalidate ui)
                 (unwind-protect
-                     (terminal--write terminal (format nil "~C[?1000h~C[?1006h"
-                                                       #\Escape #\Escape))
+                     (terminal--write terminal (mouse-reporting-enable-sequence))
                   (application--authentication-ui-resume ui)))))))
       (unwind-protect
            (progn
