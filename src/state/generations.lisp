@@ -178,11 +178,6 @@ quiescing, because both touch the private history repository."
                    :created-at (get-universal-time)
                    :status ':pending)))
 
-(-> generation--write-form-atomically (pathname list) pathname)
-(defun generation--write-form-atomically (pathname form)
-  "Atomically publish portable FORM at PATHNAME."
-  (snapshot-write pathname form)
-  pathname)
 
 (-> generation--translate (t) t)
 (defun generation--translate (condition)

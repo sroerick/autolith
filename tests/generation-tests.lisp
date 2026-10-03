@@ -785,7 +785,7 @@
          (core (merge-pathnames "autolith.core" directory)))
     (unwind-protect
          (progn
-           (generation--write-form-atomically
+           (snapshot-write
             manifest
             (list :generation
                   :version 1

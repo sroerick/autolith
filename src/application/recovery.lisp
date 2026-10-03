@@ -75,7 +75,7 @@
                          (bounded-string frame-name :limit 300)
                          (bounded-string (type-of frame-name) :limit 300)))
                    (subseq backtrace 0 (min 30 (length backtrace))))))
-    (generation--write-form-atomically
+    (snapshot-write
      pathname
      (list :crash
            :version 1
@@ -144,7 +144,7 @@
 (defun application--crash-capsule-record-p (record)
   "Return true when RECORD is one bounded version-one crash capsule."
   (handler-case
-      (let* ((properties (and (application-command--proper-list-p record)
+      (let* ((properties (and (proper-list-p record)
                               (rest record)))
              (keys '(:version :id :time :condition-type :condition
                      :backtrace :conversation-id :rendered-sequence
@@ -169,7 +169,7 @@
              (application--bounded-string-p
               (getf properties :condition) 2000 :empty-p t)
              (let ((backtrace (getf properties :backtrace)))
-               (and (application-command--proper-list-p backtrace)
+               (and (proper-list-p backtrace)
                     (<= (length backtrace) 30)
                     (every (lambda (frame)
                              (application--bounded-string-p frame 300
@@ -275,7 +275,7 @@
             (multiple-value-bind (record complete-p)
                 (snapshot-read pointer-pathname)
               (unless (and complete-p
-                           (application-command--proper-list-p record))
+                           (proper-list-p record))
                 (return (values nil nil nil)))
               (let* ((properties (rest record))
                      (conversation-id (getf properties :conversation-id))
