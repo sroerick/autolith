@@ -308,6 +308,7 @@
                     :source "(values :future)"
                     :status ':ok
                     :result "⇒ :FUTURE"
+                    :version "incidental"
                     :future-field "ignored"))
              (let ((loaded
                      (conversation-load
@@ -318,6 +319,20 @@
                          (conversation-user-operation-snapshot loaded))
                  '("(values :future)"))
                 "replay tolerates bounded unknown user-operation fields")))
+           (let ((properties (list :kind ':lisp :source "valid" :status ':ok :result "")))
+             (dolist (case
+                       (list (list "user-operation-duplicate"
+                                   '(:source "duplicate"))
+                             (list "user-operation-nonkeyword" '(foreign-field t))
+                             (list "user-operation-too-many-fields"
+                                   (loop for index below 11
+                                         append (list (intern (format nil "EXTRA-~D" index)
+                                                              '#:keyword)
+                                                      index)))))
+               (test-assert
+                (user-operation-context-tests--invalid-replay-p
+                 configuration (first case) (append properties (second case)))
+                "replay rejects duplicate, nonkeyword, or oversized property records")))
            (test-assert
             (user-operation-context-tests--invalid-replay-p
              configuration

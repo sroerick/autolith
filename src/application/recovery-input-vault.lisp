@@ -36,13 +36,6 @@
 
 ;;;; -- Strict Durable Forms --
 
-(-> application-recovery-input-vault--properties-p (t list list) boolean)
-(defun application-recovery-input-vault--properties-p
-    (properties allowed-keys required-keys)
-  "Return true when PROPERTIES is a unique bounded property list with valid keys."
-  (plist-schema-p properties :allowed-keys allowed-keys :required-keys required-keys
-                            :keyword-keys-p nil))
-
 (-> application-recovery-input-vault--read-form (pathname keyword) t)
 (defun application-recovery-input-vault--read-form (pathname operation)
   "Read one complete snapshot form from PATHNAME or signal a vault error."
@@ -69,28 +62,33 @@
 (-> application-recovery-input-vault--pending-form-shape-p (t) boolean)
 (defun application-recovery-input-vault--pending-form-shape-p (form)
   "Return true when FORM has one supported pending-input record shape."
-  (and (proper-list-p form)
-       (eq (first form) ':pending-inputs)
-       (let* ((properties (rest form))
-              (version (and (proper-list-p
-                             properties)
-                            (getf properties :version))))
-         (case version
-           (1
-            (application-recovery-input-vault--properties-p
-             properties
-             '(:version :conversation-id :steering :work)
-             '(:version :conversation-id :steering :work)))
-           (2
-            (application-recovery-input-vault--properties-p
-             properties
-             '(:version :snapshot-identifier :conversation-id :active-work
-               :steering-in-flight :steering :work
-               :vault-capture-identifiers :steering-promotion-prefix-count)
-             '(:version :snapshot-identifier :conversation-id :active-work
-               :steering-in-flight :steering :work)))
-           (otherwise
-            nil)))))
+  (values
+   (record-check
+    form :tag ':pending-inputs :versions '(1 2) :allow-other-keys nil
+    :fields
+    (case (record-version form)
+      (1
+       '((:indicator :conversation-id :required t)
+         (:indicator :steering :required t)
+         (:indicator :work :required t)))
+      (2
+       '((:indicator :snapshot-identifier :required t)
+         (:indicator :conversation-id :required t)
+         (:indicator :active-work :required t)
+         (:indicator :steering-in-flight :required t)
+         (:indicator :steering :required t)
+         (:indicator :work :required t)
+         (:indicator :vault-capture-identifiers)
+         (:indicator :steering-promotion-prefix-count)))))))
+
+(-> application-recovery-input-vault--form-shape-p (t) boolean)
+(defun application-recovery-input-vault--form-shape-p (form)
+  "Return true when FORM has the supported recovery input vault schema."
+  (values
+   (record-check
+    form :tag ':recovery-input-vault :versions '(1) :allow-other-keys nil
+    :fields (list (list :indicator ':conversation-id :required t :validate #'stringp)
+                  (list :indicator ':captures :required t :validate #'proper-list-p)))))
 
 (-> application-recovery-input-vault--pending-payload-form (list) list)
 (defun application-recovery-input-vault--pending-payload-form (state)
@@ -264,12 +262,15 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
 (defun application-recovery-input-vault--capture-from-form
     (form conversation-identifier pathname)
   "Return one validated normalized vault capture from FORM."
-  (when (and (proper-list-p form)
-             (application-recovery-input-vault--properties-p
-              form
-              '(:id :captured-at :active-work :steering-in-flight :steering :work
-                :steering-promotion-prefix-count)
-              '(:id :captured-at :active-work :steering-in-flight :steering :work)))
+  (when (record-check
+         form :properties-p t :allow-other-keys nil
+         :fields '((:indicator :id :required t)
+                   (:indicator :captured-at :required t)
+                   (:indicator :active-work :required t)
+                   (:indicator :steering-in-flight :required t)
+                   (:indicator :steering :required t)
+                   (:indicator :work :required t)
+                   (:indicator :steering-promotion-prefix-count)))
     (let ((identifier (getf form :id))
           (captured-at (getf form :captured-at)))
       (when (and (non-empty-string-p identifier)
@@ -368,25 +369,14 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
         nil
         (let* ((form
                  (application-recovery-input-vault--read-form pathname ':read-vault))
-               (properties
-                 (and (proper-list-p form)
-                      (rest form)))
+               (properties (and (consp form) (rest form)))
                (conversation-identifier
                  (conversation-identifier
                   (application-conversation application))))
           (unless
-              (and (proper-list-p form)
-                   (eq (first form) ':recovery-input-vault)
-                   (application-recovery-input-vault--properties-p
-                    properties
-                    '(:version :conversation-id :captures)
-                    '(:version :conversation-id :captures))
-                   (eql (getf properties :version) 1)
-                   (stringp (getf properties :conversation-id))
+              (and (application-recovery-input-vault--form-shape-p form)
                    (string= (getf properties :conversation-id)
-                            conversation-identifier)
-                   (proper-list-p
-                    (getf properties :captures)))
+                            conversation-identifier))
             (application-recovery-input-vault--signal
              pathname ':validate-vault
              :message

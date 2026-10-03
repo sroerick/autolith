@@ -221,7 +221,7 @@
 
 (-> test-recovery-input-vault-corruption () null)
 (defun test-recovery-input-vault-corruption ()
-  "Test truncated vault state blocks import without modifying either file."
+  "Test malformed vault state blocks import without modifying either file."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (application
@@ -276,6 +276,41 @@
                              (recovery-input-vault-tests--octets
                               vault-pathname)))
                 "corrupt vault failure leaves pending and vault bytes unchanged"))
+             (let ((vault-form
+                     (list :recovery-input-vault :version 1
+                           :conversation-id (conversation-identifier conversation)
+                           :captures (list (list :id "schema-capture" :captured-at 0
+                                                 :active-work nil :steering-in-flight nil
+                                                 :steering nil
+                                                 :work '((:message "vault payload")))))))
+               (dolist (mutate
+                         (list (lambda (form) (setf (first form) ':foreign-vault))
+                               (lambda (form) (setf (getf (rest form) :version) 2))
+                               (lambda (form) (nconc form (list :version 1)))
+                               (lambda (form) (nconc form (list :unexpected t)))
+                               (lambda (form) (remf (rest form) :captures))
+                               (lambda (form)
+                                 (nconc (first (getf (rest form) :captures))
+                                        (list :version 1)))
+                               (lambda (form)
+                                 (let ((capture (first (getf (rest form) :captures))))
+                                   (nconc capture (list :id (getf capture :id)))))))
+                 (let ((form (copy-tree vault-form)))
+                   (funcall mutate form)
+                   (snapshot-write vault-pathname form :mode #o600)
+                   (let ((octets (recovery-input-vault-tests--octets vault-pathname)))
+                     (test-assert
+                      (not (application-recovery-input-vault-import application))
+                      "invalid vault record schemas reject recovery import")
+                     (let ((failure (application-recovery-input-vault-failure application)))
+                       (test-assert
+                        (and (typep failure 'recovery-input-vault-error)
+                             (eq (recovery-input-vault-error-operation failure) ':validate-vault)
+                             (equalp pending-octets
+                                     (recovery-input-vault-tests--octets pending-pathname))
+                             (equalp octets
+                                     (recovery-input-vault-tests--octets vault-pathname)))
+                        "schema failures preserve both durable input files"))))))
              (test-assert
               (handler-case
                   (progn

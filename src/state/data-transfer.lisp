@@ -51,9 +51,11 @@
 (-> data-transfer--properties-p (t list) boolean)
 (defun data-transfer--properties-p (value keys)
   "Return true for a proper plist containing each of KEYS exactly once."
-  (and (plist-schema-p value :allowed-keys keys :required-keys keys
-                            :keyword-keys-p nil)
-       (= (length value) (* 2 (length keys)))))
+  (values
+   (record-check value :properties-p t :allow-other-keys nil
+                 :fields (mapcar (lambda (key)
+                                   (list :indicator key :required t))
+                                 keys))))
 
 (-> data-transfer--portable-p (t) boolean)
 (defun data-transfer--portable-p (value)

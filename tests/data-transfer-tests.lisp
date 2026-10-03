@@ -451,6 +451,13 @@
         (dolist (mutate
                  (list
                   (lambda (copy) (setf (getf copy :version) 999))
+                  (lambda (copy) (setf (getf copy :format) ':foreign-data))
+                  (lambda (copy) (nconc copy (list :version (getf copy :version))))
+                  (lambda (copy) (nconc copy (list :unexpected t)))
+                  (lambda (copy) (nconc (first (getf copy :files)) (list :version 1)))
+                  (lambda (copy)
+                    (let ((file (first (getf copy :files))))
+                      (nconc file (list :path (getf file :path)))))
                   (lambda (copy)
                     (let* ((session (getf (first (getf copy :children)) :session))
                            (identifier (getf session :id)))

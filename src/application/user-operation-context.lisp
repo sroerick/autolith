@@ -49,8 +49,14 @@ Oversized text ends with an explicit truncation marker whenever LIMIT permits it
 (-> conversation-user-operation--properties-p (t) boolean)
 (defun conversation-user-operation--properties-p (properties)
   "Return true when PROPERTIES has bounded unique keys and every required field."
-  (plist-schema-p properties :maximum-length 32
-                            :required-keys '(:seq :time :kind :source :status :result)))
+  (values
+   (record-check properties :properties-p t :keyword-keys-p t :maximum-length 32
+                 :fields '((:indicator :seq :required t)
+                           (:indicator :time :required t)
+                           (:indicator :kind :required t)
+                           (:indicator :source :required t)
+                           (:indicator :status :required t)
+                           (:indicator :result :required t)))))
 
 (-> conversation-user-operation--replay-text-p (t) boolean)
 (defun conversation-user-operation--replay-text-p (value)

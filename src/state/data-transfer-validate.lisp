@@ -248,11 +248,15 @@
   (handler-case
       (progn
         (unless (and (data-transfer--portable-p archive)
-                     (data-transfer--properties-p
-                      archive '(:format :version :workspace :workspaces :sessions
-                                :children :memories :papercuts :agendas :plans :files :states))
-                     (eq (getf archive :format) ':autolith-data)
-                     (eql (getf archive :version) *data-transfer-version*)
+                     (record-check
+                      archive :properties-p t :versions (list *data-transfer-version*)
+                      :allow-other-keys nil
+                      :fields
+                      (cons (list :indicator ':format :required t
+                                  :validate (lambda (value) (eq value ':autolith-data)))
+                            (mapcar (lambda (key) (list :indicator key :required t))
+                                    '(:workspace :workspaces :sessions :children :memories
+                                      :papercuts :agendas :plans :files :states))))
                      (or (null (getf archive :workspace))
                          (data-transfer--directory-p (getf archive :workspace)))
                      (every (lambda (key) (listp (getf archive key)))
@@ -309,10 +313,7 @@
     (if (eq (getf state :kind) ':pending)
         (and (application-recovery-input-vault--pending-form-shape-p form)
              (not (null (application-input-controller--pending-state form owner))))
-        (and (eq (first form) ':recovery-input-vault)
-             (data-transfer--properties-p properties '(:version :conversation-id :captures))
-             (eql (getf properties :version) 1)
-             (listp (getf properties :captures))
+        (and (application-recovery-input-vault--form-shape-p form)
              (progn
                (data-transfer--unique (getf properties :captures)
                                       (lambda (capture) (getf capture :id)) pathname)
