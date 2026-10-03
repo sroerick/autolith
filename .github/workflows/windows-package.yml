@@ -165,10 +165,13 @@ jobs:
           }
 
       - name: Bootstrap with shared caches
+        id: bootstrap
         uses: ./.github/actions/windows-bootstrap
 
       - name: Check
         shell: pwsh
+        env:
+          ASDF_OUTPUT_TRANSLATIONS: ${{ steps.bootstrap.outputs.asdf-output-translations }}
         run: |
           $log = Join-Path $env:RUNNER_TEMP 'check.log'
           $status = 0

@@ -75,6 +75,20 @@
          (list "AUTOLITH_SBCL" (lisp-worker-sbcl-command)))
    function))
 
+(define-condition acp-launcher-test-failure (error)
+  ((cause :initarg :cause :reader acp-launcher-test-failure-cause
+          :documentation "The original initialization or cleanup condition.")
+   (exit-code :initarg :exit-code :reader acp-launcher-test-failure-exit-code
+              :documentation "The child's reaped exit status, if available.")
+   (stderr :initarg :stderr :reader acp-launcher-test-failure-stderr
+           :documentation "A bounded tail of retained child diagnostics."))
+  (:documentation "A source-launcher failure with its subprocess diagnostics.")
+  (:report (lambda (condition stream)
+             (format stream "ACP launcher initialization failed: ~A~%Child exit: ~S~%Stderr:~%~A"
+                     (acp-launcher-test-failure-cause condition)
+                     (acp-launcher-test-failure-exit-code condition)
+                     (acp-launcher-test-failure-stderr condition)))))
+
 (-> acp-launcher-tests--initialize
     (string &key (:arguments list) (:directory pathname) (:timeout real)) hash-table)
 (defun acp-launcher-tests--initialize (program &key arguments
@@ -84,14 +98,29 @@
   (let ((channel (agentcomms:acp-launch-agent program
                                              :arguments arguments
                                              :directory directory))
-        (client (make-instance 'agentcomms:acp-client)))
+        (client (make-instance 'agentcomms:acp-client))
+        (result nil)
+        (failure nil))
     (unwind-protect
-         (progn
-           (agentcomms:acp-client-connect client channel)
-           (agentcomms:client-initialize client :timeout timeout))
-      (when (agentcomms:acp-client-connection client)
-        (agentcomms:connection-close (agentcomms:acp-client-connection client)))
-      (agentcomms:channel-close channel))))
+         (handler-case
+             (progn
+               (agentcomms:acp-client-connect client channel)
+               (setf result (agentcomms:client-initialize client :timeout timeout)))
+           (serious-condition (condition)
+             (setf failure condition)))
+      (handler-case
+          (unwind-protect
+               (when (agentcomms:acp-client-connection client)
+                 (agentcomms:connection-close (agentcomms:acp-client-connection client)))
+            (agentcomms:channel-close channel))
+        (serious-condition (condition)
+          (unless failure (setf failure condition)))))
+    (when failure
+      (let ((diagnostics (agentcomms:acp-process-channel-stderr-text channel)))
+        (error 'acp-launcher-test-failure
+               :cause failure :exit-code (agentcomms:acp-process-channel-exit-code channel)
+               :stderr (subseq diagnostics (max 0 (- (length diagnostics) 8192))))))
+    result))
 
 (-> test-acp-launcher-source-stdio-roundtrip () null)
 (defun test-acp-launcher-source-stdio-roundtrip ()
@@ -138,4 +167,25 @@
          (test-assert (not (zerop status)) "invalid ACP options produce a failing process status")
          (test-assert (zerop (length output)) "startup failures emit no non-protocol stdout")
          (test-assert (plusp (length diagnostics)) "startup diagnostics are on stderr")))))
+  nil)
+
+
+(-> test-acp-launcher-failure-diagnostics () null)
+(defun test-acp-launcher-failure-diagnostics ()
+  "Retain the original transport failure, child status, and drained stderr."
+  (handler-case
+      (progn
+        (acp-launcher-tests--initialize
+         (lisp-worker-sbcl-command)
+         :arguments '("--noinform" "--no-sysinit" "--no-userinit" "--non-interactive"
+                      "--eval" "(progn (write-line \"ACP startup diagnostic\" *error-output*) (finish-output *error-output*) (sb-ext:exit :code 23))"))
+        (test-assert nil "the failed child cannot initialize"))
+    (acp-launcher-test-failure (condition)
+      (test-assert (typep (acp-launcher-test-failure-cause condition)
+                          'agentcomms:acp-connection-closed)
+                   "the diagnostic condition retains the transport cause")
+      (test-assert (eql 23 (acp-launcher-test-failure-exit-code condition))
+                   "the child is reaped before diagnostics are reported")
+      (test-assert (search "ACP startup diagnostic" (acp-launcher-test-failure-stderr condition))
+                   "stderr is drained before diagnostics are reported")))
   nil)

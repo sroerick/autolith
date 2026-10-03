@@ -1,5 +1,9 @@
 name: Cached Windows bootstrap
 description: Restore pinned dependencies and native libraries, bootstrap, and save caches before tests.
+outputs:
+  asdf-output-translations:
+    description: Shared compiled-file configuration for subsequent source checks.
+    value: ${{ steps.environment.outputs.asdf-output-translations }}
 runs:
   using: composite
   steps:
@@ -22,6 +26,7 @@ runs:
         "colorlisp=$env:USERPROFILE\.cache\colorlisp" | Add-Content $env:GITHUB_OUTPUT
         $asdf = (Join-Path $env:LOCALAPPDATA 'autolith\cache\ci-asdf').Replace('\', '/')
         "asdf=$asdf" | Add-Content $env:GITHUB_OUTPUT
+        "asdf-output-translations=(:output-translations (t (`"$asdf/`" :implementation)) :ignore-inherited-configuration)" | Add-Content $env:GITHUB_OUTPUT
 
     - name: Restore Lisp dependencies, runtime and compiled files
       id: lisp
@@ -52,7 +57,7 @@ runs:
       shell: pwsh
       # Keep packaged first-run and standard-account probes in their own caches.
       env:
-        ASDF_OUTPUT_TRANSLATIONS: '(:output-translations (t ("${{ steps.environment.outputs.asdf }}/" :implementation)) :ignore-inherited-configuration)'
+        ASDF_OUTPUT_TRANSLATIONS: ${{ steps.environment.outputs.asdf-output-translations }}
       run: |
         $log = Join-Path $env:RUNNER_TEMP 'bootstrap.log'
         $status = 0

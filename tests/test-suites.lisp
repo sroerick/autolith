@@ -786,4 +786,5 @@
   test-acp-launcher-terminator-preserves-acp-arguments
   test-acp-launcher-detects-command-not-option-values
   test-acp-launcher-source-stdio-roundtrip
-  test-acp-launcher-failure-keeps-stdout-clean)
+  test-acp-launcher-failure-keeps-stdout-clean
+  test-acp-launcher-failure-diagnostics)
