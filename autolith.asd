@@ -13,6 +13,7 @@
                #:cl-hashline
                #:cl-jobpond
                #:cl-lsp
+               #:cl-rfc8252
                #:cl-rfc8628
                #:clinker-transcript
                #:cl-llm-provider-api

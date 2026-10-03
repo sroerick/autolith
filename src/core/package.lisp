@@ -239,6 +239,17 @@
                 #:rfc8628-device-authorization
                 #:rfc8628-device-authorization-expires-in
                 #:rfc8628-device-authorization-issued-at)
+  (:import-from #:cl-rfc8252
+                #:browser-authentication-authorization-url
+                #:browser-authentication-await-loopback
+                #:browser-authentication-client
+                #:browser-authentication-create-pkce
+                #:browser-authentication-exchange-code
+                #:browser-authentication-login
+                #:browser-authentication-loopback-close
+                #:browser-authentication-loopback-open
+                #:browser-authentication-request
+                #:browser-authentication-token-document)
   (:import-from #:cl-llm-provider-api
                 #:*bounded-retry-delays*
                 #:*bounded-retry-sleep-function*

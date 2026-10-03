@@ -79,7 +79,8 @@
 (-> chatgpt-test--parameter (string string) (option string))
 (defun chatgpt-test--parameter (target name)
   "Return NAME from TARGET's decoded query parameters."
-  (rest (assoc name (oauth--query-parameters target) :test #'string=)))
+  (rest (assoc name (quri:url-decode-params (quri:uri-query (quri:uri target)))
+               :test #'string=)))
 
 
 ;;;; -- ChatGPT OAuth Tests --
@@ -88,15 +89,6 @@
 (defun run-chatgpt-authentication-tests ()
   "Test PKCE, authorization, callback validation, exchange, and command routing."
   (chatgpt-test--refresh-response-deadline)
-  (multiple-value-bind (verifier challenge)
-      (chatgpt-oauth-create-pkce)
-    (test-assert (= (length verifier) 86)
-                 "ChatGPT PKCE emits the current 512-bit verifier")
-    (test-assert (= (length challenge) 43)
-                 "ChatGPT PKCE emits an S256 challenge")
-    (test-assert (and (not (find #\= verifier))
-                      (not (find #\= challenge)))
-                 "ChatGPT PKCE values are unpadded Base64url"))
   (let* ((redirect-uri "http://localhost:1455/auth/callback")
          (url
            (chatgpt-oauth-authorization-url
@@ -123,88 +115,6 @@
       (test-assert
        (string= (chatgpt-test--parameter url (first case)) (rest case))
        (format nil "ChatGPT authorization includes ~A" (first case)))))
-  (test-assert
-   (string=
-    (chatgpt-oauth--callback-code
-     "/auth/callback?code=code-test&state=state-test"
-     "state-test")
-    "code-test")
-   "ChatGPT callback validation returns the authorization code")
-  (test-assert
-   (string=
-    (chatgpt-oauth--callback-code
-     "/auth/callback?code=code-test&state=state-test.onboarding_entrypoint%3Dlife_sciences"
-     "state-test")
-    "code-test")
-   "ChatGPT callback validation accepts the supported onboarding state suffix")
-  (let ((condition nil)
-        (state "state-secret")
-        (code "code-secret"))
-    (handler-case
-        (chatgpt-oauth--callback-code
-         (format nil "/auth/callback?code=~A&state=wrong" code)
-         state)
-      (chatgpt-oauth-error (caught)
-        (setf condition caught)))
-    (test-assert
-     (and condition
-          (eq (chatgpt-oauth-error-stage condition) ':callback)
-          (not (test-object-contains-string-p condition state))
-          (not (test-object-contains-string-p condition code)))
-     "ChatGPT callback failures reject mismatched state without retaining secrets")
-    (test-assert (typep condition 'chatgpt-oauth-state-mismatch)
-                 "ChatGPT state mismatches use their dedicated condition"))
-  (let* ((secret "secret-that-crosses-the-original-boundary")
-         (value
-           (concatenate 'string
-                        (make-string 230 :initial-element #\x)
-                        secret
-                        " trailing text"))
-         (safe-value (chatgpt-oauth--redacted-value value (list secret))))
-    (test-assert
-     (and (search "[OAUTH VALUE REDACTED]" safe-value)
-          (not (search (subseq secret 0 16) safe-value)))
-     "ChatGPT OAuth errors redact complete secrets before bounding output"))
-  (test-assert
-   (null
-    (chatgpt-oauth--callback-code-or-continue
-     "/auth/callback?code=ignored&state=wrong"
-     "state-test"))
-   "ChatGPT listener handling ignores unrelated local callbacks")
-  (let ((wait-count 0))
-    (test-assert
-     (null
-      (chatgpt-oauth--read-request-line
-       (make-string-input-stream "")
-       -1
-       201/2
-       :clock-function (lambda () 1/2)
-       :wait-function
-       (lambda (file-descriptor direction timeout)
-         (declare (ignore file-descriptor direction timeout))
-         (incf wait-count)
-         nil)))
-     "ChatGPT callback request reading stops when its local read wait expires")
-    (test-assert (= wait-count 1)
-                 "ChatGPT callback request reading performs one bounded wait"))
-  (let ((headers (make-hash-table :test #'equal)))
-    (multiple-value-bind (body status returned-headers)
-        (test-call-with-function-replacements
-         (list
-          (list
-           'dexador:post
-           (lambda (&rest arguments)
-             (declare (ignore arguments))
-             (values "{}" 200 headers nil nil))))
-         (lambda ()
-           (chatgpt-oauth--request
-            :url "https://issuer.test/oauth/token"
-            :content "grant_type=authorization_code")))
-      (test-assert
-       (and (string= body "{}")
-            (= status 200)
-            (eq returned-headers headers))
-       "ChatGPT token transport accepts Dexador hash-table response headers")))
   (let* ((manager (chatgpt-test--manager))
          (id-token (test-account-jwt "account-test"))
          (request-url nil)
@@ -273,58 +183,62 @@
           (string= (chatgpt-oauth-error-code condition) "invalid_grant")
           (not (test-object-contains-string-p condition secret)))
      "ChatGPT token failures use typed redacted diagnostics"))
-  (let* ((manager (chatgpt-test--manager))
-         (id-token (test-account-jwt "account-login"))
-         (*chatgpt-test-saved-credentials* nil)
-         (output (make-string-output-stream))
-         (browser-url nil)
-         (secret-guard-observed-p nil))
-    (test-call-with-function-replacements
-     (list
-      (list 'chatgpt-oauth-loopback-open
-            (lambda ()
-              (values ':listener "http://localhost:1455/auth/callback")))
-      (list 'chatgpt-oauth-create-pkce
-            (lambda () (values "verifier-test" "challenge-test")))
-      (list 'chatgpt-oauth--state
-            (lambda () "state-test")))
-     (lambda ()
-       (chatgpt-oauth-login
-        manager
-        :stream output
-        :browser-function (lambda (url) (setf browser-url url) nil)
-        :callback-function
-        (lambda (listener state &key timeout)
-          (test-assert (eq listener ':listener)
-                       "ChatGPT login waits on its loopback listener")
-          (test-assert (and (string= state "state-test") (= timeout 900))
-                       "ChatGPT login passes state and timeout to the callback")
+    (let* ((manager (chatgpt-test--manager))
+           (id-token (test-account-jwt "account-login"))
+           (*chatgpt-test-saved-credentials* nil)
+           (output (make-string-output-stream))
+           (browser-url nil)
+           (secret-guard-observed-p nil))
+      (chatgpt-oauth-login
+       manager
+       :stream output
+       :browser-function (lambda (url) (setf browser-url url) nil)
+       :callback-function
+        (lambda (listener expected-state &key timeout)
+          (let* ((uri (quri:uri (chatgpt-test--parameter browser-url "redirect_uri")))
+                 (port (quri:uri-port uri))
+                 (socket (usocket:socket-connect "127.0.0.1" port :element-type '(unsigned-byte 8)))
+                 (stream (usocket:socket-stream socket)))
+            (unwind-protect
+                 (progn
+                   (write-sequence
+                    (babel:string-to-octets
+                     (format nil "GET ~A?code=code-test&state=~A.onboarding_entrypoint%3Dlife_sciences HTTP/1.1~C~C"
+                             (quri:uri-path uri) expected-state #\Return #\Newline)
+                     :encoding ':utf-8)
+                    stream)
+                   (finish-output stream))
+              (usocket:socket-close socket)))
           (setf secret-guard-observed-p (secret-use-active-p))
-          "code-test")
-        :request-function
-        (lambda (&key url content)
-          (declare (ignore url content))
-          (values
-           (json-encode
-            (json-object "id_token" id-token
-                         "access_token" "access-login"
-                         "refresh_token" "refresh-login"))
-           200
-           nil)))))
-    (let ((text (get-output-stream-string output)))
-      (test-assert (and browser-url
-                        (search "http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"
-                                browser-url)
-                        (search "Could not open a browser" text))
-                   "ChatGPT login exposes the browser URL and manual fallback"))
-    (test-assert secret-guard-observed-p
-                 "ChatGPT login keeps transient OAuth data in secret scope")
-    (test-assert
-     (and *chatgpt-test-saved-credentials*
-          (string= (oauth-credentials-access-token
-                    *chatgpt-test-saved-credentials*)
-                   "access-login"))
-     "ChatGPT login publishes credentials through the credential manager"))
+          (chatgpt-oauth-await-loopback listener expected-state :timeout (min timeout 5)))
+       :request-function
+       (lambda (&key url content)
+         (declare (ignore url content))
+         (values
+          (json-encode
+           (json-object "id_token" id-token
+                        "access_token" "access-login"
+                        "refresh_token" "refresh-login"))
+          200
+          nil)))
+      (let ((text (get-output-stream-string output)))
+        (test-assert
+         (and browser-url
+              (let ((redirect (quri:uri (chatgpt-test--parameter browser-url "redirect_uri"))))
+                (and (string= (quri:uri-host redirect) "localhost")
+                     (member (quri:uri-port redirect) '(1455 1457))
+                     (string= (quri:uri-path redirect) "/auth/callback")))
+              (search "code_challenge_method=S256" browser-url)
+              (search browser-url text))
+         "ChatGPT login uses the fixed localhost redirect and PKCE"))
+      (test-assert secret-guard-observed-p
+                   "ChatGPT login keeps transient OAuth data in secret scope")
+      (test-assert
+       (and *chatgpt-test-saved-credentials*
+            (string= (oauth-credentials-access-token
+                      *chatgpt-test-saved-credentials*)
+                     "access-login"))
+       "ChatGPT login publishes credentials through the credential manager"))
   (let* ((provider
            (provider-authentication-provider (test-configuration) "chatgpt"))
          (output (make-string-output-stream))

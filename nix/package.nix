@@ -48,7 +48,7 @@ let
   # instead of quietly shipping a release that never loaded it.
   qlotLibrariesWithBuildMetadata = [
     "agentcomms" "argo" "cl-colorist" "cl-exec-sandbox" "cl-hashline" "cl-jobpond"
-    "cl-llm-provider-api" "cl-lsp" "cl-rfc8628" "cl-skills" "cl-termdown"
+    "cl-llm-provider-api" "cl-lsp" "cl-rfc8252" "cl-rfc8628" "cl-skills" "cl-termdown"
     "clifff" "clinedi" "clinker-transcript" "colordiff" "colorlisp" "fetch-gist"
     "idsmall" "image-daemon" "ls-compat" "ls-flock" "mcparen" "org-templater"
     "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config" "sexp-store"
@@ -115,6 +115,18 @@ let
     ]);
   };
 
+  clRfc8252 = pkgs.sbcl.buildASDFSystem {
+    pname = "cl-rfc8252";
+    version = qlotVersion "cl-rfc8252";
+    src = qlotSource "cl-rfc8252";
+    lispLibs = [ clRfc8628 ] ++ (with pkgs.sbclPackages; [
+      babel
+      cl-base64
+      ironclad
+      quri
+      usocket
+    ]);
+  };
   clRfc8628 = pkgs.sbcl.buildASDFSystem {
     pname = "cl-rfc8628";
     version = qlotVersion "cl-rfc8628";
@@ -482,6 +494,7 @@ let
       clJobpond
       clLlmProviderApi
       clLsp
+      clRfc8252
       clRfc8628
       clSkills
       idsmall
