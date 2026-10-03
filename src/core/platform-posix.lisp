@@ -68,43 +68,30 @@
                             :forked-image-saver))
        t))
 
-(-> posix--target-alive-p (integer) boolean)
-(defun posix--target-alive-p (target)
-  "Return true when signal zero reaches kill TARGET or is merely refused."
-  (handler-case
-      (progn
-        (sb-posix:kill target 0)
-        t)
-    (sb-posix:syscall-error (condition)
-      (= (sb-posix:syscall-errno condition) sb-posix:eperm))))
-
 (defmethod platform-process-alive-p ((platform posix-platform) process-id)
-  "Probe PROCESS-ID with signal zero."
-  (posix--target-alive-p process-id))
+  "Probe PROCESS-ID with signal zero through ls-compat."
+  (process-alive-p process-id))
 
 (defmethod platform-process-group-alive-p ((platform posix-platform)
                                            process-group-id)
-  "Probe process group PROCESS-GROUP-ID with signal zero."
-  (posix--target-alive-p (- process-group-id)))
-
-(-> posix--terminate (integer boolean) null)
-(defun posix--terminate (target force-p)
-  "Send SIGTERM, or SIGKILL when FORCE-P, to kill TARGET."
-  (posix--call ':terminate nil
-               (lambda ()
-                 (sb-posix:kill target
-                                (if force-p sb-posix:sigkill sb-posix:sigterm))))
-  nil)
+  "Probe process group PROCESS-GROUP-ID with signal zero through ls-compat."
+  (process-group-alive-p process-group-id))
 
 (defmethod platform-terminate-process ((platform posix-platform) process-id
                                        &key force)
   "Signal PROCESS-ID with SIGTERM, or SIGKILL when FORCE."
-  (posix--terminate process-id (and force t)))
+  (posix--call ':terminate nil
+               (lambda ()
+                 (signal-process process-id (if force ':kill ':terminate))))
+  nil)
 
 (defmethod platform-terminate-process-group ((platform posix-platform)
                                              process-group-id &key force)
   "Signal process group PROCESS-GROUP-ID with SIGTERM, or SIGKILL when FORCE."
-  (posix--terminate (- process-group-id) (and force t)))
+  (posix--call ':terminate nil
+               (lambda ()
+                 (signal-process-group process-group-id (if force ':kill ':terminate))))
+  nil)
 
 (defmethod platform-detach-session ((platform posix-platform))
   "Start a new session with SETSID."
@@ -208,17 +195,17 @@
 
 (-> posix--mode (pathname) integer)
 (defun posix--mode (pathname)
-  "Return PATHNAME's current mode bits, following links."
+  "Return PATHNAME's current mode bits through ls-compat, following links."
   (posix--call ':protect pathname
                (lambda ()
-                 (sb-posix:stat-mode (sb-posix:stat (posix--namestring pathname))))))
+                 (ls-compat.posix:file-mode pathname))))
 
 (-> posix--change-mode (pathname integer) null)
 (defun posix--change-mode (pathname mode)
-  "Set PATHNAME's mode bits to MODE."
+  "Set PATHNAME's permission bits to MODE through ls-compat."
   (posix--call ':protect pathname
                (lambda ()
-                 (sb-posix:chmod (posix--namestring pathname) mode)))
+                 (setf (ls-compat.posix:file-mode pathname) (logand mode #o777))))
   nil)
 
 (defmethod platform-make-private ((platform posix-platform) pathname

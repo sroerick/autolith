@@ -95,8 +95,6 @@
   (name win32-wide-string) (security (* t)))
 (win32--define win32--open-process "OpenProcess" win32-handle
   (access win32-dword) (inherit win32-bool) (process-id win32-dword))
-(win32--define win32--get-exit-code-process "GetExitCodeProcess" win32-bool
-  (handle win32-handle) (code (* win32-dword)))
 (win32--define win32--terminate-process "TerminateProcess" win32-bool
   (handle win32-handle) (code win32-dword))
 (win32--define win32--get-current-process "GetCurrentProcess" win32-handle)
@@ -161,17 +159,11 @@
 (defparameter *win32-move-file-replace-existing* 1
   "MOVEFILE_REPLACE_EXISTING.")
 
-(defparameter *win32-process-query-limited-information* #x1000
-  "The OpenProcess access right that reads a process's exit state.")
-
 (defparameter *win32-process-terminate* #x1
   "The OpenProcess access right that allows TerminateProcess.")
 
 (defparameter *win32-process-synchronize* #x100000
   "The OpenProcess access right that allows waiting for process termination.")
-
-(defparameter *win32-still-active* 259
-  "The exit code GetExitCodeProcess reports for a running process.")
 
 (defparameter *win32-create-new-process-group* #x200
   "CREATE_NEW_PROCESS_GROUP for a detached child.")
@@ -208,12 +200,6 @@
 
 (defparameter *win32-error-path-not-found* 3
   "ERROR_PATH_NOT_FOUND.")
-
-(defparameter *win32-error-access-denied* 5
-  "ERROR_ACCESS_DENIED.")
-
-(defparameter *win32-error-invalid-parameter* 87
-  "ERROR_INVALID_PARAMETER, which OpenProcess reports for a missing process.")
 
 (defparameter *win32-error-file-exists* 80
   "ERROR_FILE_EXISTS.")
@@ -556,34 +542,9 @@ handoff explicitly releases ownership without terminating the detached session."
   (platform-release-process platform process)
   t)
 
-(-> win32--process-state (integer) (member :alive :dead :unknown))
-(defun win32--process-state (process-id)
-  "Classify PROCESS-ID through OpenProcess and GetExitCodeProcess."
-  (let ((handle (win32--open-process *win32-process-query-limited-information*
-                                     0 process-id)))
-    (if (zerop handle)
-        (let ((code (win32--get-last-error)))
-          (cond
-            ((= code *win32-error-invalid-parameter*)
-             ':dead)
-            ((= code *win32-error-access-denied*)
-             ':alive)
-            (t
-             ':unknown)))
-        (unwind-protect
-             (sb-alien:with-alien ((exit-code win32-dword))
-               (cond
-                 ((zerop (win32--get-exit-code-process handle (sb-alien:addr exit-code)))
-                  ':unknown)
-                 ((= exit-code *win32-still-active*)
-                  ':alive)
-                 (t
-                  ':dead)))
-          (win32--close-handle handle)))))
-
 (defmethod platform-process-alive-p ((platform win32-platform) process-id)
-  "Open PROCESS-ID and read whether it is still active."
-  (eq (win32--process-state process-id) ':alive))
+  "Read through ls-compat whether PROCESS-ID is still active."
+  (process-alive-p process-id))
 
 (defmethod platform-process-group-alive-p ((platform win32-platform)
                                            process-group-id)

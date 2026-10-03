@@ -863,7 +863,11 @@
                 #:link-target-exists
                 #:not-regular-file
                 #:not-regular-file-kind
+                #:process-alive-p
+                #:process-group-alive-p
                 #:resolve-pathname
+                #:signal-process
+                #:signal-process-group
                 #:stream-file-information)
   (:import-from #:ls-flock
                 #:call-with-file-lock
