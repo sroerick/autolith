@@ -184,11 +184,10 @@ otherwise parks the turn forever. NIL disables the bound.")
   (declare (ignore provider))
   nil)
 
-(defmethod provider-family ((provider model-provider))
-  "Return the registered family for a provider."
-  (or (and (model-provider-registration provider)
-           (provider-registration-family (model-provider-registration provider)))
-      ':custom))
+(defmethod provider-family-for-registration
+    ((registration provider-registration))
+  "Return the family declared by an Autolith provider registration."
+  (provider-registration-family registration))
 
 (defmethod provider-family ((provider codex-subscription-provider))
   "The Codex provider serves the ChatGPT model family."
