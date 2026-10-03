@@ -558,7 +558,9 @@
   (:import-from #:colordiff
                 #:highlight-lines
                 #:highlight-spans
-                #:render-diff)
+                #:render-diff
+                #:render-line-row
+                #:render-source)
   (:import-from #:parenchek
                 #:lisp-paren-check-path
                 #:lisp-source-edit-result-content)

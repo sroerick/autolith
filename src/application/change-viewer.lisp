@@ -9,7 +9,7 @@
   "The default maximum removed or added lines shown by the shared viewer.")
 
 
-;;; Text and syntax preparation
+;;; Text preparation
 
 (-> application--display-lines (string) list)
 (defun application--display-lines (text)
@@ -21,96 +21,24 @@
                                :single-line-p t))
               (uiop:split-string trimmed :separator '(#\Newline))))))
 
-(-> application--syntax-lines
-    (string &key (:language (option language)) (:path (option string)))
-    (option vector))
-(defun application--syntax-lines (text &key language path)
-  "Return syntax-highlighted display lines for TEXT, or NIL."
-  (let ((lines (application--display-lines text)))
-    (when lines
-      (let* ((source (format nil "~{~A~^~%~}" lines))
-             (highlighted
-               (syntax--highlight-lines source
-                                        :language language
-                                        :pathname path)))
-        (and highlighted
-             (= (length highlighted) (length lines))
-             highlighted)))))
-
-
-;;; Semantic rows
-
-(-> application--change-line-number-cell ((option integer) integer) string)
-(defun application--change-line-number-cell (line-number width)
-  "Return LINE-NUMBER right aligned to WIDTH, or an empty cell."
-  (if line-number
-      (format nil "~V@A" width line-number)
-      (make-string width :initial-element #\Space)))
-
-(-> application--change-line-row
-    (keyword string &key (:width integer)
-                         (:line-number (option integer))
-                         (:content-spans (option list)))
-    list)
-(defun application--change-line-row
-    (kind text &key (width 1) line-number content-spans)
-  "Return one source, context, removed, or added row with a semantic ruler."
-  (let* ((style
-           (ecase kind
-             (:source ':success)
-             (:context ':dim)
-             (:removed ':failure)
-             (:added ':success)))
-         (marker
-           (ecase kind
-             (:source nil)
-             (:context " ")
-             (:removed "-")
-             (:added "+")))
-         (gutter
-           (cond
-             ((eq kind ':source)
-              "│ ")
-             (line-number
-              (format nil "~A ~A │ "
-                      marker
-                      (application--change-line-number-cell line-number width)))
-             (t
-              (format nil "~A │ " marker))))
-         (content-style (if (eq kind ':context) ':dim ':code)))
-    (cons
-     (terminal-span style gutter)
-     (or content-spans
-         (list (terminal-span content-style text))))))
+;;; Source previews
 
 (-> application--source-preview-rows
     (string &key (:path (option string)) (:language (option language))
-                 (:limit integer))
+                 (:prompt (option string)) (:limit (integer 1)))
     list)
 (defun application--source-preview-rows
-    (text &key path language (limit *application-tool-call-lines*))
-  "Return bounded syntax-highlighted source TEXT under one green ruler."
-  (let ((lines (application--display-lines text)))
-    (when lines
-      (let* ((line-vector (coerce lines 'vector))
-             (highlighted
-               (application--syntax-lines text :language language :path path))
-             (visible-count (min limit (length line-vector)))
-             (omitted (- (length line-vector) visible-count)))
-        (append
-         (loop for index below visible-count
-               collect (application--change-line-row
-                        ':source
-                        (aref line-vector index)
-                        :content-spans (and highlighted
-                                            (aref highlighted index))))
-         (when (plusp omitted)
-           (let ((message (format nil "… +~D more line~:P" omitted)))
-             (list
-              (application--change-line-row
-               ':source
-               message
-               :content-spans (list (terminal-span ':dim message)))))))))))
+    (text &key path language prompt (limit *application-tool-call-lines*))
+  "Return bounded syntax-highlighted source TEXT under one green ruler.
+
+PROMPT, when supplied, leads the first line and indents the following ones."
+  (render-source text
+                 :source-path            path
+                 :syntax-language        language
+                 :prompt                 prompt
+                 :line-limit             limit
+                 :sanitize-line-function #'application--sanitize-change-line
+                 :span-function          #'syntax--terminal-span))
 
 
 ;;; Before-and-after viewer

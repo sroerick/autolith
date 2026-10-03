@@ -9,8 +9,8 @@
    (case role
      (:context-gutter ':dim)
      (:removed-gutter ':failure)
-     (:added-gutter ':success)
-     ((:context :elision) ':dim)
+     ((:added-gutter :source-gutter) ':success)
+     ((:context :elision :prompt) ':dim)
      (otherwise role))
    text))
 

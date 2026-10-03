@@ -1435,12 +1435,13 @@ OPERATION's own declared target line so they stay numbered."
                               (1+ (- end start)) start (< start end) end)))
                (append
                 (list
-                 (application--change-line-row
+                 (render-line-row
                   ':removed
                   message
-                  :width width
-                  :line-number start
-                  :content-spans (list (terminal-span ':dim message))))
+                  start
+                  :width         width
+                  :content-spans (list (terminal-span ':dim message))
+                  :span-function #'syntax--terminal-span))
                 (when (string= name "replace-lines")
                   (change-viewer-render
                    :added-content new-text
@@ -1578,33 +1579,9 @@ OPERATION's own declared target line so they stay numbered."
 (-> application--shell-command-rows (string) list)
 (defun application--shell-command-rows (command)
   "Return bounded syntax-highlighted shell source with a green ruler."
-  (let* ((lines (coerce (or (application--display-lines command) (list ""))
-                        'vector))
-         (highlighted
-           (application--syntax-lines
-            command :language *application-shell-language*))
-         (visible-count (min *application-tool-call-lines* (length lines)))
-         (omitted (- (length lines) visible-count)))
-    (append
-     (loop for index below visible-count
-           for line = (aref lines index)
-           for first-p = t then nil
-           for content-spans = (or (and highlighted (aref highlighted index))
-                                   (list (terminal-span ':code line)))
-            collect (application--change-line-row
-                    ':source
-                    line
-                    :content-spans
-                    (append (list (terminal-span ':dim
-                                                 (if first-p "$ " "  ")))
-                            content-spans)))
-     (when (plusp omitted)
-       (let ((message (format nil "… +~D more line~:P" omitted)))
-         (list
-           (application--change-line-row
-           ':source
-           message
-           :content-spans (list (terminal-span ':dim message)))))))))
+  (application--source-preview-rows command
+                                    :language *application-shell-language*
+                                    :prompt   "$ "))
 
 (defmethod application-tool-call-entry
     ((tool shell-run-tool) (application application) (call hash-table))
