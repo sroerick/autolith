@@ -18,13 +18,7 @@
 (-> application-safe-backtrace () list)
 (defun application-safe-backtrace ()
   "Return bounded call names without argument values from the current stack."
-  (handler-case
-      (mapcar #'first
-              (sb-debug:list-backtrace :count 30
-                                       :argument-limit 0
-                                       :from :current-frame))
-    (error ()
-      nil)))
+  (safe-backtrace))
 
 (-> application-crash-condition-report (serious-condition) string)
 (defun application-crash-condition-report (condition)

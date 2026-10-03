@@ -190,3 +190,7 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/setinka.git" :ref "f896272b4bde04e09385a1f050604a4943525e74")
   :version "git-f896272b4bde04e09385a1f050604a4943525e74"))
+("lambda-debugger" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/lambda-symbolics/lambda-debugger.git" :ref "713c4a64ad109eb4f511426c21ae422b18674c77")
+  :version "git-713c4a64ad109eb4f511426c21ae422b18674c77"))

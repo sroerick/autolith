@@ -1,6 +1,23 @@
 (defpackage #:autolith
   (:use #:cl)
   (:shadow #:trace)
+  (:import-from #:lambda-debugger
+                #:call-with-debugger
+                #:call-with-debugger-hook
+                #:condition-metadata
+                #:debug-session-condition
+                #:debug-session-restarts
+                #:debug-session-snapshot
+                #:outcome-values
+                #:outcome-status
+                #:outcome-condition-report
+                #:outcome-restart-names
+                #:outcome-selected-restart-name
+                #:recovery
+                #:recovery-report
+                #:recovery-error
+                #:safe-backtrace
+                #:validate-recovery)
   (:import-from #:cl-base64
                 #:base64-string-to-usb8-array
                 #:base64-string-to-string

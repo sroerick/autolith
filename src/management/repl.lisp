@@ -581,14 +581,15 @@
                     (*query-io* (make-two-way-stream
                                  (make-string-input-stream "") output))
                     (*terminal-io* (make-two-way-stream
-                                    (make-string-input-stream "") output))
-                    (sb-ext:*invoke-debugger-hook* debugger-hook)
-                    (*debugger-hook* debugger-hook))
+                                 (make-string-input-stream "") output)))
                 (let ((values
-                        (multiple-value-list
-                         (eval
-                          (management-repl--read-source-form
-                           (management-repl-request-source request))))))
+                        (call-with-debugger-hook
+                         (lambda ()
+                           (multiple-value-list
+                            (eval
+                             (management-repl--read-source-form
+                              (management-repl-request-source request)))))
+                         debugger-hook)))
                   (let ((remaining-output output-limit)
                         (rendered nil)
                         (truncated-p nil))

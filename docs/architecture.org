@@ -78,10 +78,10 @@ terminal prompt          local Lisp result       finalized scrollback
 - The reader classifies prose, explicit Lisp, and callable operations
 - The application evaluates one top-level form and shows values, output,
   conditions, and restarts
-- =src/application/debugger.lisp= snapshots only portable condition, source,
-  restart, capability, and backtrace data for an independent diagnosis thread
-- The owner thread retains restart dynamic extent; selected synthetic recoveries
-  execute on that owner thread and never transfer restart objects across threads
+- =lambda-debugger= owns live restart extent, validated recoveries, and portable
+  condition details, source, restart, capability, and argument-free stack snapshots
+- =src/application/debugger.lisp= owns independent model diagnosis over a snapshot;
+  =lisp-machine.lisp= supplies Autolith's control policy and terminal presentation
 - =src/agent/runtime.lisp= runs one model turn at a time
 - User input is persisted first before we do anything else
 - Context pressure triggers inline durable compaction
@@ -97,6 +97,7 @@ terminal prompt          local Lisp result       finalized scrollback
 | cl-rfc8628 | Scoped credential use and coordinated refresh | Credential paths, bootstrap ownership, provider exchanges, checkpoint quiescence |
 | mcparen/managed | Connection lifecycle, discovery snapshots and budgets | Configuration, authorization, tool registry and provider schema projection |
 | cl-lsp | Stdio JSON-RPC, language-server lifecycle, document synchronization and diagnostics | Trusted configuration, project selection, tool operations and edit hooks |
+| lambda-debugger | Live restart selection, recovery validation and execution, observable outcomes and typed condition metadata | Control conditions, source evaluation policy, model diagnosis and terminal renderer |
 | cl-hashline | Visible-line validation, SHA-256 anchors, original-coordinate edits and revision-gated publication callbacks | JSON operations, observation state, bounded reads, temporary files and platform atomic publication |
 | setinka | Typed settings, layered sources, durable stores, listeners and dependent reconciliation | Setting definitions, provider-aware model checks, the preferences file and runtime side effects |
 | argo | JSON value model, strict RFC 8259 decoding, validated encoding and limits | Provider wire items, tool arguments and conversation replay |

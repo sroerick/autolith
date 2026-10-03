@@ -6,83 +6,20 @@
   '("AUTOLITH-RECOVERY-1" "AUTOLITH-RECOVERY-2" "AUTOLITH-RECOVERY-3")
   "The fixed restart names available to an application debugger session.")
 
-(defparameter *application-debugger-source* ""
-  "The exact operation source visible to the current owner-thread debugger.")
-
-(defparameter *application-debugger-operation-kind* ':lisp
-  "The current owner-thread debugger operation kind.")
-
-(defparameter *application-debugger-retry-p* t
-  "Whether the current owner-thread debugger may retry the whole operation.")
-
-(defparameter *application-debugger-return-values-p* nil
-  "Whether the current owner-thread debugger may return replacement values.")
-
-(defclass application-debugger-recovery ()
-  ((kind :initarg :kind :reader application-debugger-recovery-kind
-         :documentation "The proposed recovery operation kind.")
-   (report :initarg :report :reader application-debugger-recovery-report
-           :documentation "The model's concise explanation of the proposal.")
-   (restart-id :initarg :restart-id :initform nil
-               :reader application-debugger-recovery-restart-id
-               :documentation "The portable restart identifier, when applicable.")
-   (preparation-source :initarg :preparation-source :initform nil
-                       :reader application-debugger-recovery-preparation-source
-                       :documentation "Source for the repair preparation form.")
-   (argument-source :initarg :argument-source :initform nil
-                    :reader application-debugger-recovery-argument-source
-                    :documentation "Source for the restart argument form.")
-   (return-source :initarg :return-source :initform nil
-                  :reader application-debugger-recovery-return-source
-                  :documentation "Source for the returned values form."))
-  (:documentation "A validated, portable executable recovery proposal."))
-
-(define-condition application-debugger-recovery-error (error)
-  ((proposal :initarg :proposal :reader application-debugger-recovery-error-proposal
-             :documentation "The invalid recovery proposal, when available.")
-   (kind :initarg :kind :reader application-debugger-recovery-error-kind
-         :documentation "The recovery kind associated with the failure.")
-   (reason :initarg :reason :reader application-debugger-recovery-error-reason
-           :documentation "The structured reason for rejecting the proposal."))
-  (:report (lambda (condition stream)
-            (format stream "Debugger recovery proposal ~S (~S) is invalid: ~A."
-                    (application-debugger-recovery-error-proposal condition)
-                    (application-debugger-recovery-error-kind condition)
-                    (application-debugger-recovery-error-reason condition))))
-  (:documentation "A typed validation failure for an application debugger proposal."))
+(defparameter *application-debugger-snapshot* nil
+  "The detached diagnostic snapshot bound during owner-thread restart selection.")
 
 (define-condition application-debugger-cancelled (condition)
   ()
   (:documentation "Diagnosis was cancelled by its owner."))
 
 (defclass application-debugger-session ()
-  ((condition-type :initarg :condition-type
-                   :reader application-debugger-condition-type
-                   :documentation "The condition's actual type name.")
-   (condition-report :initarg :condition-report
-                     :reader application-debugger-condition-report
-                     :documentation "The bounded condition report.")
-   (source :initarg :source
-           :reader application-debugger-source
-           :documentation "The bounded source of the operation.")
-   (operation-kind :initarg :operation-kind
-                   :reader application-debugger-operation-kind
-                   :documentation "The operation kind.")
-   (owner-thread :initarg :owner-thread
-                 :reader application-debugger-owner-thread
-                 :documentation "The thread suspended at the failure.")
+  ((snapshot :initarg :snapshot
+             :reader application-debugger-portable-snapshot
+             :documentation "Detached library diagnostic data, with no live objects.")
    (application :initarg :application :initform nil
                 :reader application-debugger-application
-                :documentation "The owning application, when diagnosis has one.")
-   (restarts :initarg :restarts
-             :reader application-debugger-restarts
-             :documentation "The portable ordered restart descriptions.")
-   (capabilities :initarg :capabilities
-                 :reader application-debugger-capabilities
-                 :documentation "The operation's supported recovery kinds.")
-   (backtrace :initarg :backtrace
-              :reader application-debugger-backtrace
-              :documentation "The argument-free owner-thread backtrace snapshot.")
+                :documentation "The application requesting model diagnosis.")
    (lock :initform (make-lock "Autolith application debugger")
          :reader application-debugger-lock
          :documentation "The diagnosis state lock.")
@@ -108,144 +45,7 @@
    (cancelled-p :initform nil
                 :accessor application-debugger-cancelled-p
                 :documentation "Whether the owner cancelled diagnosis."))
-  (:documentation "Suspended owner-thread debugger state and independent diagnosis state."))
-
-(-> application-debugger--portable-p (t) boolean)
-(defun application-debugger--portable-p (object)
-  "Return true when OBJECT is a portable tree of debugger data."
-  (or (null object) (stringp object) (numberp object) (symbolp object)
-      (and (consp object) (every #'application-debugger--portable-p object))
-      (and (vectorp object)
-           (every #'application-debugger--portable-p object))))
-
-(-> application-debugger-portable-snapshot (application-debugger-session) list)
-(defun application-debugger-portable-snapshot (session)
-  "Build a bounded portable diagnostic snapshot from SESSION."
-  (list :condition-type (application-debugger-condition-type session)
-        :condition-report (application-debugger-condition-report session)
-        :restarts (mapcar (lambda (restart)
-                            (list :id (getf restart :id)
-                                  :report (getf restart :report)))
-                          (application-debugger-restarts session))
-        :source (application-debugger-source session)
-        :operation-kind (application-debugger-operation-kind session)
-        :backtrace (application-debugger-backtrace session)
-        :capabilities (application-debugger-capabilities session)))
-
-(-> application-debugger--valid-kind-p (t) boolean)
-(defun application-debugger--valid-kind-p (kind)
-  "Return true for a supported recovery KIND."
-  (not
-   (null
-    (member kind '(:invoke-restart :repair-and-invoke :retry-operation
-                   :repair-and-retry :return-values :abort-operation)
-            :test #'eq))))
-
-(-> application-debugger--recovery-error
-    (t t string)
-    null)
-(defun application-debugger--recovery-error (proposal kind reason)
-  "Signal a typed validation error for PROPOSAL, KIND, and REASON."
-  (error 'application-debugger-recovery-error
-         :proposal proposal
-         :kind kind
-         :reason reason))
-
-(-> application-debugger--nonempty-source-p (t) boolean)
-(defun application-debugger--nonempty-source-p (source)
-  "Return true when SOURCE is a nonempty bounded source string."
-  (and (stringp source) (plusp (length source))))
-
-(-> application-debugger--validate-recovery
-    (application-debugger-session application-debugger-recovery)
-    application-debugger-recovery)
-(defun application-debugger--validate-recovery (session recovery)
-  "Validate RECOVERY against SESSION's portable restart and capability snapshot."
-  (unless (typep recovery 'application-debugger-recovery)
-    (application-debugger--recovery-error
-     recovery nil "proposal is not a recovery proposal"))
-  (let* ((kind
-           (application-debugger-recovery-kind recovery))
-         (restart-id
-           (application-debugger-recovery-restart-id recovery))
-         (preparation-source
-           (application-debugger-recovery-preparation-source recovery))
-         (argument-source
-           (application-debugger-recovery-argument-source recovery))
-         (return-source
-           (application-debugger-recovery-return-source recovery))
-         (restart-ids
-           (mapcar (lambda (restart)
-                     (getf restart :id))
-                   (application-debugger-restarts session))))
-    (unless (application-debugger--valid-kind-p kind)
-      (application-debugger--recovery-error
-       recovery kind "unsupported recovery kind"))
-    (unless (and (stringp (application-debugger-recovery-report recovery))
-                 (plusp (length (application-debugger-recovery-report recovery))))
-      (application-debugger--recovery-error
-       recovery kind "report must be a nonempty string"))
-    (dolist (source (list preparation-source argument-source return-source))
-      (when (and source
-                 (not (application-debugger--nonempty-source-p source)))
-        (application-debugger--recovery-error
-         recovery kind "source fields must be nonempty strings")))
-    (flet ((require-restart ()
-             "Require a valid portable restart identifier."
-             (unless (and (stringp restart-id)
-                          (member restart-id restart-ids :test #'string=))
-               (application-debugger--recovery-error
-                recovery kind
-                "target-restart-id is not a valid diagnostic restart id")))
-
-           (require-capability ()
-             "Require SESSION to support KIND."
-             (unless (getf (application-debugger-capabilities session) kind)
-               (application-debugger--recovery-error
-                recovery kind "operation does not support this recovery"))))
-      (case kind
-        (:invoke-restart
-         (require-restart)
-         (when (or preparation-source return-source)
-           (application-debugger--recovery-error
-            recovery kind
-            "preparation-source and return-source are not allowed")))
-        (:repair-and-invoke
-         (require-restart)
-         (unless (application-debugger--nonempty-source-p preparation-source)
-           (application-debugger--recovery-error
-            recovery kind "preparation-source must be nonempty"))
-         (when return-source
-           (application-debugger--recovery-error
-            recovery kind "return-source is not allowed")))
-        (:retry-operation
-         (require-capability)
-         (when (or restart-id preparation-source argument-source return-source)
-           (application-debugger--recovery-error
-            recovery kind "target and source fields are not allowed")))
-        (:repair-and-retry
-         (require-capability)
-         (unless (application-debugger--nonempty-source-p preparation-source)
-           (application-debugger--recovery-error
-            recovery kind "preparation-source must be nonempty"))
-         (when (or restart-id argument-source return-source)
-           (application-debugger--recovery-error
-            recovery kind
-            "target, argument-source, and return-source are not allowed")))
-        (:return-values
-         (require-capability)
-         (unless (application-debugger--nonempty-source-p return-source)
-           (application-debugger--recovery-error
-            recovery kind "return-source must be nonempty"))
-         (when (or restart-id preparation-source argument-source)
-           (application-debugger--recovery-error
-            recovery kind
-            "target and preparation/argument sources are not allowed")))
-        (:abort-operation
-         (when (or restart-id preparation-source argument-source return-source)
-           (application-debugger--recovery-error
-            recovery kind "target and source fields are not allowed")))))
-    recovery))
+  (:documentation "An independent model diagnosis over a detached failure snapshot."))
 
 (defclass application-debugger-propose-tool (tool)
   ((session :initarg :session
@@ -259,7 +59,7 @@
   (declare (ignore context))
   (handler-case
       (let ((proposal
-              (make-instance 'application-debugger-recovery
+              (make-instance 'recovery
                              :kind (intern (string-upcase
                                             (tool-argument arguments "kind" :required t))
                                            :keyword)
@@ -280,11 +80,12 @@
             (when (>= (length (application-debugger-proposals session)) 3)
               (return-from tool-execute
                 (tool-failure "At most three debugger proposals are allowed.")))
-            (application-debugger--validate-recovery session proposal)
+            (validate-recovery (application-debugger-portable-snapshot session)
+                               proposal)
             (push proposal (application-debugger-proposals session))
             (condition-notify (application-debugger-condition-variable session)))
           (tool-success "Debugger proposal accepted.")))
-    (application-debugger-recovery-error (condition)
+    (recovery-error (condition)
       (tool-failure (princ-to-string condition)))
     (error (condition)
       (tool-failure (format nil "Invalid debugger proposal: ~A" condition)))))

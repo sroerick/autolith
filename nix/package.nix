@@ -50,7 +50,7 @@ let
     "agentcomms" "argo" "cl-colorist" "cl-exec-sandbox" "cl-hashline" "cl-jobpond"
     "cl-llm-provider-api" "cl-lsp" "cl-rfc8252" "cl-rfc8628" "cl-skills" "cl-termdown"
     "clifff" "clinedi" "clinker-transcript" "colordiff" "colorlisp" "fetch-gist"
-    "idsmall" "image-daemon" "ls-compat" "ls-flock" "mcparen" "org-templater"
+    "idsmall" "image-daemon" "lambda-debugger" "ls-compat" "ls-flock" "mcparen" "org-templater"
     "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config" "sexp-store"
     "sophisticated-clipboard" "structlisp"
   ];
@@ -148,6 +148,13 @@ let
       yason
       structlisp
     ];
+  };
+
+  lambdaDebugger = pkgs.sbcl.buildASDFSystem {
+    pname = "lambda-debugger";
+    version = qlotVersion "lambda-debugger";
+    src = qlotSource "lambda-debugger";
+    lispLibs = [ pkgs.sbclPackages.trivial-gray-streams ];
   };
 
   imageDaemon = pkgs.sbcl.buildASDFSystem {
@@ -500,6 +507,7 @@ let
       clSkills
       idsmall
       imageDaemon
+      lambdaDebugger
       lsCompat
       lsFlock
       mcparen

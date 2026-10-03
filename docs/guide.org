@@ -384,6 +384,11 @@ recoveries that invoke a live restart, run repair source first, retry the whole
 operation, return replacement values when supported, or abort the operation.
 Retry does not roll back effects completed before the failure.
 
+The debugger shows the condition type and report, followed by available details
+such as the offending value, expected type, operation, filename, and reader
+location. These fields come from the condition itself and are also included in
+model diagnosis.
+
 Escape during diagnosis cancels only the diagnosis and returns to the live
 restarts. Escape at the ordinary restart picker aborts the failed operation.
 During an active provider turn, Escape cancels the turn and continues queued

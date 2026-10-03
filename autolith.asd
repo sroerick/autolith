@@ -38,6 +38,7 @@
                #:idsmall
                #:image-daemon/runtime
                #:ironclad/mac/siphash
+               #:lambda-debugger
                #:ls-flock
                #:bordeaux-threads
                #:mcparen/managed
