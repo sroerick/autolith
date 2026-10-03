@@ -1,47 +1,11 @@
 (in-package #:autolith)
 
+
 ;;;; -- OpenRouter API Key Authentication --
 
-(defparameter *openrouter-account-label* "openrouter"
-  "The synthetic account identifier pinned for static OpenRouter API keys.")
-
-(defparameter *openrouter-environment-variable* "OPENROUTER_API_KEY"
-  "The environment variable holding the OpenRouter API key.")
-
-(defclass openrouter-environment-credential-source
-    (environment-api-key-credential-source)
-  ()
-  (:default-initargs
-   :environment-variable *openrouter-environment-variable*
-   :account-id *openrouter-account-label*)
-  (:documentation
-   "A read-only adapter loading the OpenRouter API key from the environment."))
-
-
-;;;; -- OpenRouter Credential Manager --
-
-(defclass openrouter-credential-manager (static-api-key-credential-manager)
-  ()
-  (:documentation
-   "The static API key credential manager behind the OpenRouter provider."))
-
-(defmethod credential-manager-provider-label
-    ((manager openrouter-credential-manager))
-  "Name OpenRouter in user-visible credential failures."
-  (declare (ignore manager))
-  "OpenRouter")
-
-(-> openrouter-credential-manager-create (configuration) openrouter-credential-manager)
-(defun openrouter-credential-manager-create (configuration)
-  "Create the OpenRouter credential manager for CONFIGURATION's key store."
-  (make-instance
-   'openrouter-credential-manager
-   :primary-source
-   (make-instance 'api-key-credential-source
-                  :pathname (configuration-api-keys-path configuration)
-                  :provider-name "openrouter")
-   :bootstrap-source
-   (make-instance 'openrouter-environment-credential-source)))
+(define-static-api-key-provider openrouter
+  :display-name "OpenRouter"
+  :environment-variable "OPENROUTER_API_KEY")
 
 
 ;;;; -- OpenRouter API Key Validation --

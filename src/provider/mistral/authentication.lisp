@@ -1,47 +1,11 @@
 (in-package #:autolith)
 
+
 ;;;; -- Mistral API Key Authentication --
 
-(defparameter *mistral-account-label* "mistral"
-  "The synthetic account identifier pinned for static Mistral API keys.")
-
-(defparameter *mistral-environment-variable* "MISTRAL_API_KEY"
-  "The environment variable holding the Mistral account API key.")
-
-(defclass mistral-environment-credential-source
-    (environment-api-key-credential-source)
-  ()
-  (:default-initargs
-   :environment-variable *mistral-environment-variable*
-   :account-id *mistral-account-label*)
-  (:documentation
-   "A read-only adapter loading the Mistral key from the environment."))
-
-
-;;;; -- Mistral Credential Manager --
-
-(defclass mistral-credential-manager (static-api-key-credential-manager)
-  ()
-  (:documentation
-   "The static API key credential manager behind the Mistral provider."))
-
-(defmethod credential-manager-provider-label
-    ((manager mistral-credential-manager))
-  "Name the Mistral account service in user-visible failures."
-  (declare (ignore manager))
-  "Mistral")
-
-(-> mistral-credential-manager-create (configuration) mistral-credential-manager)
-(defun mistral-credential-manager-create (configuration)
-  "Create the Mistral credential manager for CONFIGURATION's key store."
-  (make-instance
-   'mistral-credential-manager
-   :primary-source
-   (make-instance 'api-key-credential-source
-                  :pathname (configuration-api-keys-path configuration)
-                  :provider-name "mistral")
-   :bootstrap-source
-   (make-instance 'mistral-environment-credential-source)))
+(define-static-api-key-provider mistral
+  :display-name "Mistral"
+  :environment-variable "MISTRAL_API_KEY")
 
 
 ;;;; -- Mistral API Key Validation --

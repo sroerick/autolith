@@ -85,6 +85,7 @@
                              (:file "provider/gemini/authentication")
                              (:file "provider/grok/authentication")
                              (:file "provider/api-key")
+                             (:file "provider/api-key-providers")
                              (:file "provider/fireworks/authentication")
                              (:file "workers/images")
                              (:file "provider/device-authentication")
