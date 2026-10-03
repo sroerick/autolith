@@ -451,9 +451,9 @@ storm guard, runtime lifecycle) stays.
   repository; switching it means adding ls-compat as a cl-skills dependency),
   and =handoff.lisp= 219-226 keeps its three-line check because it reads the
   resolved pathname afterwards.
-- DONE =skill.edit= validation (=skills/tools.lisp= 113-158) re-implements the
-  skill-name grammar and validates by writing a probe SKILL.md; cl-skills
-  should export name and source validation.
+- DONE =skill.edit= delegates name and source validation to cl-skills'
+  =skill-name-valid-p= and =skill-source-validate=. Validation accepts source
+  text and the intended pathname without probe files or a conversion cache.
 - Locating the pinned fff library (=tools/search.lisp= 50-114): clifff.
 - A unified manager protocol over one worker versus a pool
   (=workers/lisp.lisp= 200-333): sbcl-workers.

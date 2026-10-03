@@ -107,7 +107,13 @@
   "Exercise global skill creation, replacement, validation, and failed publication."
   (with-test-configuration (configuration)
     (let* ((registry (skill-edit-augment-tool-registry (make-instance 'tool-registry)))
-           (context (make-instance 'tool-context :configuration configuration
+           (authoring-configuration
+             (configuration-copy
+              configuration
+              :cache-root (uiop:ensure-directory-pathname
+                           (skill-tool-tests--write (config :cache-root configuration)
+                                                    "unavailable" "Not a directory."))))
+           (context (make-instance 'tool-context :configuration authoring-configuration
                                                 :worker nil :registry registry))
            (root (skill-global-root configuration))
            (pathname (merge-pathnames "editable/SKILL.md" root))
@@ -120,7 +126,7 @@
                                "arguments" (json-encode (json-object "name" name "content" content)))
                   context)))
         (test-assert (tool-result-success-p (edit "editable" initial))
-                     "skill.edit creates a global skill")
+                     "skill.edit creates a global skill without writable cache storage")
         (test-assert (string= initial (uiop:read-file-string pathname))
                      "creation writes the supplied source")
         (test-assert (skill-catalog-find
@@ -135,6 +141,10 @@
                              (list "editable" "Missing frontmatter")
                              (list "editable" (skill-tests--agent-definition
                                                "other" "Wrong name." "Body."))
+                             (list "editable" (skill-tests--agent-definition
+                                               "editable" "Oversized source."
+                                               (make-string cl-skills:*skill-file-character-limit*
+                                                            :initial-element #\x)))
                              (list "editable" (make-string (1+ *skill-edit-maximum-content-characters*)
                                                            :initial-element #\x))))
           (test-assert (not (tool-result-success-p (apply #'edit entry)))

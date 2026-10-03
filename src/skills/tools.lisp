@@ -110,53 +110,6 @@
 (defclass skill-edit-tool (tool) ()
   (:documentation "Create or replace one validated global Autolith skill."))
 
-(-> skill-edit-tool--name-valid-p (string) boolean)
-(defun skill-edit-tool--name-valid-p (name)
-  "Return true when NAME follows the portable Autolith skill-name grammar."
-  (and (<= 1 (length name) 64)
-       (not (char= (char name 0) #\-))
-       (not (char= (char name (1- (length name))) #\-))
-       (not (search "--" name))
-       (every (lambda (character)
-                (or (and (char>= character #\a) (char<= character #\z))
-                    (and (char>= character #\0) (char<= character #\9))
-                    (char= character #\-)))
-              name)))
-
-(-> skill-edit-tool--validate (configuration string string) null)
-(defun skill-edit-tool--validate (configuration name content)
-  "Validate CONTENT through the same catalog discovery used at skill load time."
-  (let* ((probe-root (merge-pathnames (format nil "skill-edit-~A/" (make-identifier))
-                                      (config :cache-root configuration)))
-         (probe-file (merge-pathnames (format nil "~A/SKILL.md" name) probe-root)))
-    (unwind-protect
-         (progn
-           (ensure-directories-exist probe-file)
-           (with-open-file (stream probe-file
-                                  :direction ':output
-                                  :if-does-not-exist ':create
-                                  :if-exists ':supersede
-                                  :external-format ':utf-8)
-             (write-string content stream))
-           (let* ((catalog (skill-catalog-discover (list probe-root)
-                                                  :cache-root (merge-pathnames "converted/" probe-root)))
-                  (metadata (skill-catalog-find catalog name))
-                  (diagnostics (skill-catalog-diagnostics catalog)))
-             (unless metadata
-               (error 'tool-error
-                      :tool-name "skill.edit"
-                      :message
-                      (if diagnostics
-                          (format nil "Skill validation failed: ~{~A~^; ~}"
-                                  (mapcar #'skill-diagnostic-message diagnostics))
-                          "Skill validation failed: required name and description frontmatter are missing or invalid.")))
-             (skill-metadata-read metadata)
-             nil))
-      (when (probe-file probe-root)
-        (platform-delete-directory-tree *platform* probe-root
-                                        :validate t
-                                        :if-does-not-exist ':ignore)))))
-
 (defmethod tool-execute ((tool skill-edit-tool) (context tool-context) (arguments hash-table))
   "Validate then atomically replace one global SKILL.md source file."
   (declare (ignore tool))
@@ -164,7 +117,7 @@
          (content (tool-argument arguments "content" :required t))
          (configuration (tool-context-configuration context))
          (root (skill-global-root configuration)))
-    (unless (and (stringp name) (skill-edit-tool--name-valid-p name))
+    (unless (cl-skills:skill-name-valid-p name)
       (error 'tool-error
              :tool-name "skill.edit"
              :message "skill.edit name must be 1-64 lowercase letters, digits, or single internal hyphens."))
@@ -173,9 +126,13 @@
       (error 'tool-error
              :tool-name "skill.edit"
              :message "skill.edit content must be a string no larger than 262144 characters."))
-    (skill-edit-tool--validate configuration name content)
     (let* ((pathname (merge-pathnames (format nil "~A/SKILL.md" name) root))
            (native (make-pathname :type "sexp" :defaults pathname)))
+      (handler-case
+          (cl-skills:skill-source-validate content pathname)
+        (cl-skills:skill-validation-error (condition)
+          (error 'tool-error :tool-name "skill.edit"
+                 :message (format nil "Skill validation failed: ~A" condition))))
       (when (probe-file native)
         (error 'tool-error :tool-name "skill.edit"
                :message (format nil "Edit the native skill at ~A instead; it takes precedence over SKILL.md."
