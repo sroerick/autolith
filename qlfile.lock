@@ -106,6 +106,10 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-exec-sandbox.git" :ref "76478d0c0e78bbd4e374953af12a2188630d794d")
   :version "git-76478d0c0e78bbd4e374953af12a2188630d794d"))
+("cl-hashline" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-hashline.git" :ref "9a989dc73bf46ff3f8e8c6921126612e2451a8a8")
+  :version "git-9a989dc73bf46ff3f8e8c6921126612e2451a8a8"))
 ("clifff" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/clifff.git" :ref "d73df079acf418e1a6b0b314442a6b1fea784e22")

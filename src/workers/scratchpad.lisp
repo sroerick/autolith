@@ -212,7 +212,8 @@
       (error 'tool-error
              :message "Expected scratchpad-delete operation."
              :tool-name "resource.edit"))
-    (when (workspace-file--operation-extra-keys-p operation '("op"))
+    (when (loop for key being the hash-keys of operation
+                thereis (not (equal key "op")))
       (error 'tool-error
              :message "Operation scratchpad-delete contains unsupported fields."
              :tool-name "resource.edit")))

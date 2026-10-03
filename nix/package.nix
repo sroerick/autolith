@@ -47,7 +47,7 @@ let
   # added to the qlfile without a buildASDFSystem entry fails evaluation here
   # instead of quietly shipping a release that never loaded it.
   qlotLibrariesWithBuildMetadata = [
-    "agentcomms" "argo" "cl-colorist" "cl-exec-sandbox" "cl-jobpond"
+    "agentcomms" "argo" "cl-colorist" "cl-exec-sandbox" "cl-hashline" "cl-jobpond"
     "cl-llm-provider-api" "cl-lsp" "cl-rfc8628" "cl-skills" "cl-termdown"
     "clifff" "clinedi" "clinker-transcript" "colordiff" "colorlisp" "fetch-gist"
     "idsmall" "image-daemon" "ls-compat" "ls-flock" "mcparen" "org-templater"
@@ -313,6 +313,14 @@ let
     src = qlotSource "structlisp";
   };
 
+  clHashline = pkgs.sbcl.buildASDFSystem {
+    pname = "cl-hashline";
+    version = qlotVersion "cl-hashline";
+    src = qlotSource "cl-hashline";
+    systems = [ "cl-hashline" ];
+    lispLibs = [ structlisp ] ++ (with pkgs.sbclPackages; [ babel ironclad ]);
+  };
+
   clifff = pkgs.sbcl.buildASDFSystem {
     pname = "clifff";
     version = qlotVersion "clifff";
@@ -468,6 +476,7 @@ let
       clColorist
       clinedi
       clExecSandbox
+      clHashline
       clifff
       clinkerTranscript
       clJobpond

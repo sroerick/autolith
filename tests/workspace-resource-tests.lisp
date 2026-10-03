@@ -293,9 +293,12 @@
                        (and (tool-result-success-p first-result)
                             (tool-result-success-p second-result)
                             (string= alias second-alias)
-                            (equal
-                             (workspace-file-observation-state-visible-ranges state)
-                             '((1 1) (3 3))))
+                            (and (structlisp:integer-interval-set-contains-p
+                                  (workspace-file-observation-state-visible-ranges state) 1)
+                                 (structlisp:integer-interval-set-contains-p
+                                  (workspace-file-observation-state-visible-ranges state) 3)
+                                 (not (structlisp:integer-interval-set-contains-p
+                                       (workspace-file-observation-state-visible-ranges state) 2))))
                        "equivalent workspace reads reuse state and merge visible ranges")))))
              (let* ((path (merge-pathnames "heterogeneous.txt" workspace))
                     (other-observation
@@ -618,7 +621,7 @@
                        (search "Elided: 1-1 before; 4-5 after"
                                (tool-result-content read-result))
                         (search (format nil "     2:~A  two"
-                                        (workspace-file--line-anchor "two"))
+                                        (cl-hashline:line-anchor "two"))
                                 (tool-result-content read-result)))
                   "resource.read reports URI, revision, visible range, elisions, and numbered content")
                  (test-assert
@@ -739,8 +742,8 @@
                               "content" "no")))))
                     (test-assert
                      (and (not (tool-result-success-p result))
-                          (search "maximum correction offset"
-                                  (tool-result-content result)))
+                           (string= (workspace-file--read-content path)
+                                    (format nil "one~%two~%three~%four~%five~%six~%seven~%eight~%")))
                      "resource.edit refuses a large anchored line-number offset"))))
               (let ((path (merge-pathnames "anchors-ambiguous.txt" workspace)))
                 (workspace-resource-tests--write-text
@@ -761,7 +764,8 @@
                               "content" "no")))))
                     (test-assert
                      (and (not (tool-result-success-p result))
-                          (search "ambiguous" (tool-result-content result)))
+                           (string= (workspace-file--read-content path)
+                                    (format nil "one~%duplicate~%three~%duplicate~%five~%")))
                      "resource.edit refuses an ambiguous nearby anchor"))))
               (let ((path (merge-pathnames "anchors-missing.txt" workspace)))
                 (workspace-resource-tests--write-text
@@ -776,12 +780,12 @@
                             (workspace-resource-tests--operation
                              "insert-after"
                              "line" 2
-                             "anchor" (workspace-file--line-anchor "absent")
+                             "anchor" (cl-hashline:line-anchor "absent")
                              "content" "no")))))
                     (test-assert
                      (and (not (tool-result-success-p result))
-                          (search "does not match any visible line"
-                                  (tool-result-content result)))
+                           (string= (workspace-file--read-content path)
+                                    (format nil "one~%two~%three~%")))
                      "resource.edit refuses a missing anchor"))))
               (let ((path (merge-pathnames "anchors-compatible.txt" workspace)))
                 (workspace-resource-tests--write-text
@@ -913,15 +917,37 @@
                             "delete-lines" "start-line" 2 "end-line" 3)
                            (workspace-resource-tests--operation
                             "insert-before" "line" 3 "content" "x")))))
-                   (test-assert
-                    (and (not (tool-result-success-p result))
-                         (search "overlap or ambiguously share"
-                                 (tool-result-content result)))
-                    "resource.edit rejects overlapping or ambiguous original-line operations")
+                    (test-assert
+                     (not (tool-result-success-p result))
+                     "resource.edit rejects overlapping or ambiguous original-line operations")
                    (test-assert
                     (string= (workspace-file--read-content path)
                              (format nil "a~%b~%c~%d~%"))
                     "overlap rejection leaves the file unchanged"))))
+              (let ((path (merge-pathnames "stage-collision.txt" workspace))
+                    (temporary (merge-pathnames "occupied-stage.tmp" workspace)))
+                (workspace-resource-tests--write-text path "base")
+                (workspace-resource-tests--write-text temporary "occupied")
+                (multiple-value-bind (read-result uri revision)
+                    (read-resource first-context "workspace:stage-collision.txt")
+                  (declare (ignore read-result))
+                  (test-call-with-function-replacements
+                   (list (list 'workspace-file--temporary-path
+                               (lambda (target)
+                                 (declare (ignore target))
+                                 temporary)))
+                   (lambda ()
+                     (let ((result
+                             (edit-resource
+                              first-context uri revision
+                              (list (workspace-resource-tests--operation
+                                     "replace-lines" "start-line" 1 "end-line" 1
+                                     "content" "new")))))
+                       (test-assert
+                        (and (not (tool-result-success-p result))
+                             (string= "base" (workspace-file--read-content path))
+                             (string= "occupied" (workspace-file--read-content temporary)))
+                        "staging collisions preserve both the target and the existing temporary file"))))))
              (let ((path (merge-pathnames "stale.txt" workspace)))
                (workspace-resource-tests--write-text path (format nil "old~%value~%"))
                (multiple-value-bind (read-result uri revision)

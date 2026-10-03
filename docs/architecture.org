@@ -97,6 +97,7 @@ terminal prompt          local Lisp result       finalized scrollback
 | cl-rfc8628 | Scoped credential use and coordinated refresh | Credential paths, bootstrap ownership, provider exchanges, checkpoint quiescence |
 | mcparen/managed | Connection lifecycle, discovery snapshots and budgets | Configuration, authorization, tool registry and provider schema projection |
 | cl-lsp | Stdio JSON-RPC, language-server lifecycle, document synchronization and diagnostics | Trusted configuration, project selection, tool operations and edit hooks |
+| cl-hashline | Visible-line validation, SHA-256 anchors, original-coordinate edits and revision-gated publication callbacks | JSON operations, observation state, bounded reads, temporary files and platform atomic publication |
 | setinka | Typed settings, layered sources, durable stores, listeners and dependent reconciliation | Setting definitions, provider-aware model checks, the preferences file and runtime side effects |
 | argo | JSON value model, strict RFC 8259 decoding, validated encoding and limits | Provider wire items, tool arguments and conversation replay |
 | sexp-store | Validated transactions, segmented logs and sidecars | Record schemas, scope, lifecycle and corruption policy |

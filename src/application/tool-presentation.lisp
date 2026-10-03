@@ -1277,8 +1277,9 @@ model."
                    (resource-observation-state-observation state))
                  (lines (workspace-file-observation-lines observation)))
             (unless (and (string= uri (resource-observation-uri observation))
-                         (workspace-file--range-visible-p
-                          state start-line end-line)
+                         (structlisp:integer-interval-set-covers-p
+                          (workspace-file-observation-state-visible-ranges state)
+                          start-line (1+ end-line))
                          (<= end-line (length lines)))
               (return nil))
             (let ((selected-lines
@@ -1320,9 +1321,12 @@ model."
               (return nil))
             (handler-case
                 (progn
-                  (workspace-file--normalize-operations
-                   (coerce operations 'list)
-                   state)
+                  (cl-hashline:edit-text
+                   (resource-observation-content observation)
+                   (map 'list #'workspace-file--json-operation operations)
+                   :visible-lines (workspace-file-observation-state-visible-ranges state)
+                   :split-lines #'text--split-lines
+                   :anchor-maximum-offset *workspace-file-resource-anchor-maximum-offset*)
                   t)
               (error ()
                 nil))))))))

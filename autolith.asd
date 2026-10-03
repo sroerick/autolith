@@ -10,6 +10,7 @@
                #:cl+ssl
                #:cl-colorist
                #:cl-exec-sandbox
+               #:cl-hashline
                #:cl-jobpond
                #:cl-lsp
                #:cl-rfc8628

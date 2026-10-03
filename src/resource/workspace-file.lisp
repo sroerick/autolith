@@ -100,9 +100,20 @@
   ((visible-ranges
     :initarg :visible-ranges
     :accessor workspace-file-observation-state-visible-ranges
-    :type list
-    :documentation "Inclusive original line ranges fully shown to the model."))
+    :type structlisp:integer-interval-set
+    :documentation "Half-open one-based ranges fully shown to the model."))
   (:documentation "One conversation-local model observation of a workspace file."))
+
+(defmethod initialize-instance :after
+    ((state workspace-file-observation-state) &key)
+  "Convert the renderer's inclusive ranges into an interval set."
+  (let ((ranges (workspace-file-observation-state-visible-ranges state)))
+    (unless (typep ranges 'structlisp:integer-interval-set)
+      (setf (workspace-file-observation-state-visible-ranges state)
+            (structlisp:make-integer-interval-set
+             :intervals (mapcar (lambda (range)
+                                  (cons (first range) (1+ (second range))))
+                                ranges))))))
 
 (defmethod resource-observation-state-family-and-key
     ((observation workspace-file-observation))
@@ -326,33 +337,6 @@ Return NIL when NAME disappears during enumeration."
            (subseq marker 0 (min limit (length marker)))
            stream))))))
 
-(-> workspace-file--line-ending (string) string)
-(defun workspace-file--line-ending (content)
-  "Return the line-ending style to preserve for CONTENT."
-  (if (search (format nil "~C~C" #\Return #\Newline) content)
-      (format nil "~C~C" #\Return #\Newline)
-      (string #\Newline)))
-
-(-> workspace-file--mixed-line-endings-p (string) boolean)
-(defun workspace-file--mixed-line-endings-p (content)
-  "Return true when CONTENT contains both LF and CRLF line endings."
-  (let ((crlf-p nil)
-        (lf-p nil))
-    (loop for position = (position #\Newline content)
-            then (position #\Newline content :start (1+ position))
-          while position
-          do (if (and (plusp position)
-                      (char= (char content (1- position)) #\Return))
-                 (setf crlf-p t)
-                 (setf lf-p t)))
-    (and crlf-p lf-p)))
-
-(-> workspace-file--final-newline-p (string) boolean)
-(defun workspace-file--final-newline-p (content)
-  "Return true when CONTENT ends in LF, including CRLF."
-  (and (plusp (length content))
-       (char= (char content (1- (length content))) #\Newline)))
-
 (-> workspace-file--snapshot-revision
     ((member :file :directory :missing) string)
     string)
@@ -389,8 +373,8 @@ Return NIL when NAME disappears during enumeration."
                      :content         content
                      :metadata        (list ':pathname path ':kind kind)
                      :kind            kind
-                     :line-ending     (workspace-file--line-ending content)
-                     :final-newline-p (workspace-file--final-newline-p content)))))
+                     :line-ending     (cl-hashline:line-ending content)
+                     :final-newline-p (cl-hashline:final-newline-p content)))))
 
 (defmethod resource-observe
     ((resource workspace-file-resource) (context tool-context))
@@ -400,30 +384,16 @@ Return NIL when NAME disappears during enumeration."
 
 ;;;; -- Conversation Observation State --
 
-(-> workspace-file--merge-visible-ranges (list list) list)
-(defun workspace-file--merge-visible-ranges (left right)
-  "Return sorted inclusive LEFT and RIGHT ranges with overlaps merged."
-  (let ((ranges (sort (append (copy-tree left) (copy-tree right))
-                      #'< :key #'first))
-        (result nil))
-    (dolist (range ranges)
-      (let ((previous (first result)))
-        (if (and previous (<= (first range) (1+ (second previous))))
-            (setf (second previous) (max (second previous) (second range)))
-            (push (copy-list range) result))))
-    (nreverse result)))
-
 (defmethod resource-observation-state-merge
     ((state workspace-file-observation-state)
      (observation workspace-file-observation) &rest initargs)
-  "Merge newly visible line ranges into equivalent workspace-file STATE."
+  "Merge newly visible inclusive line ranges into STATE."
   (declare (ignore observation))
-  (setf (workspace-file-observation-state-visible-ranges state)
-        (workspace-file--merge-visible-ranges
-         (workspace-file-observation-state-visible-ranges state)
-         (getf initargs ':visible-ranges)))
+  (dolist (range (getf initargs ':visible-ranges))
+    (structlisp:integer-interval-set-add
+     (workspace-file-observation-state-visible-ranges state)
+     (first range) (1+ (second range))))
   state)
-
 
 
 (-> workspace-file--find-observation-state
@@ -446,68 +416,44 @@ Return NIL when NAME disappears during enumeration."
              :actual-revision   nil))
     state))
 
-(-> workspace-file--line-visible-p
-    (workspace-file-observation-state (integer 1))
-    boolean)
-(defun workspace-file--line-visible-p (state line)
-  "Return true when LINE was fully visible under STATE's exact observation."
-  (and (some (lambda (range)
-               (<= (first range) line (second range)))
-             (workspace-file-observation-state-visible-ranges state))
-       t))
-
-(-> workspace-file--range-visible-p
-    (workspace-file-observation-state (integer 1) (integer 1))
-    boolean)
-(defun workspace-file--range-visible-p (state start-line end-line)
-  "Return true when every line from START-LINE through END-LINE was visible."
-  (and (some (lambda (range)
-               (and (<= (first range) start-line)
-                    (<= end-line (second range))))
-             (workspace-file-observation-state-visible-ranges state))
-       t))
-
-
-(-> workspace-file--line-anchor (string) string)
-(defun workspace-file--line-anchor (line)
-  "Return LINE's stable four-hex-character edit anchor."
-  (let ((digest
-          (ironclad:digest-sequence
-           ':sha256
-           (utf8-string-to-octets line))))
-    (format nil "~2,'0X~2,'0X" (aref digest 0) (aref digest 1))))
-
 
 ;;;; -- Bounded Observation Rendering --
 
-(-> workspace-file--format-ranges (list) string)
+(-> workspace-file--format-ranges (structlisp:integer-interval-set) string)
 (defun workspace-file--format-ranges (ranges)
   "Return RANGES in concise model-visible inclusive form."
-  (if ranges
+  (if (structlisp:integer-interval-set-empty-p ranges)
+      "none"
       (format nil "~{~A~^, ~}"
-              (mapcar (lambda (range)
-                        (if (= (first range) (second range))
-                            (format nil "~D" (first range))
-                            (format nil "~D-~D" (first range) (second range))))
-                      ranges))
-      "none"))
+              (loop for range across (structlisp:integer-interval-set->vector ranges)
+                    for start = (structlisp:integer-interval-start range)
+                    for end = (1- (structlisp:integer-interval-end range))
+                    collect (if (= start end)
+                                (format nil "~D" start)
+                                (format nil "~D-~D" start end))))))
 
-(-> workspace-file--elisions ((integer 0) list boolean) list)
+(-> workspace-file--elisions
+    ((integer 0) structlisp:integer-interval-set boolean) list)
 (defun workspace-file--elisions (total-lines ranges truncated-p)
   "Return explicit gaps omitted from the cumulative visible RANGES."
-  (let ((cursor 1)
-        (elisions nil))
-    (dolist (range ranges)
-      (when (< cursor (first range))
-        (push (format nil "~D-~D~:[ between visible ranges~; before~]"
-                      cursor (1- (first range)) (= cursor 1))
-              elisions))
-      (setf cursor (1+ (second range))))
-    (when (<= cursor total-lines)
-      (push (format nil "~D-~D after" cursor total-lines) elisions))
+  (let* ((complete (structlisp:make-integer-interval-set
+                    :intervals (list (cons 1 (1+ total-lines)))))
+         (gaps (structlisp:integer-interval-set-difference complete ranges))
+         (elisions
+            (loop for gap across (structlisp:integer-interval-set->vector gaps)
+                 for start = (structlisp:integer-interval-start gap)
+                 for end = (1- (structlisp:integer-interval-end gap))
+                 collect (format nil "~D-~D ~A" start end
+                                 (cond
+                                   ((= end total-lines)
+                                    "after")
+                                   ((= start 1)
+                                    "before")
+                                   (t
+                                    "between visible ranges"))))))
     (when truncated-p
-      (push "current result truncated" elisions))
-    (nreverse elisions)))
+      (setf elisions (append elisions (list "current result truncated"))))
+    elisions))
 
 (-> workspace-file--read-result
     (workspace-file-observation-state string (integer 0) boolean)
@@ -527,298 +473,7 @@ Return NIL when NAME disappears during enumeration."
             body)))
 
 
-;;;; -- Structured Operations --
-
-(-> workspace-file--operation-name (json-object) string)
-(defun workspace-file--operation-name (operation)
-  "Return and validate OPERATION's operation name."
-  (let ((name (tool-argument operation "op" :required t)))
-    (unless (and (stringp name)
-                 (member name
-                         '("replace-lines" "insert-before" "insert-after"
-                           "delete-lines" "replace-empty")
-                         :test #'string=))
-      (error 'tool-error
-             :message (format nil "Unknown resource edit operation ~S." name)
-             :tool-name "resource.edit"))
-    name))
-
-(-> workspace-file--required-positive-line (json-object string) (integer 1))
-(defun workspace-file--required-positive-line (operation name)
-  "Return required positive integer line NAME from OPERATION."
-  (let ((value (tool-argument operation name :required t)))
-    (unless (and (integerp value) (plusp value))
-      (error 'tool-error
-             :message (format nil "Resource edit field ~S must be a positive integer."
-                              name)
-             :tool-name "resource.edit"))
-    value))
-
-(-> workspace-file--operation-content (json-object string boolean) string)
-(defun workspace-file--operation-content (operation name non-empty-p)
-  "Return string content NAME from OPERATION, optionally requiring non-empty text."
-  (let ((value (tool-argument operation name :required t)))
-    (unless (and (stringp value)
-                 (or (not non-empty-p) (plusp (length value))))
-      (error 'tool-error
-             :message (format nil "Resource edit field ~S must be ~:[a string~;a non-empty string~]."
-                              name non-empty-p)
-             :tool-name "resource.edit"))
-    value))
-
-
-(-> workspace-file--optional-anchor (json-object string) (option string))
-(defun workspace-file--optional-anchor (operation name)
-  "Return optional normalized four-hex anchor NAME from OPERATION."
-  (let ((value (tool-argument operation name)))
-    (when value
-      (unless (and (stringp value)
-                   (= (length value) 4)
-                   (every (lambda (character)
-                            (digit-char-p character 16))
-                          value))
-        (error 'tool-error
-               :message (format nil "Resource edit field ~S must be a four-character hexadecimal line anchor."
-                                name)
-               :tool-name "resource.edit"))
-      (string-upcase value))))
-
-(-> workspace-file--resolve-anchored-line
-    (workspace-file-observation-state (integer 1) (option string) string)
-    (integer 1))
-(defun workspace-file--resolve-anchored-line (state requested-line anchor field-name)
-  "Resolve REQUESTED-LINE through optional visible ANCHOR for FIELD-NAME."
-  (unless anchor
-    (return-from workspace-file--resolve-anchored-line requested-line))
-  (let* ((observation (resource-observation-state-observation state))
-         (lines (workspace-file-observation-lines observation))
-         (candidates
-           (loop for range in (workspace-file-observation-state-visible-ranges state)
-                 append
-                 (loop for line from (first range) to (second range)
-                       when (string= anchor
-                                     (workspace-file--line-anchor
-                                      (aref lines (1- line))))
-                         collect line)))
-         (nearby
-           (remove-if (lambda (line)
-                        (> (abs (- line requested-line))
-                           *workspace-file-resource-anchor-maximum-offset*))
-                      candidates)))
-    (cond
-      ((null candidates)
-       (error 'tool-error
-              :message (format nil "Anchor ~A for ~A does not match any visible line under this revision. Reread the required window."
-                               anchor field-name)
-              :tool-name "resource.edit"))
-      ((null nearby)
-       (error 'tool-error
-              :message (format nil "Anchor ~A for ~A matches only beyond the maximum correction offset of ~D lines. Reread the required window."
-                               anchor field-name
-                               *workspace-file-resource-anchor-maximum-offset*)
-              :tool-name "resource.edit"))
-      ((rest nearby)
-       (error 'tool-error
-              :message (format nil "Anchor ~A for ~A is ambiguous near line ~D; matching visible lines are ~{~D~^, ~}. Reread a narrower window."
-                               anchor field-name requested-line nearby)
-              :tool-name "resource.edit"))
-      (t
-       (first nearby)))))
-
-(-> workspace-file--operation-extra-keys-p (json-object list) boolean)
-(defun workspace-file--operation-extra-keys-p (operation allowed)
-  "Return true when OPERATION contains a key outside ALLOWED."
-  (loop for key being the hash-keys of operation
-        thereis (not (member key allowed :test #'string=))))
-
-(-> workspace-file--normalize-operation
-    (json-object workspace-file-observation-state)
-    list)
-(defun workspace-file--normalize-operation (operation state)
-  "Validate one JSON OPERATION against STATE and return its normalized plist."
-  (unless (json-object-p operation)
-    (error 'tool-error
-           :message "Every resource edit operation must be a JSON object."
-           :tool-name "resource.edit"))
-  (let* ((name (workspace-file--operation-name operation))
-         (observation (resource-observation-state-observation state)))
-    (cond
-      ((string= name "replace-empty")
-       (when (workspace-file--operation-extra-keys-p
-              operation '("op" "content"))
-         (error 'tool-error
-                :message "Operation replace-empty contains unsupported fields."
-                :tool-name "resource.edit"))
-       (unless (or (eq (workspace-file-observation-kind observation) ':missing)
-                   (and (eq (workspace-file-observation-kind observation) ':file)
-                        (zerop (length
-                                (workspace-file-observation-lines observation)))))
-         (error 'tool-error
-                :message "Operation replace-empty is valid only for an observed missing resource or empty file."
-                :tool-name "resource.edit"))
-       (let ((content (workspace-file--operation-content operation "content" t)))
-         (list :kind ':replace-empty
-               :start 0
-               :end 0
-               :lines (coerce (text--split-lines content) 'list)
-               :line-ending (workspace-file--line-ending content)
-               :final-newline-p (workspace-file--final-newline-p content)
-               :summary "replace-empty")))
-      ((member name '("replace-lines" "delete-lines") :test #'string=)
-       (let* ((requested-start-line
-                (workspace-file--required-positive-line operation "start-line"))
-              (requested-end-line
-                (workspace-file--required-positive-line operation "end-line"))
-              (start-line
-                (workspace-file--resolve-anchored-line
-                 state requested-start-line
-                 (workspace-file--optional-anchor operation "start-anchor")
-                 "start-line"))
-              (end-line
-                (workspace-file--resolve-anchored-line
-                 state requested-end-line
-                 (workspace-file--optional-anchor operation "end-anchor")
-                 "end-line"))
-              (replace-p (string= name "replace-lines"))
-              (allowed (if replace-p
-                           '("op" "start-line" "start-anchor"
-                             "end-line" "end-anchor" "content")
-                           '("op" "start-line" "start-anchor"
-                             "end-line" "end-anchor"))))
-         (when (workspace-file--operation-extra-keys-p operation allowed)
-           (error 'tool-error
-                  :message (format nil "Operation ~A contains unsupported fields." name)
-                  :tool-name "resource.edit"))
-         (unless (<= start-line end-line)
-           (error 'tool-error
-                  :message (format nil "Operation ~A has start-line after end-line." name)
-                  :tool-name "resource.edit"))
-         (unless (workspace-file--range-visible-p state start-line end-line)
-           (error 'tool-error
-                  :message (format nil "Operation ~A addresses lines ~D-~D that were not fully visible under this revision. Reread the required window."
-                                   name start-line end-line)
-                  :tool-name "resource.edit"))
-         (list :kind (if replace-p ':replace ':delete)
-               :start start-line
-               :end end-line
-               :lines (if replace-p
-                          (coerce
-                           (text--split-lines
-                            (workspace-file--operation-content
-                             operation "content" nil))
-                           'list)
-                          nil)
-               :summary (format nil "~A ~D-~D" name start-line end-line))))
-      (t
-       (let* ((requested-line
-                (workspace-file--required-positive-line operation "line"))
-              (line
-                (workspace-file--resolve-anchored-line
-                 state requested-line
-                 (workspace-file--optional-anchor operation "anchor")
-                 "line"))
-              (content (workspace-file--operation-content operation "content" t)))
-         (when (workspace-file--operation-extra-keys-p
-                operation '("op" "line" "anchor" "content"))
-           (error 'tool-error
-                  :message (format nil "Operation ~A contains unsupported fields." name)
-                  :tool-name "resource.edit"))
-         (unless (workspace-file--line-visible-p state line)
-           (error 'tool-error
-                  :message (format nil "Operation ~A anchors line ~D that was not visible under this revision. Reread the required window."
-                                   name line)
-                  :tool-name "resource.edit"))
-         (list :kind (if (string= name "insert-before") ':insert-before ':insert-after)
-               :start line
-               :end line
-               :lines (coerce (text--split-lines content) 'list)
-               :summary (format nil "~A ~D" name line)))))))
-
-(-> workspace-file--validate-operation-overlaps (list) null)
-(defun workspace-file--validate-operation-overlaps (operations)
-  "Reject operations whose original line intervals overlap or share an anchor."
-  (loop for tail on operations
-        for operation = (first tail)
-        do
-           (dolist (other (rest tail))
-             (when (and (<= (getf operation :start) (getf other :end))
-                        (<= (getf other :start) (getf operation :end)))
-               (error 'tool-error
-                      :message
-                      (format nil "Resource edit operations overlap or ambiguously share original lines ~D-~D and ~D-~D."
-                              (getf operation :start) (getf operation :end)
-                              (getf other :start) (getf other :end))
-                      :tool-name "resource.edit"))))
-  nil)
-
-(-> workspace-file--normalize-operations
-    (list workspace-file-observation-state)
-    list)
-(defun workspace-file--normalize-operations (value state)
-  "Validate operation list VALUE completely against STATE."
-  (unless (and (listp value) value)
-    (error 'tool-error
-           :message "Resource edit operations must be a non-empty list."
-           :tool-name "resource.edit"))
-  (let ((operations
-          (loop for operation in value
-                collect (workspace-file--normalize-operation operation state))))
-    (when (and (find ':replace-empty operations
-                     :key (lambda (operation) (getf operation :kind)))
-               (> (length operations) 1))
-      (error 'tool-error
-             :message "Operation replace-empty must be the only resource edit operation."
-             :tool-name "resource.edit"))
-    (workspace-file--validate-operation-overlaps operations)
-    (sort operations #'< :key (lambda (operation) (getf operation :start)))))
-
-(-> workspace-file--apply-normalized-operations (vector list) list)
-(defun workspace-file--apply-normalized-operations (lines operations)
-  "Apply normalized OPERATIONS to original LINES in one deterministic pass."
-  (when (and (zerop (length lines))
-             (eq (getf (first operations) :kind) ':replace-empty))
-    (return-from workspace-file--apply-normalized-operations
-      (copy-list (getf (first operations) :lines))))
-  (let ((result nil)
-        (line 1)
-        (remaining operations)
-        (total (length lines)))
-    (loop while (<= line total)
-          for operation = (first remaining)
-          do
-             (cond
-               ((and operation (= line (getf operation :start)))
-                (case (getf operation :kind)
-                  (:insert-before
-                   (setf result (nconc (reverse (copy-list (getf operation :lines)))
-                                       result))
-                   (push (aref lines (1- line)) result)
-                   (incf line))
-                  (:insert-after
-                   (push (aref lines (1- line)) result)
-                   (setf result (nconc (reverse (copy-list (getf operation :lines)))
-                                       result))
-                   (incf line))
-                  ((:replace :delete)
-                   (setf result (nconc (reverse (copy-list (getf operation :lines)))
-                                       result)
-                         line (1+ (getf operation :end)))))
-                (pop remaining))
-               (t
-                (push (aref lines (1- line)) result)
-                (incf line))))
-    (nreverse result)))
-
-(-> workspace-file--join-lines (list string boolean) string)
-(defun workspace-file--join-lines (lines line-ending final-newline-p)
-  "Return LINES joined with LINE-ENDING while preserving FINAL-NEWLINE-P."
-  (with-output-to-string (stream)
-    (loop for line in lines
-          for first-p = t then nil
-          unless first-p do (write-string line-ending stream)
-          do (write-string line stream))
-    (when (and final-newline-p lines)
-      (write-string line-ending stream))))
+;;;; -- Atomic Publication --
 
 (-> workspace-file--temporary-path (pathname) pathname)
 (defun workspace-file--temporary-path (path)
@@ -875,16 +530,24 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
     (pathname pathname (simple-array (unsigned-byte 8) (*)))
     null)
 (defun workspace-file--write-temporary (temporary target octets)
-  "Write replacement OCTETS to TEMPORARY and preserve TARGET permissions."
-  (with-open-file (stream temporary
-                          :direction ':output
-                          :if-exists ':error
-                          :if-does-not-exist ':create
-                          :element-type '(unsigned-byte 8))
-    (write-sequence octets stream)
-    (finish-output stream))
-  (ignore-errors
-    (platform-copy-file-permissions *platform* target temporary))
+  "Write OCTETS, preserving TARGET permissions and cleaning up a failed new file."
+  (let ((created-p nil)
+        (complete-p nil))
+    (unwind-protect
+         (progn
+           (with-open-file (stream temporary
+                                   :direction ':output
+                                   :if-exists ':error
+                                   :if-does-not-exist ':create
+                                   :element-type '(unsigned-byte 8))
+             (setf created-p t)
+             (write-sequence octets stream)
+             (finish-output stream))
+           (ignore-errors
+             (platform-copy-file-permissions *platform* target temporary))
+           (setf complete-p t))
+      (when (and created-p (not complete-p) (probe-file temporary))
+        (delete-file temporary))))
   nil)
 
 (-> workspace-file--same-observation-p
@@ -911,52 +574,54 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
          :actual-revision (and actual
                                (resource-observation-revision actual))))
 
+
 (-> workspace-file--publish
     (workspace-file-resource tool-context workspace-file-observation string)
     workspace-file-observation)
 (defun workspace-file--publish (resource context base-observation content)
-  "Atomically publish CONTENT after an immediate exact BASE-OBSERVATION check.
-
-Autolith mutations are serialized. Existing-file replacement uses portable
-POSIX rename, which cannot conditionally reject an unrelated external writer in
-the final check-to-rename window. Missing-file publication rejects that race."
-  (let ((path (workspace-file-resource-pathname resource)))
+  "Stage and publish CONTENT after an immediate exact BASE-OBSERVATION check."
+  (let ((path (workspace-file-resource-pathname resource))
+        (octets (workspace-file--replacement-octets content)))
     (ensure-directories-exist path)
-    (let ((octets (workspace-file--replacement-octets content))
-          (temporary (workspace-file--temporary-path path)))
-      (unwind-protect
-           (progn
-             (workspace-file--write-temporary temporary path octets)
-             (let ((current (workspace-file--observe-path resource context)))
-               (unless (workspace-file--same-observation-p
-                        current base-observation)
-                 (workspace-file--signal-stale
-                  resource base-observation current)))
-             (handler-case
-                 (funcall
-                  (if (eq (workspace-file-observation-kind base-observation)
-                          ':missing)
-                      *workspace-file-resource-create-function*
-                      *workspace-file-resource-publish-function*)
-                  temporary path)
-               (platform-error (condition)
-                 (if (and (eq (workspace-file-observation-kind base-observation)
-                              ':missing)
-                          (eq (platform-error-reason condition) ':exists))
-                     (workspace-file--signal-stale resource base-observation)
-                     (error condition))))
-             (let ((published (workspace-file--observe-path resource context)))
-               (unless (and (eq (workspace-file-observation-kind published) ':file)
-                            (string= content
-                                     (resource-observation-content published)))
-                 (error 'tool-error
-                        :message
-                        "Atomic workspace resource publication did not produce the exact requested content."
-                        :tool-name "resource.edit"))
-               (setf temporary nil)
-               published))
-        (when (and temporary (probe-file temporary))
-          (delete-file temporary))))))
+    (handler-case
+        (cl-hashline:publish-edit
+         :base base-observation
+         :content content
+         :stage (lambda (replacement)
+                  (declare (ignore replacement))
+                  (let ((temporary (workspace-file--temporary-path path)))
+                    (workspace-file--write-temporary temporary path octets)
+                    temporary))
+         :observe (lambda () (workspace-file--observe-path resource context))
+         :same-p #'workspace-file--same-observation-p
+         :publish (lambda (temporary)
+                    (handler-case
+                        (funcall
+                         (if (eq (workspace-file-observation-kind base-observation)
+                                 ':missing)
+                             *workspace-file-resource-create-function*
+                             *workspace-file-resource-publish-function*)
+                         temporary path)
+                      (platform-error (condition)
+                        (if (and (eq (workspace-file-observation-kind base-observation)
+                                     ':missing)
+                                 (eq (platform-error-reason condition) ':exists))
+                            (workspace-file--signal-stale resource base-observation)
+                            (error condition))))
+                    (workspace-file--observe-path resource context))
+         :cleanup (lambda (temporary)
+                    (when (probe-file temporary)
+                      (delete-file temporary)))
+         :verify (lambda (published replacement)
+                   (and (eq (workspace-file-observation-kind published) ':file)
+                        (string= replacement
+                                 (resource-observation-content published)))))
+      (cl-hashline:stale-revision (condition)
+        (workspace-file--signal-stale
+         resource base-observation (cl-hashline:stale-revision-actual condition)))
+      (cl-hashline:hashline-error (condition)
+        (error 'tool-error :message (princ-to-string condition)
+                           :tool-name "resource.edit")))))
 
 (-> workspace-file--operation-window (list (integer 0))
     (values (integer 1) (integer 1)))
@@ -968,6 +633,42 @@ the final check-to-rename window. Missing-file publication rejects that race."
          (count (max 1 (min 120 (+ (- last-line start) 6)))))
     (values (if (zerop total-lines) 1 (min start total-lines)) count)))
 
+
+;;;; -- Structured Operation Adapter --
+
+(-> workspace-file--json-operation (json-object) list)
+(defun workspace-file--json-operation (operation)
+  "Translate JSON OPERATION fields into library keyword data."
+  (unless (hash-table-p operation)
+    (error 'tool-error :message "Resource edit operations must be JSON objects."
+                       :tool-name "resource.edit"))
+  (let ((fields '(("op" . :op) ("line" . :line)
+                  ("start-line" . :start-line) ("end-line" . :end-line)
+                  ("anchor" . :anchor) ("start-anchor" . :start-anchor)
+                  ("end-anchor" . :end-anchor) ("content" . :content)))
+        (result nil))
+    (maphash
+     (lambda (key value)
+       (let ((field (assoc key fields :test #'equal)))
+         (unless field
+           (error 'tool-error
+                  :message (format nil "Unsupported resource edit field ~S." key)
+                  :tool-name "resource.edit"))
+         (when (eq (rest field) ':op)
+           (setf value
+                 (or (and (stringp value)
+                          (rest (assoc value
+                                       '(("replace-lines" . :replace-lines)
+                                         ("delete-lines" . :delete-lines)
+                                         ("insert-before" . :insert-before)
+                                         ("insert-after" . :insert-after)
+                                         ("replace-empty" . :replace-empty))
+                                       :test #'string=)))
+                     value)))
+         (setf result (list* (rest field) value result))))
+     operation)
+    result))
+
 (defmethod resource-apply-operations
     ((resource workspace-file-resource) (context tool-context)
      &key base-revision operations)
@@ -978,41 +679,28 @@ the final check-to-rename window. Missing-file publication rejects that race."
           ((conversation-resource-observation-lock conversation))
         (let* ((state (workspace-file--find-observation-state
                        conversation (resource-uri resource) base-revision))
-               (base-observation
-                 (resource-observation-state-observation state)))
-          (when (workspace-file--mixed-line-endings-p
-                 (resource-observation-content base-observation))
-            (error 'tool-error
-                   :message "resource.edit does not rewrite files with mixed LF and CRLF line endings because doing so could change untouched lines. Normalize the complete file deliberately before applying structured edits."
-                   :tool-name "resource.edit"))
-          (let ((current (workspace-file--observe-path resource context)))
-            (unless (workspace-file--same-observation-p
-                     current base-observation)
-              (workspace-file--signal-stale
-               resource base-observation current))
-            (let* ((normalized
-                     (workspace-file--normalize-operations operations state))
-                   (new-lines
-                     (workspace-file--apply-normalized-operations
-                      (workspace-file-observation-lines base-observation)
-                      normalized))
-                   (replace-empty
-                     (find ':replace-empty normalized
-                           :key (lambda (operation) (getf operation :kind))))
-                   (content
-                     (workspace-file--join-lines
-                      new-lines
-                      (if replace-empty
-                          (getf replace-empty :line-ending)
-                          (workspace-file-observation-line-ending base-observation))
-                      (if replace-empty
-                          (getf replace-empty :final-newline-p)
-                          (workspace-file-observation-final-newline-p
-                           base-observation)))))
-              (values
-               (workspace-file--publish resource context base-observation content)
-               normalized))))))))
-
+               (base (resource-observation-state-observation state))
+               (current (workspace-file--observe-path resource context)))
+          (unless (workspace-file--same-observation-p current base)
+            (workspace-file--signal-stale resource base current))
+          (when (eq (workspace-file-observation-kind base) ':directory)
+            (error 'tool-error :message "Workspace directories are read-only resources."
+                               :tool-name "resource.edit"))
+          (handler-case
+              (multiple-value-bind (content normalized)
+                  (cl-hashline:edit-text
+                   (resource-observation-content base)
+                   (if (listp operations)
+                       (mapcar #'workspace-file--json-operation operations)
+                       operations)
+                   :visible-lines (workspace-file-observation-state-visible-ranges state)
+                   :split-lines #'text--split-lines
+                   :anchor-maximum-offset *workspace-file-resource-anchor-maximum-offset*)
+                (values (workspace-file--publish resource context base content)
+                        normalized))
+            (cl-hashline:hashline-error (condition)
+              (error 'tool-error :message (princ-to-string condition)
+                                 :tool-name "resource.edit"))))))))
 
 ;;;; -- Resource Tool Methods --
 
@@ -1055,6 +743,7 @@ the final check-to-rename window. Missing-file publication rejects that race."
   (workspace-file--call-with-authorized-access
    resource context ':edit (lambda () (call-next-method))))
 
+
 (defmethod resource-tool-read
     ((resource workspace-file-resource) (tool resource-read-tool)
      (context tool-context) (arguments hash-table))
@@ -1085,7 +774,7 @@ the final check-to-rename window. Missing-file publication rejects that race."
              start-line
              line-count
              *workspace-file-resource-maximum-result-characters*
-             :line-anchor-function #'workspace-file--line-anchor)
+             :line-anchor-function #'cl-hashline:line-anchor)
           (declare (ignore last-line))
           (when (and (plusp total-lines) (null visible-ranges))
             (error 'tool-error
@@ -1130,7 +819,7 @@ the final check-to-rename window. Missing-file publication rejects that race."
                     start-line
                     line-count
                     *workspace-file-resource-maximum-result-characters*
-                    :line-anchor-function #'workspace-file--line-anchor)
+                    :line-anchor-function #'cl-hashline:line-anchor)
                 (declare (ignore last-line))
                 (let* ((state
                           (resource-observation-state-ensure
