@@ -2,31 +2,10 @@
 
 ;;;; -- Fullscreen Viewport --
 
-(defstruct (fullscreen-row (:constructor make-fullscreen-row (display chunk offset length)))
-  "A wrapped display row and its source anchor within a committed chunk.
-
-OFFSET and LENGTH locate the row's plain characters inside the chunk text."
-  (display "" :type string)
-  (chunk 0 :type (integer 0))
-  (offset 0 :type (integer 0))
-  (length 0 :type (integer 0)))
-
 (defclass fullscreen-terminal-ui (terminal-ui)
-  ((chunks :initform (make-array 0 :adjustable t :fill-pointer 0)
-           :reader fullscreen-terminal-ui-chunks
-           :documentation "Unwrapped plain/display pairs retained for width reflow.")
-   (rows :initform (make-array 0 :adjustable t :fill-pointer 0)
-         :accessor fullscreen-terminal-ui-rows
-         :documentation "Indexed wrapped transcript rows, extended only for new output.")
-   (width :initform 0 :accessor fullscreen-terminal-ui-width
-          :documentation "Width of the wrapped transcript cache.")
-   (top :initform nil :accessor fullscreen-terminal-ui-top
-        :type (option (integer 0))
-        :documentation "Absolute first visible row, or NIL to follow the transcript tail.")
-   (viewport-height :initform 1 :accessor fullscreen-terminal-ui-viewport-height
-                    :documentation "Last painted transcript height, for page navigation.")
-   (maximum-top :initform 0 :accessor fullscreen-terminal-ui-maximum-top
-                :documentation "Last painted maximum scroll position.")
+  ((viewport :initform (clinedi:make-transcript-viewport)
+             :reader fullscreen-terminal-ui-viewport
+             :documentation "The reflowing transcript, its scroll position and its last layout.")
    (active-p :initform nil :accessor fullscreen-terminal-ui-active-p :type boolean
              :documentation "Whether this UI has entered the alternate buffer.")
    (platform-token :initform nil :accessor fullscreen-terminal-ui-platform-token
@@ -112,60 +91,22 @@ sequence, so it lands in the normal screen where it stays readable."
 
 ;;;; -- Incremental Transcript and Reflow --
 
-(-> terminal-ui-fullscreen--wrap-chunk (list integer integer) list)
-(defun terminal-ui-fullscreen--wrap-chunk (chunk index width)
-  "Wrap one original CHUNK, retaining character anchors for later width changes."
-  (destructuring-bind (text display &optional regions) chunk
-    (declare (ignore regions))
-    (let* ((pairs (clinedi:wrap-styled-text text display width))
-           (offset 0))
-      ;; A final newline begins the next append, rather than an extra empty row.
-      (when (and (plusp (length text)) (char= (char text (1- (length text))) #\Newline))
-        (setf pairs (butlast pairs)))
-      (loop for (plain styled) in pairs
-            for start = (or (search plain text :start2 offset) offset)
-            collect (make-fullscreen-row styled index start (length plain))
-            do (setf offset (+ start (length plain)))
-               (when (and (< offset (length text)) (char= (char text offset) #\Newline))
-                 (incf offset))))))
-
 (-> terminal-ui-fullscreen--ensure-width (fullscreen-terminal-ui integer) null)
 (defun terminal-ui-fullscreen--ensure-width (ui width)
-  "Reflow original chunks only after a width change, preserving the visible source anchor."
-  (unless (= width (fullscreen-terminal-ui-width ui))
-    (let* ((old (fullscreen-terminal-ui-rows ui))
-           (top (fullscreen-terminal-ui-top ui))
-           (anchor (and top (< top (length old)) (aref old top)))
-           (rows (make-array 0 :adjustable t :fill-pointer 0))
-           (new-top nil))
-      (loop for chunk across (fullscreen-terminal-ui-chunks ui)
-            for index from 0
-            do (dolist (row (terminal-ui-fullscreen--wrap-chunk chunk index width))
-                 (when (and anchor (= index (fullscreen-row-chunk anchor))
-                            (<= (fullscreen-row-offset row) (fullscreen-row-offset anchor)))
-                   (setf new-top (length rows)))
-                 (vector-push-extend row rows)))
-      (setf (fullscreen-terminal-ui-rows ui) rows
-            (fullscreen-terminal-ui-width ui) width
-            (fullscreen-terminal-ui-top ui) (and top (or new-top top)))
-      (terminal-ui-fullscreen-invalidate ui)))
+  "Reflow the transcript only after a width change, keeping its visible anchor."
+  (when (clinedi:transcript-viewport-resize (fullscreen-terminal-ui-viewport ui) width)
+    (terminal-ui-fullscreen-invalidate ui))
   nil)
 
 (-> terminal-ui-fullscreen--append
     (fullscreen-terminal-ui string string &optional list)
     null)
 (defun terminal-ui-fullscreen--append (ui text display &optional regions)
-  "Extend the transcript cache with one committed output chunk and its click REGIONS."
+  "Extend the transcript with one committed output chunk and its click REGIONS."
   (when (plusp (length text))
-    (let* ((chunks (fullscreen-terminal-ui-chunks ui))
-           (index (length chunks))
-           (chunk (list text display regions))
-           (rows (terminal-ui-fullscreen--wrap-chunk
-                  chunk index (fullscreen-terminal-ui-width ui))))
-      (vector-push-extend chunk chunks)
-      (dolist (row rows)
-        (vector-push-extend row (fullscreen-terminal-ui-rows ui)))
-      (setf (terminal-ui-fullscreen-welcome-p ui) nil)))
+    (clinedi:transcript-viewport-append (fullscreen-terminal-ui-viewport ui)
+                                        text display :regions regions)
+    (setf (terminal-ui-fullscreen-welcome-p ui) nil))
   nil)
 
 (-> terminal-ui-fullscreen--display-rows (terminal-ui list integer) list)
@@ -223,7 +164,8 @@ The position block wears the legend accent, keys the plain legend style, and
 their descriptions the dim legend style. These share the modeline's
 foregrounds without its background, so the legend stays distinct from the
 composer's dim placeholder without reading as a second modeline."
-  (let* ((following-p (null (fullscreen-terminal-ui-top ui)))
+  (let* ((following-p (clinedi:transcript-viewport-following-p
+                       (fullscreen-terminal-ui-viewport ui)))
          (position (if following-p
                        " LIVE "
                        (format nil " ~D-~D / ~D "
@@ -250,25 +192,22 @@ composer's dim placeholder without reading as a second modeline."
     (terminal-ui-fullscreen--ensure-width ui width)
     (multiple-value-bind (composer cursor-row cursor-column)
         (terminal-ui-fullscreen--composer ui width height)
-      (let* ((separator-p (> height (length composer)))
+      (let* ((viewport (fullscreen-terminal-ui-viewport ui))
+             (separator-p (> height (length composer)))
              (space (max 0 (- height (length composer) (if separator-p 1 0))))
-             (committed (fullscreen-terminal-ui-rows ui))
+             (committed (clinedi:transcript-viewport-row-count viewport))
              (live (coerce (terminal-ui-fullscreen--display-rows
                             ui (terminal-ui--live-prefix-rows ui status-now) width) 'vector))
-             (total (+ (length committed) (length live)))
-             (maximum-top (max 0 (- total space)))
-             (top (min (or (fullscreen-terminal-ui-top ui) maximum-top) maximum-top))
+             (total (+ committed (length live)))
+             (top (clinedi:transcript-viewport-layout viewport space
+                                                      :extra-rows (length live)))
              (visible
                (if (and (zerop total) (terminal-ui-fullscreen-welcome-p ui))
                    (terminal-ui--welcome-rows ui space)
                    (loop for index from top below (min total (+ top space))
-                         collect (if (< index (length committed))
-                                     (fullscreen-row-display (aref committed index))
-                                     (aref live (- index (length committed))))))))
-        (setf (fullscreen-terminal-ui-viewport-height ui) space
-              (fullscreen-terminal-ui-maximum-top ui) maximum-top)
-        (when (fullscreen-terminal-ui-top ui)
-          (setf (fullscreen-terminal-ui-top ui) top))
+                         collect (if (< index committed)
+                                     (clinedi:transcript-viewport-row-display viewport index)
+                                     (aref live (- index committed)))))))
         (values
          (append visible (make-list (max 0 (- space (length visible))) :initial-element "")
                  (when separator-p
@@ -326,32 +265,27 @@ row that still overruns instead of scrolling."
 (-> terminal-ui-fullscreen-scroll (fullscreen-terminal-ui integer) null)
 (defun terminal-ui-fullscreen-scroll (ui delta)
   "Move DELTA rows through history; positive values move towards the latest output."
-  (let* ((maximum (fullscreen-terminal-ui-maximum-top ui))
-         (top (max 0 (min maximum (+ (or (fullscreen-terminal-ui-top ui) maximum) delta)))))
-    (setf (fullscreen-terminal-ui-top ui) (unless (= top maximum) top))
-    (terminal-ui--paint-live ui))
+  (clinedi:transcript-viewport-scroll (fullscreen-terminal-ui-viewport ui) delta)
+  (terminal-ui--paint-live ui)
   nil)
 
 (-> terminal-ui-fullscreen-bottom (fullscreen-terminal-ui) null)
 (defun terminal-ui-fullscreen-bottom (ui)
   "Follow the latest transcript output again."
-  (setf (fullscreen-terminal-ui-top ui) nil)
+  (clinedi:transcript-viewport-follow (fullscreen-terminal-ui-viewport ui))
   (terminal-ui--paint-live ui)
   nil)
 
-(-> terminal-ui-fullscreen--message-row-p (fullscreen-terminal-ui fullscreen-row) boolean)
-(defun terminal-ui-fullscreen--message-row-p (ui row)
-  "Return true when ROW starts a transcript line opening a user or assistant message."
-  (let* ((chunk (aref (fullscreen-terminal-ui-chunks ui) (fullscreen-row-chunk row)))
-         (text (first chunk))
-         (offset (fullscreen-row-offset row)))
-    (and (or (zerop offset)
-             (char= (char text (1- offset)) #\Newline))
-         (some (lambda (prefix)
-                 (let ((end (+ offset (length prefix))))
-                   (and (<= end (length text))
-                        (string= prefix text :start2 offset :end2 end))))
-               (terminal-ui-message-header-prefixes ui)))))
+(-> terminal-ui-fullscreen--message-start-p (fullscreen-terminal-ui string (integer 0)) boolean)
+(defun terminal-ui-fullscreen--message-start-p (ui text offset)
+  "Return true when TEXT's row at OFFSET starts a line opening a user or assistant message."
+  (and (or (zerop offset)
+           (char= (char text (1- offset)) #\Newline))
+       (some (lambda (prefix)
+               (let ((end (+ offset (length prefix))))
+                 (and (<= end (length text))
+                      (string= prefix text :start2 offset :end2 end))))
+             (terminal-ui-message-header-prefixes ui))))
 
 (-> terminal-ui-fullscreen-jump-message (fullscreen-terminal-ui (member -1 1)) null)
 (defun terminal-ui-fullscreen-jump-message (ui direction)
@@ -360,39 +294,13 @@ row that still overruns instead of scrolling."
 DIRECTION -1 seeks above the current top row and 1 below it. A header inside
 the final window follows the tail again. Without a header in that direction
 the viewport does not move."
-  (let* ((rows (fullscreen-terminal-ui-rows ui))
-         (maximum (fullscreen-terminal-ui-maximum-top ui))
-         (current (or (fullscreen-terminal-ui-top ui) maximum))
-         (target
-           (if (minusp direction)
-               (loop for index from (1- current) downto 0
-                     when (terminal-ui-fullscreen--message-row-p ui (aref rows index))
-                       return index)
-               (loop for index from (1+ current) below (length rows)
-                     when (terminal-ui-fullscreen--message-row-p ui (aref rows index))
-                       return index))))
-    (when target
-      (let ((top (min target maximum)))
-        (setf (fullscreen-terminal-ui-top ui) (unless (= top maximum) top)))
-      (terminal-ui--paint-live ui)))
+  (when (clinedi:transcript-viewport-jump
+         (fullscreen-terminal-ui-viewport ui)
+         direction
+         (lambda (text offset)
+           (terminal-ui-fullscreen--message-start-p ui text offset)))
+    (terminal-ui--paint-live ui))
   nil)
-
-(-> terminal-ui-fullscreen--column-character-index
-    (string integer integer integer)
-    (option integer))
-(defun terminal-ui-fullscreen--column-character-index (text start end column)
-  "Return the index of the character of TEXT between START and END shown at COLUMN.
-
-COLUMN is one-based. Zero-width characters belong to the cell before them and
-are never returned; a column past the row's last cell returns NIL."
-  (loop with cells = 0
-        for index from start below end
-        for width = (text-cell-width (string (char text index)))
-        do (when (and (plusp width)
-                      (<= cells (1- column) (+ cells width -1)))
-             (return index))
-           (incf cells width)
-        finally (return nil)))
 
 (-> terminal-ui-fullscreen--click-action
     (fullscreen-terminal-ui integer integer)
@@ -400,29 +308,15 @@ are never returned; a column past the row's last cell returns NIL."
 (defun terminal-ui-fullscreen--click-action (ui column row)
   "Return the transcript action under one-based screen COLUMN and ROW, or NIL.
 
-Committed rows resolve through their chunk anchors: a widget region covering
-the clicked character wins, otherwise a web URL under it opens. Live rows,
-the separator, and the composer have no actions."
-  (block nil
-    (let* ((rows (fullscreen-terminal-ui-rows ui))
-           (space (fullscreen-terminal-ui-viewport-height ui))
-           (maximum-top (fullscreen-terminal-ui-maximum-top ui))
-           (top (min (or (fullscreen-terminal-ui-top ui) maximum-top) maximum-top))
-           (screen-row (1- row))
-           (absolute (+ top screen-row)))
-      (when (or (>= screen-row space) (>= absolute (length rows)))
-        (return nil))
-      (let* ((anchor (aref rows absolute))
-             (chunk (aref (fullscreen-terminal-ui-chunks ui) (fullscreen-row-chunk anchor)))
-             (text (first chunk))
-             (regions (third chunk))
-             (start (fullscreen-row-offset anchor))
-             (end (min (length text) (+ start (fullscreen-row-length anchor))))
-             (index (terminal-ui-fullscreen--column-character-index text start end column)))
-        (when index
-          (or (termdown:region-action regions index)
-              (let ((url (url-at text index)))
-                (and url (list ':open-url url)))))))))
+A widget region covering the clicked committed character wins, otherwise a
+web URL under it opens. Live rows, the separator, and the composer have no
+actions."
+  (multiple-value-bind (action text index)
+      (clinedi:transcript-viewport-hit (fullscreen-terminal-ui-viewport ui) column row)
+    (when index
+      (or action
+          (let ((url (url-at text index)))
+            (and url (list ':open-url url)))))))
 
 (-> terminal-ui-fullscreen--click (fullscreen-terminal-ui integer integer) boolean)
 (defun terminal-ui-fullscreen--click (ui column row)
@@ -441,11 +335,13 @@ lock, because copying and browser launches present notices of their own."
   (block nil
     (cond
       ((eq event ':page-up)
-       (terminal-ui-fullscreen-scroll ui (- (max 1 (1- (fullscreen-terminal-ui-viewport-height ui))))))
+       (terminal-ui-fullscreen-scroll
+        ui (- (clinedi:transcript-viewport-page-rows (fullscreen-terminal-ui-viewport ui)))))
       ((eq event ':page-down)
-       (terminal-ui-fullscreen-scroll ui (max 1 (1- (fullscreen-terminal-ui-viewport-height ui)))))
+       (terminal-ui-fullscreen-scroll
+        ui (clinedi:transcript-viewport-page-rows (fullscreen-terminal-ui-viewport ui))))
       ((eq event ':scroll-top)
-       (setf (fullscreen-terminal-ui-top ui) 0)
+       (clinedi:transcript-viewport-scroll-to-top (fullscreen-terminal-ui-viewport ui))
        (terminal-ui--paint-live ui))
       ((eq event ':scroll-bottom)
        (terminal-ui-fullscreen-bottom ui))
@@ -497,9 +393,8 @@ lock, because copying and browser launches present notices of their own."
              (regions (append (terminal-ui-deferred-live-appended-regions ui)
                               (termdown:shift-regions appended-regions (length deferred-text)))))
         (terminal-ui-fullscreen--ensure-width ui (max 1 (terminal-columns terminal)))
-        (let ((chunk-count (length (fullscreen-terminal-ui-chunks ui)))
-              (row-count (length (fullscreen-terminal-ui-rows ui)))
-              (top (fullscreen-terminal-ui-top ui))
+        (let ((checkpoint (clinedi:transcript-viewport-checkpoint
+                           (fullscreen-terminal-ui-viewport ui)))
               (welcome-p (terminal-ui-fullscreen-welcome-p ui))
               (completed-p nil))
           (unwind-protect
@@ -526,9 +421,8 @@ lock, because copying and browser launches present notices of their own."
                        (terminal-ui-deferred-live-appended-regions ui) nil
                        completed-p t))
             (unless completed-p
-              (setf (fill-pointer (fullscreen-terminal-ui-chunks ui)) chunk-count
-                    (fill-pointer (fullscreen-terminal-ui-rows ui)) row-count
-                    (fullscreen-terminal-ui-top ui) top
-                    (terminal-ui-fullscreen-welcome-p ui) welcome-p)
+              (clinedi:transcript-viewport-rollback (fullscreen-terminal-ui-viewport ui)
+                                                    checkpoint)
+              (setf (terminal-ui-fullscreen-welcome-p ui) welcome-p)
               (terminal-ui-fullscreen-invalidate ui))))))
   nil)

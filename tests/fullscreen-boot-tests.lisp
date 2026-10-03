@@ -61,7 +61,7 @@
         (test-assert (terminal-started-p terminal) "terminal input mode is restored")
         (test-assert (not (terminal-ui-live-output-suspended-p ui)) "live output resumes")
         (test-assert (fullscreen-terminal-ui-active-p ui) "session remains usable")
-        (test-assert (= 1 (length (fullscreen-terminal-ui-chunks ui))) "authentication presentation is not transcript content"))))
+        (test-assert (= 1 (fullscreen-test--chunk-count ui)) "authentication presentation is not transcript content"))))
   nil)
 
 
@@ -93,7 +93,7 @@
         (test-assert (> seconds 1) "fast startup still leaves time to see the boot screen")
         (test-assert (not (equalp (first frames) (second frames))) "boot stages visibly advance")
         (test-assert (not (terminal-ui-live-output-suspended-p ui)) "ordinary output resumes")
-        (test-assert (search "deferred output" (first (aref (fullscreen-terminal-ui-chunks ui) 0)))
+        (test-assert (search "deferred output" (clinedi:transcript-viewport-chunk-text (fullscreen-terminal-ui-viewport ui) 0))
                      "output accepted during boot is published afterward"))
       (test-assert
        (handler-case
