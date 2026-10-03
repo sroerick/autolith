@@ -330,10 +330,18 @@
     image-commit)
 (defun image-commit-load (configuration identifier &key history-commit)
   "Load and validate private image commit IDENTIFIER from CONFIGURATION."
-  (let* ((directory (image-commit--directory configuration identifier))
-         (manifest-pathname (merge-pathnames "manifest.sexp" directory)))
-    (when history-commit
-      (image-history-restore configuration identifier history-commit))
+  (when history-commit
+    (image-history-restore configuration identifier history-commit))
+  (image-commit--load-directory (image-commit--directory configuration identifier)
+                                identifier
+                                :history-commit history-commit))
+
+(-> image-commit--load-directory
+    (pathname string &key (:history-commit (option string)))
+    image-commit)
+(defun image-commit--load-directory (directory identifier &key history-commit)
+  "Load and validate the manifest of private image commit IDENTIFIER in DIRECTORY."
+  (let ((manifest-pathname (merge-pathnames "manifest.sexp" directory)))
     (unless (probe-file manifest-pathname)
       (error 'image-commit-error
              :message (format nil "Private image commit ~A has no manifest."
@@ -817,7 +825,10 @@ broken commit becomes selectable."
 
 (-> image-commit-replay-probe-main (string string) null)
 (defun image-commit-replay-probe-main (script-name identifier)
-  "Load SCRIPT-NAME in a clean source process and print its probe identity."
+  "Replay the commit owning SCRIPT-NAME as startup would and print its probe identity.
+
+The manifest beside SCRIPT-NAME supplies the lineage the replay judges stale
+definitions against, so the probe skips exactly what a later boot skips."
   (unless (image-commit--identifier-p identifier)
     (error 'image-commit-error
            :message "The clean replay probe received an invalid commit identity."
@@ -831,8 +842,16 @@ broken commit becomes selectable."
              :tool-name "self.commit"
              :pathname script
              :stage ':replay-probe))
-    (let ((*package* (find-package '#:autolith)))
-      (load script)))
+    (let ((commit (image-commit--load-directory (uiop:pathname-directory-pathname script)
+                                                identifier)))
+      (unless (uiop:pathname-equal (image-commit-script-pathname commit) script)
+        (error 'image-commit-error
+               :message "The clean replay probe script is not its commit's script."
+               :tool-name "self.commit"
+               :pathname script
+               :stage ':replay-probe))
+      (image-commit-replay (configuration-create :defer-provider-validation-p t)
+                           commit)))
   (image-commit-surface-verify)
   (write-string (image-commit-replay-probe-output identifier)
                 *standard-output*)
@@ -1056,6 +1075,23 @@ the failure stays diagnosable after the tool call ends."
                  :test #'string=)
          t)))
 
+(-> image-commit-replay (configuration image-commit) null)
+(defun image-commit-replay (configuration commit)
+  "Load COMMIT's reconstruction script over the tracked system.
+
+Stale definitions are judged against CONFIGURATION's tracked source, the source
+revision COMMIT's lineage was published against, and the revision this image
+runs, then skipped into *IMAGE-REPLAY-SKIPS*. Startup and the clean replay probe
+both replay through this function, so a commit the probe accepts boots."
+  (let ((*package* (find-package '#:autolith))
+        (*image-replay-context*
+          (make-instance 'image-replay-context
+                         :configuration configuration
+                         :lineage-source-commit (image-commit-source-commit commit)
+                         :image-source-commit (image-commit--base-source-commit nil))))
+    (load (image-commit-script-pathname commit)))
+  nil)
+
 (-> image-state-load (configuration &key (:pristine-p boolean)) list)
 (defun image-state-load (configuration &key pristine-p)
   "Load selected private state unless PRISTINE-P, then begin a fresh lineage.
@@ -1074,22 +1110,15 @@ definitions the replay skipped are kept in *IMAGE-REPLAY-SKIPS* instead."
             *active-image-lineage-identifier* (make-identifier)
             *image-state-initialized-p* t)
       (when identifier
-        (let* ((commit (image-commit-load
-                        configuration identifier
-                        :history-commit history-commit))
-               (pathname (image-commit-script-pathname commit)))
+        (let ((commit (image-commit-load
+                       configuration identifier
+                       :history-commit history-commit)))
           (handler-case
-              (let ((*package* (find-package '#:autolith))
-                    (*image-replay-context*
-                      (make-instance
-                       'image-replay-context
-                       :configuration configuration
-                       :lineage-source-commit (image-commit-source-commit commit)
-                       :image-source-commit
-                       (image-commit--base-source-commit nil))))
-                (load pathname))
+              (image-commit-replay configuration commit)
             (error (condition)
-              (push (cons pathname (format nil "~A" condition)) failures)))
+              (push (cons (image-commit-script-pathname commit)
+                          (format nil "~A" condition))
+                    failures)))
           (setf *image-replay-skips* (nreverse *image-replay-skips*))))
       (nreverse failures))))
 

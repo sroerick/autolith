@@ -114,6 +114,23 @@
      "a missing core class fails the battery and is named"))
   nil)
 
+(-> test-image-commit--write-probe-commit (pathname string list) pathname)
+(defun test-image-commit--write-probe-commit (script identifier entries)
+  "Write ENTRIES as commit IDENTIFIER's SCRIPT beside a manifest naming it."
+  (let ((title (format nil "Multiline metadata~%(error \"Executed title.\")")))
+    (image-commit-write-script script :identifier identifier :title title :entries entries)
+    (image-commit--write-form-atomically
+     (merge-pathnames "manifest.sexp" (uiop:pathname-directory-pathname script))
+     (image-commit--manifest-form :identifier                    identifier
+                                  :title                         title
+                                  :source-commit                 nil
+                                  :script-pathname               script
+                                  :entries                       entries
+                                  :consumed-mutation-identifiers nil
+                                  :journal-position              0
+                                  :created-at                    (get-universal-time)))
+    script))
+
 (-> test-image-commit-replay-probe () null)
 (defun test-image-commit-replay-probe ()
   "Test clean-process loading and rejection of private replay scripts."
@@ -123,10 +140,8 @@
          (script (merge-pathnames "probe/reconstruct.lisp" root)))
     (unwind-protect
          (progn
-           (image-commit-write-script
-            script :identifier identifier
-            :title (format nil "Multiline metadata~%(error \"Executed title.\")")
-            :entries
+           (test-image-commit--write-probe-commit
+            script identifier
             (list
              (list :kind ':definition :id "generic"
                    :target "(defgeneric image-commit-test-operation)"
@@ -140,6 +155,17 @@
            (test-assert
             (null (image-commit-replay-probe configuration script identifier))
             "generated replay executes methods without evaluating multiline metadata")
+           (platform-delete-directory-tree *platform* (uiop:pathname-directory-pathname script)
+                                           :validate t)
+           (test-image-commit--write-probe-commit
+            script identifier
+            (list
+             (list :kind ':definition :id "stale" :tracked nil
+                   :target "(defun image-commit-replay-probe-output)"
+                   :source "(defun image-commit-replay-probe-output (identifier) identifier \"stale\")")))
+           (test-assert
+            (null (image-commit-replay-probe configuration script identifier))
+            "the probe skips a stale definition that startup would skip")
            (delete-file script)
            (with-open-file (stream script
                                    :direction ':output
