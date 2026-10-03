@@ -194,6 +194,11 @@
   test-conversation-fork-rejections
   test-conversation-fork-command-line)
 
+(define-test-suite conversation-resource
+  test-conversation-resource-search
+  test-conversation-resource-windows
+  test-conversation-resource-segment-prefilter)
+
 (define-test-suite windows-lifecycle
   test-windows-detached-arguments
   test-windows-detached-descendants

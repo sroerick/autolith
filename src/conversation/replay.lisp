@@ -75,8 +75,8 @@
       (error ()
         nil))))
 
-(-> conversation-replay--project-record (list) (option list))
-(defun conversation-replay--project-record (record)
+(-> conversation-replay-project-record (list) (option list))
+(defun conversation-replay-project-record (record)
   "Return RECORD's bounded replay form, or NIL when it has no replay event."
   (case (first record)
     (:message
@@ -166,7 +166,7 @@ whole history when a crash or retention boundary interrupted sequencing."
      (lambda (record)
        (when (conversation-replay--user-turn-record-p record)
          (incf turn))
-       (let ((projected (conversation-replay--project-record record)))
+       (let ((projected (conversation-replay-project-record record)))
          (when projected
            (push (make-instance 'conversation-replay-record
                                 :record projected
@@ -204,8 +204,8 @@ whole history when a crash or retention boundary interrupted sequencing."
           (getf (rest (conversation-replay-record-record entry)) :seq)))
     (and (typep sequence '(integer 0)) sequence)))
 
-(-> conversation-replay--timestamp-string ((option timestamp)) string)
-(defun conversation-replay--timestamp-string (universal-time)
+(-> conversation-replay-timestamp-string ((option timestamp)) string)
+(defun conversation-replay-timestamp-string (universal-time)
   "Return UNIVERSAL-TIME as a local replay timestamp."
   (if universal-time
       (multiple-value-bind (second minute hour date month year)
@@ -214,8 +214,8 @@ whole history when a crash or retention boundary interrupted sequencing."
                 year month date hour minute second))
       "unknown time"))
 
-(-> conversation-replay--record-kind (list) string)
-(defun conversation-replay--record-kind (record)
+(-> conversation-replay-record-kind (list) string)
+(defun conversation-replay-record-kind (record)
   "Return a compact readable kind for replay RECORD."
   (case (first record)
     (:message
@@ -223,8 +223,8 @@ whole history when a crash or retention boundary interrupted sequencing."
     (otherwise
      (string-downcase (symbol-name (first record))))))
 
-(-> conversation-replay--write-record-body (list stream) null)
-(defun conversation-replay--write-record-body (record stream)
+(-> conversation-replay-write-record-body (list stream) null)
+(defun conversation-replay-write-record-body (record stream)
   "Write the readable body of replay RECORD to STREAM."
   (case (first record)
     ((:message :assistant :reasoning)
@@ -274,11 +274,11 @@ whole history when a crash or retention boundary interrupted sequencing."
     (format stream "~&[turn ~D | sequence ~A | ~A | ~A]~%"
             (conversation-replay-record-turn entry)
             (or sequence "?")
-            (conversation-replay--timestamp-string time)
-            (conversation-replay--record-kind record))
+            (conversation-replay-timestamp-string time)
+            (conversation-replay-record-kind record))
     (if raw-p
         (format stream "~S~%" record)
-        (conversation-replay--write-record-body record stream))
+        (conversation-replay-write-record-body record stream))
     (force-output stream))
   nil)
 
@@ -498,7 +498,7 @@ A bare HH:MM[:SS] value uses the selected record's local date."
             (length records)
             (conversation-replay-record-turn entry)
             (or (conversation-replay--record-sequence entry) "?")
-            (conversation-replay--timestamp-string
+            (conversation-replay-timestamp-string
              (conversation-replay--record-time entry)))
     (force-output stream))
   nil)

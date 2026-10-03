@@ -427,6 +427,23 @@ Papercuts use current-workspace resource URIs:
 The existing =papercut.report= tool and =/papercuts=, =/papercut=, and
 =/papercut-close= commands remain convenient direct interfaces.
 
+Conversation history uses read-only resource URIs:
+
+- =conversation:current= is the current conversation's complete durable
+  history, including the records compaction removed from the model context.
+  A plain read returns the newest records; =start-sequence= and
+  =record-count= (default 20, maximum 200) page by durable record sequence.
+  A window holds at most 7,000 characters and shortens long records, so read
+  a record alone to see all of it.
+- With =query=, the read lists the newest records containing every
+  whitespace-separated term, each with its sequence and an excerpt. ASCII
+  letters match in either case and other characters match exactly.
+  =max-results= defaults to 20 and is capped at 50. Messages, assistant
+  replies, reasoning summaries, tool call arguments and outputs, web searches,
+  and compaction summaries are searched.
+- =conversation:id/<id>= reads or searches another conversation by its
+  identifier. Searches never span several conversations.
+
 Each model report is acknowledged durably in the conversation, and a report
 that repeats an active papercut of the workspace is not recorded again: a
 title matching word for word, or a title and body whose words largely overlap

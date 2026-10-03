@@ -89,7 +89,7 @@
              "opaque" (make-string 10000 :initial-element #\x))))
          (record
            (list ':provider-item :seq 7 :time 100 :wire-json wire-json))
-         (projected (conversation-replay--project-record record)))
+         (projected (conversation-replay-project-record record)))
     (test-assert
      (and (eq (first projected) ':assistant)
           (string= (getf (rest projected) :content) "projected answer")
@@ -97,14 +97,14 @@
      "provider replay stores only bounded visible assistant content"))
     (test-assert
      (null
-      (conversation-replay--project-record
+      (conversation-replay-project-record
        (list ':native-compaction
              :seq 8
              :time 101
              :wire-json (make-string 10000 :initial-element #\x))))
      "opaque native compaction payloads are omitted from replay projection")
     (let ((projected
-            (conversation-replay--project-record
+            (conversation-replay-project-record
              (list ':native-compaction
                    :seq 9
                    :time 101
@@ -128,9 +128,9 @@
                    :condition-type "AGENT-LOOP-ERROR"
                    :message "provider response was malformed"
                    :request-number 2))
-           (projected (conversation-replay--project-record record))
+           (projected (conversation-replay-project-record record))
            (output (make-string-output-stream)))
-      (conversation-replay--write-record-body projected output)
+      (conversation-replay-write-record-body projected output)
       (let ((rendered (get-output-stream-string output)))
         (test-assert
          (and (equal projected record)

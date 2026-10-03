@@ -267,13 +267,16 @@
     (resource-registry-register
      resource-registry
      (make-instance 'context-object-resolver :scheme "context"))
+    (resource-registry-register
+     resource-registry
+     (make-instance 'conversation-resolver :scheme "conversation"))
     (dolist
         (specification
          (list
           (list
            'resource-read-tool
            "resource" "read"
-            "Read a model-addressable resource. workspace: URIs return bounded numbered file windows with short stable line anchors, sorted directory listings, or an observed missing state; scratchpad: URIs expose the current conversation's disposable files through the same bounded observations; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations; papercut:current and canonical papercut:id/<percent-encoded-stable-id> URIs return active current-workspace papercut observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. inference:<trace-id> and context:<sha256> URIs return bounded numbered read-only windows over recursive-inference trace logs and stored context objects, honoring start-line and line-count. Every read establishes a transient conversation-local revision."
+            "Read a model-addressable resource. workspace: URIs return bounded numbered file windows with short stable line anchors, sorted directory listings, or an observed missing state; scratchpad: URIs expose the current conversation's disposable files through the same bounded observations; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations; papercut:current and canonical papercut:id/<percent-encoded-stable-id> URIs return active current-workspace papercut observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. inference:<trace-id> and context:<sha256> URIs return bounded numbered read-only windows over recursive-inference trace logs and stored context objects, honoring start-line and line-count. conversation:current is this conversation's complete durable history, including what compaction removed from context: it returns the newest records, start-sequence and record-count page by record sequence, and query lists the newest records containing every whitespace-separated term, ASCII letters matching either case. conversation:id/<id> reads another conversation only when the user names it. Every read establishes a transient conversation-local revision."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
@@ -282,10 +285,14 @@
                            "The first line to return, starting at 1. Line windows apply only to workspace:, scratchpad:, inference:, and context: resources; agenda:, memory:, and papercut: resources are always returned in full and reject start-line and line-count.")
              "line-count" (tool-integer-property
                            "How many lines to return; default 400, maximum 1000. Accepted only where start-line is.")
+             "start-sequence" (tool-integer-property
+                               "The first durable record sequence a conversation: window returns; without it the window ends at the newest record.")
+             "record-count" (tool-integer-property
+                             "How many records a conversation: window returns; default 20, maximum 200.")
              "query" (tool-string-property
-                      "Optional lexical query for memory collection resources.")
+                      "Optional lexical query for memory collection resources, or the terms a conversation: search requires.")
              "max-results" (tool-integer-property
-                            "Optional memory collection result limit, capped at 50."))
+                            "Optional memory collection or conversation: search result limit, capped at 50."))
             '("uri"))
            :resource-registry resource-registry)
           (list
