@@ -2,21 +2,14 @@
 
 * Terminal and application
 
-** Fullscreen viewport (clinedi, next to live-region)
-=src/terminal/fullscreen.lisp= 5-46, 52-108, 111-167, 288-344, 384-429, and the
-=fullscreen-output-stream= at 543-634.
-- Unwrapped chunks plus wrapped rows that remember their source offsets, so a
-  resize reflows and keeps the same top line; a row-diff painter at absolute
-  positions with autowrap off; column to character to click-region mapping; a
-  Gray stream that tracks =?1049h/l= and OSC 10/11/110/111 across packet splits
-  so a dropped relay client gets its screen restored.
-- DONE 2026-10-03: clinedi 324f136 switches the alternate screen and SGR mouse
-  reporting, and b803c6b's mode-tracking stream restores a dropped relay
-  client; Autolith 3cad5145 and f5146ee5 use them.
-- Stays in Autolith: the frame composer, legend, welcome panel, and the message
-  header jump (which becomes a row predicate argument). The Win32 console mode
-  call maps onto clinedi's posix/win32 transport split; theme enter/leave
-  become caller-supplied prologue and epilogue strings.
+** DONE Fullscreen viewport (clinedi, next to live-region)
+2026-10-04. clinedi now holds the generic parts: alternate screen and SGR mouse
+controls (324f136), the mode-tracking stream restoring a dropped relay client
+(b803c6b), the reflowing =transcript-viewport= with layout, scrolling, jumps
+by row predicate, click hit-testing and rollback (8b779b7, a2551e6), and the
+=frame-painter= rewriting changed rows (3ef2ffd, 7bf98ad, 194cf8b). Autolith
+3cad5145, f5146ee5, 7553117b and e1337636 use them and keep the frame
+composer, legend, welcome panel, message-header predicate and URL fallback.
 
 ** DONE OSC 52 clipboard route (sophisticated-clipboard)
 sophisticated-clipboard 756b65f adds =terminal-backend=, which writes OSC 52
