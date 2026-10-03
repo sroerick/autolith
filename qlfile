@@ -42,3 +42,4 @@ git sophisticated-clipboard https://github.com/luciusmagn/sophisticated-clipboar
 git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref b7f6d84daed6886c15eda002789a76ee85f167b4
 git structlisp https://github.com/lambda-symbolics/structlisp.git :ref 66bbfbe947b69f3105f71f5e4293637decc91746
 git argo https://github.com/lambda-symbolics/argo.git :ref bd7415c7d6df61889147979c7c1964a0246a8f19
+git setinka https://github.com/lambda-symbolics/setinka.git :ref 9bdd28f6a7045e0e79eb017a9e4d79480c6d03ab

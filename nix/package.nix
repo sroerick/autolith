@@ -51,7 +51,7 @@ let
     "cl-llm-provider-api" "cl-lsp" "cl-rfc8628" "cl-skills" "cl-termdown"
     "clifff" "clinedi" "clinker-transcript" "colordiff" "colorlisp" "fetch-gist"
     "idsmall" "image-daemon" "ls-compat" "ls-flock" "mcparen" "org-templater"
-    "parenchek" "sbcl-generations" "sbcl-workers" "sexp-config" "sexp-store"
+    "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config" "sexp-store"
     "sophisticated-clipboard" "structlisp"
   ];
   qlotSourcesWithoutBuildMetadata =
@@ -166,6 +166,16 @@ let
       flexi-streams
       serapeum
       yason
+    ];
+  };
+
+  setinka = pkgs.sbcl.buildASDFSystem {
+    pname = "setinka";
+    version = qlotVersion "setinka";
+    src = qlotSource "setinka";
+    lispLibs = with pkgs.sbclPackages; [
+      bordeaux-threads
+      serapeum
     ];
   };
 
@@ -477,6 +487,7 @@ let
       mcparen
       sbclGenerations
       sbclWorkers
+      setinka
       sexpConfig
       sexpStore
       sophisticatedClipboard
