@@ -247,13 +247,12 @@ existing direction). Cut: the task output-schema wrappers and
 =rlm-inference-error=.
 
 ** DONE Inference endpoint re-implements image-daemon (image-daemon)
-=src/inference/endpoint.lisp= 295-454 and 372-404: loopback listener with a
-random token, accept thread, per-client threads, token check, wake-connection
-shutdown, bounded joins. image-daemon has all of it but requires a directory
-and publishes a registry record; add an unpublished ephemeral mode and
-subclass =daemon-runtime=. The hand-coded packet framing in
-=environment.lisp= 79-181 stays because the worker image does not load
-image-daemon.
+=rlm-endpoint= now subclasses =image-daemon:daemon-runtime= with
+=:publish-p nil=. image-daemon owns the listener, authentication, client
+threads and bounded shutdown without a registry record. Request-validation
+and error-response methods preserve the inference wire protocol and partial
+result ledger. The worker's packet framing is in =environment.lisp= because
+its image does not load image-daemon.
 
 ** DONE rlm-map fans out on raw threads (cl-jobpond)
 =src/inference/map.lisp= 61-125 is a hand-rolled pool with a claimed index

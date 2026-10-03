@@ -5,23 +5,8 @@
 (defparameter *rlm-endpoint-map-maximum-tasks* 64
   "The most tasks one proxied environment rlm-map call may fan out.")
 
-(defclass rlm-endpoint ()
-  ((listener
-    :initarg :listener
-    :reader rlm-endpoint--listener
-    :type sb-bsd-sockets:socket
-    :documentation "The loopback listener accepting environment requests.")
-   (port
-    :initarg :port
-    :reader rlm-endpoint-port
-    :type (integer 1)
-    :documentation "The ephemeral loopback port the environment connects to.")
-   (token
-    :initarg :token
-    :reader rlm-endpoint-token
-    :type non-empty-string
-    :documentation "The capability token required on every request.")
-   (provider
+(defclass rlm-endpoint (image-daemon:daemon-runtime)
+  ((provider
     :initarg :provider
     :reader rlm-endpoint--provider
     :type model-provider
@@ -58,25 +43,6 @@
     :accessor rlm-endpoint--activity-enabled-p
     :type boolean
     :documentation "True while proxied operations may publish activity.")
-   (lock
-    :initform (make-lock "Autolith inference endpoint")
-    :reader rlm-endpoint--lock
-    :documentation "The lock guarding lifecycle and final-value state.")
-   (stopping-p
-    :initform nil
-    :accessor rlm-endpoint--stopping-p
-    :type boolean
-    :documentation "True once the endpoint is shutting down.")
-   (accept-thread
-    :initform nil
-    :accessor rlm-endpoint--accept-thread
-    :type t
-    :documentation "The thread accepting environment connections.")
-   (client-threads
-    :initform nil
-    :accessor rlm-endpoint--client-threads
-    :type list
-    :documentation "The request handler threads joined at shutdown.")
    (final-value
     :initform nil
     :accessor rlm-endpoint--final-value
@@ -93,7 +59,22 @@
     :type (integer 0)
     :documentation "The admitted inference operations still running."))
   (:documentation
-   "A loopback endpoint proxying environment inference calls to the host."))
+   "An unpublished loopback endpoint proxying environment inference calls."))
+
+(-> rlm-endpoint-port (rlm-endpoint) (integer 1))
+(defun rlm-endpoint-port (endpoint)
+  "Return ENDPOINT's inherited loopback port."
+  (image-daemon:daemon-runtime-port endpoint))
+
+(-> rlm-endpoint-token (rlm-endpoint) non-empty-string)
+(defun rlm-endpoint-token (endpoint)
+  "Return ENDPOINT's inherited capability token."
+  (image-daemon:daemon-runtime-token endpoint))
+
+(-> rlm-endpoint--lock (rlm-endpoint) t)
+(defun rlm-endpoint--lock (endpoint)
+  "Return ENDPOINT's inherited lifecycle lock."
+  (image-daemon:daemon-runtime-lock endpoint))
 
 (-> rlm-endpoint-final (rlm-endpoint) (values t boolean))
 (defun rlm-endpoint-final (endpoint)
@@ -292,75 +273,43 @@ leaves a machine-readable invocation tree instead of orphaned frames."
           (rlm-endpoint--record endpoint (list :operation :finish))
           (list :rlm-response :status :ok :value ':finished)))))))
 
-(-> rlm-endpoint--handle-client (rlm-endpoint sb-bsd-sockets:socket) null)
-(defun rlm-endpoint--handle-client (endpoint socket)
-  "Read, answer, and close one environment client SOCKET."
-  (let ((stream nil))
-    (unwind-protect
-         (handler-case
-             (progn
-               (setf stream (daemon-socket-stream socket))
-               (let ((request (daemon-read-packet stream)))
-                 (unless (and (listp request)
-                              (eq (first request) ':rlm-request))
-                   (error 'rlm-inference-error
-                          :message "The environment request is malformed."))
-                 (let ((fields (rest request)))
-                   (unless (equal (getf fields ':token)
-                                  (rlm-endpoint-token endpoint))
-                     (error 'rlm-inference-error
-                            :message "The environment token is invalid."))
-                   (daemon-write-packet
-                    stream
-                    (rlm-endpoint--dispatch
-                     endpoint
-                     (getf fields ':operation)
-                     (getf fields ':arguments))))))
-           (rlm-partial-result (condition)
-             (let ((observation (rlm-partial-result-observation condition)))
-               (rlm-endpoint--record
-                endpoint (list :operation ':incomplete :result observation))
-               (when stream
-                 (ignore-errors
-                   (daemon-write-packet
-                    stream
-                    (list :rlm-response :status ':error
-                          :message (format nil "~A~%~S" condition observation)))))))
-           (error (condition)
-             (when stream
-               (ignore-errors
-                 (daemon-write-packet
-                  stream
-                  (list :rlm-response :status :error
-                        :message (princ-to-string condition)))))))
-      (if stream
-          (ignore-errors (close stream))
-          (ignore-errors (sb-bsd-sockets:socket-close socket)))))
+(defmethod image-daemon:daemon-runtime-request-valid-p
+    ((endpoint rlm-endpoint) request)
+  "Validate ENDPOINT's rlm request with the shared capability checks."
+  (image-daemon:daemon-request-valid-p
+   request
+   (rlm-endpoint-token endpoint)
+   :request-tag ':rlm-request
+   :protocol-version nil))
+
+(defmethod image-daemon:daemon-runtime-error-response
+    ((endpoint rlm-endpoint) condition)
+  "Format a rejected or failed ENDPOINT request as an rlm response."
+  (when (typep condition 'rlm-partial-result)
+    (let ((observation (rlm-partial-result-observation condition)))
+      (rlm-endpoint--record
+       endpoint (list :operation ':incomplete :result observation))))
+  (list :rlm-response :status ':error
+        :message
+        (if (typep condition 'rlm-partial-result)
+            (let ((observation (rlm-partial-result-observation condition)))
+              (format nil "~A~%~S" condition observation))
+            (princ-to-string condition))))
+
+(-> rlm-endpoint--request
+    (rlm-endpoint list &key (:socket t) (:stream t))
+    null)
+(defun rlm-endpoint--request (endpoint request &key socket stream)
+  "Dispatch one library-authenticated environment request."
+  (declare (ignore socket))
+  (let ((fields (rest request)))
+    (daemon-write-packet
+     stream
+     (rlm-endpoint--dispatch endpoint
+                              (getf fields ':operation)
+                              (getf fields ':arguments))))
   nil)
 
-(-> rlm-endpoint--serve (rlm-endpoint) null)
-(defun rlm-endpoint--serve (endpoint)
-  "Accept environment requests until ENDPOINT stops."
-  (loop
-    (when (with-lock-held ((rlm-endpoint--lock endpoint))
-            (rlm-endpoint--stopping-p endpoint))
-      (return))
-    (handler-case
-        (let ((socket (sb-bsd-sockets:socket-accept
-                       (rlm-endpoint--listener endpoint))))
-          (if (with-lock-held ((rlm-endpoint--lock endpoint))
-                (rlm-endpoint--stopping-p endpoint))
-              (ignore-errors (sb-bsd-sockets:socket-close socket))
-              (let ((thread
-                      (make-thread
-                       (lambda ()
-                         (rlm-endpoint--handle-client endpoint socket))
-                       :name "Autolith inference request")))
-                (with-lock-held ((rlm-endpoint--lock endpoint))
-                  (push thread (rlm-endpoint--client-threads endpoint))))))
-      (error ()
-        (return))))
-  nil)
 
 (-> rlm-endpoint-start
     (&key (:provider model-provider)
@@ -371,84 +320,25 @@ leaves a machine-readable invocation tree instead of orphaned frames."
     rlm-endpoint)
 (defun rlm-endpoint-start
     (&key provider configuration budget ledger activity-callback)
-  "Start a loopback endpoint proxying environment calls into BUDGET."
-  (let ((listener (make-instance 'sb-bsd-sockets:inet-socket
-                                 :type ':stream
-                                 :protocol ':tcp))
-        (completed-p nil))
-    (unwind-protect
-         (progn
-           (setf (sb-bsd-sockets:sockopt-reuse-address listener) t)
-           (sb-bsd-sockets:socket-bind
-            listener (sb-bsd-sockets:make-inet-address "127.0.0.1") 0)
-           (sb-bsd-sockets:socket-listen listener 16)
-           (multiple-value-bind (address port)
-               (sb-bsd-sockets:socket-name listener)
-             (declare (ignore address))
-             (let ((endpoint (make-instance 'rlm-endpoint
-                                            :listener listener
-                                            :port port
-                                            :token (daemon-random-token)
-                                            :provider provider
-                                            :configuration configuration
-                                            :budget budget
-                                            :ledger ledger
-                                            :activity-callback activity-callback)))
-               (setf (rlm-endpoint--accept-thread endpoint)
-                     (make-thread (lambda ()
-                                    (rlm-endpoint--serve endpoint))
-                                  :name "Autolith inference endpoint")
-                     completed-p t)
-               endpoint)))
-      (unless completed-p
-        (ignore-errors (sb-bsd-sockets:socket-close listener))))))
-
-(-> rlm-endpoint--wake (rlm-endpoint) null)
-(defun rlm-endpoint--wake (endpoint)
-  "Nudge ENDPOINT's blocking accept loop with a throwaway connection."
-  (handler-case
-      (multiple-value-bind (socket stream)
-          (daemon-connect (rlm-endpoint-port endpoint))
-        (declare (ignore socket))
-        (close stream))
-    (error () nil))
-  nil)
+  "Start an unpublished loopback endpoint proxying environment calls."
+  (let ((endpoint
+          (image-daemon:daemon-runtime-create
+           :publish-p nil
+           :token (daemon-random-token)
+           :request-function #'rlm-endpoint--request
+           :class 'rlm-endpoint
+           :initargs (list :provider provider
+                           :configuration configuration
+                           :budget budget
+                           :ledger ledger
+                           :activity-callback activity-callback))))
+    (image-daemon:daemon-runtime-start endpoint)
+    endpoint))
 
 (-> rlm-endpoint-stop (rlm-endpoint) null)
 (defun rlm-endpoint-stop (endpoint)
-  "Stop ENDPOINT's listener and wait for its accept loop to end.
-
-The wake connection can miss its connect deadline on a heavily loaded
-host, so it retries with a bounded join each time; a loop that still
-never wakes is abandoned rather than deadlocking the caller, holding
-nothing but a dead listener until process exit."
-  (with-lock-held ((rlm-endpoint--lock endpoint))
-    (setf (rlm-endpoint--stopping-p endpoint) t))
+  "Revoke activity publication, then stop ENDPOINT's supervised runtime."
   (with-lock-held ((rlm-endpoint--activity-lock endpoint))
     (setf (rlm-endpoint--activity-enabled-p endpoint) nil))
-  (let ((thread (rlm-endpoint--accept-thread endpoint)))
-    (when thread
-      (loop repeat 3
-            while (thread-alive-p thread)
-            do (rlm-endpoint--wake endpoint)
-               (handler-case
-                   (sb-ext:with-timeout 10
-                     (join-thread thread))
-                 (error () nil)))
-      (when (thread-alive-p thread)
-        (format *error-output*
-                "~&The inference endpoint accept loop on port ~D was abandoned.~%"
-                (rlm-endpoint-port endpoint)))))
-  (ignore-errors
-    (sb-bsd-sockets:socket-close (rlm-endpoint--listener endpoint)))
-  ;; Handlers finish once their proxied inference returns; the timeout
-  ;; abandons only a handler still holding a long provider call, which
-  ;; stays budget-bounded and whose response write fails harmlessly.
-  (dolist (thread (with-lock-held ((rlm-endpoint--lock endpoint))
-                    (copy-list (rlm-endpoint--client-threads endpoint))))
-    (when (thread-alive-p thread)
-      (handler-case
-          (sb-ext:with-timeout 30
-            (join-thread thread))
-        (error () nil))))
+  (image-daemon:daemon-runtime-stop endpoint)
   nil)

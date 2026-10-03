@@ -1219,6 +1219,20 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                                                  (push record records)))))
     (unwind-protect
          (progn
+           (test-assert
+            (null (image-daemon:daemon-runtime-registry-pathname endpoint))
+            "inference endpoints do not create discovery records")
+           (let ((response
+                   (rlm-endpoint-test-call
+                    endpoint
+                    (list :malformed-request
+                          :token (rlm-endpoint-token endpoint)))))
+             (test-assert (eq (getf (rest response) ':status) ':error)
+                          "malformed requests receive an rlm error response")
+             (test-assert
+              (not (search (rlm-endpoint-token endpoint)
+                           (getf (rest response) ':message)))
+              "rejected requests do not disclose the endpoint token"))
            (let ((response
                    (rlm-endpoint-test-call
                     endpoint
