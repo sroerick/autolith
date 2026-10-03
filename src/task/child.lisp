@@ -234,14 +234,14 @@ boundary cannot fit within that budget."
          (task--write-readable-sexp output :pretty-p t))))
 
 (defun task-child-goal-context (job child-configuration)
-  "Build the transient developer instructions for JOB's child session."
+  "Build child instructions without replacing ordinary path authorization."
   (let* ((definition (task-job-definition job))
          (identity (task-job-identity job))
          (item (task-job-item job))
          (context (getf item :context))
          (output (task-output-definition-text definition)))
     (format nil
-            "You are child agent ~A of type ~A, depth ~D. Your specialized role follows.~2%~A~@[~2%Shared parent context:~%~A~]~@[~2%Your yield data must satisfy this native output contract:~%~A~]~2%You are not the primary Autolith session. self.* tools are deliberately unavailable. Work only in ~A. Complete the assignment in the user message. You MUST end by calling yield.submit exactly once. A normal assistant stop without yield is a failed child run. Put the useful parent-facing answer in yield.text and structured data in yield.data when requested."
+            "You are child agent ~A of type ~A, depth ~D. Your specialized role follows.~2%~A~@[~2%Shared parent context:~%~A~]~@[~2%Your yield data must satisfy this native output contract:~%~A~]~2%You are not the primary Autolith session. self.* tools are deliberately unavailable. Your initial workspace is ~A. Work within the assignment's scope. Paths outside the workspace use the ordinary tool path authorization; this initial directory is not an additional confinement policy. Complete the assignment in the user message. You MUST end by calling yield.submit exactly once. A normal assistant stop without yield is a failed child run. Put the useful parent-facing answer in yield.text and structured data in yield.data when requested."
             (getf identity :id) (task-agent-definition-name definition)
             (1+ (task-parent-depth (task-job-parent-agent job)))
             (task-agent-definition-instructions definition) context output

@@ -18,6 +18,21 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Child assignment scope
+
+- Problem: The child prompt prohibited work outside the initial workspace,
+  overriding ordinary path authorization for explicitly assigned repositories.
+- Behavior: Identify the initial workspace and use the assignment's scope;
+  authorize other paths through the existing tool boundary.
+- Scope and location: tracked =src/task/child.lisp=. Live mutation
+  =62d7eeae-e7ef-4129-bc2e-82865f84a720= is exploratory; private persistence is
+  blocked by inherited replay protocol incompatibility, papercut
+  =94df14e7-bdb7-4a04-a6d6-bfc567239fee=.
+- Verification: =lambda-debugger-authorized-3= and the core reviewer accessed the
+  assigned sibling repository. Full checks passed: 604 cases and recovery probes.
+- Removal condition: remove the exploratory override after booting a runtime
+  with the tracked definition.
+
 ** Child execution job controls
 
 - Problem: Children could start asynchronous commands but could not collect their
