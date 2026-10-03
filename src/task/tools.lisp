@@ -39,7 +39,7 @@
   "Return JSON boolean VALUE or reject FIELD's non-boolean value."
   (cond
     ((eq value t) t)
-    ((eq value false) nil)
+    ((json-false-p value) nil)
     (t
      (error 'task-error
             :message (format nil "Task field ~S must be a boolean." field)

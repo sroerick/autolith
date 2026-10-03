@@ -72,7 +72,7 @@
               "model" *default-fireworks-model*
               "input" "Reply with the single word: ok"
               "store" false
-              "stream" false)))
+              "stream" (json-false))))
         (provider-call-with-response-deadline
          60
          (lambda ()

@@ -463,7 +463,7 @@ filesystem paths are only a programmatic Lisp designator."
                      ;; Native NIL and :NULL denote JSON false and null in
                      ;; enum positions, so the exact decoder's false maps.
                      (loop for value across enum
-                           collect (if (eq value false) nil value))
+                           collect (if (json-false-p value) nil value))
                      contract))))
     (let ((type (json-get schema "type")))
       (when type

@@ -796,7 +796,7 @@
                    (task-completion-called-p completion)
                    (eq (task-completion-status completion) :success)
                    (task-completion-data-present-p completion)
-                   (eq (task-completion-data completion) false)
+                   (json-false-p (task-completion-data completion))
                    (null
                     (task-json->sexp
                      (task-completion-data completion))))

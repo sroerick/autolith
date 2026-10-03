@@ -446,7 +446,7 @@
                      (equalp verdicts
                              #("improved" "worse" "unchanged" "too-early"))
                      (every (lambda (variant)
-                              (eq (gethash "additionalProperties" variant) false))
+                              (json-false-p (gethash "additionalProperties" variant)))
                             variants))
                 "resource.edit advertises closed papercut assessment schemas"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))

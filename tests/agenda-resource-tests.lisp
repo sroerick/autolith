@@ -377,7 +377,7 @@
                 "resource.edit schema retains workspace and agenda variants")
                (test-assert
                 (every (lambda (variant)
-                         (eq (json-get variant "additionalProperties") false))
+                         (json-false-p (gethash "additionalProperties" variant)))
                        variants)
                 "every resource.edit operation variant remains closed"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))

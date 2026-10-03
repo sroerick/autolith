@@ -313,9 +313,7 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
               "{\"task\": \"x\", \"contract\": {\"type\": \"object\", \"properties\": {\"on\": {\"type\": \"boolean\", \"enum\": [true, false]}}, \"additionalProperties\": false}}"))
            (contract (rlm--json-schema->contract
                       (gethash "contract" arguments))))
-      (test-assert (eq (gethash "additionalProperties"
-                                 (gethash "contract" arguments))
-                       false)
+      (test-assert (json-false-p (gethash "additionalProperties" (gethash "contract" arguments)))
                    "rlm tool arguments keep JSON false distinct from null")
       (test-assert (null (getf contract ':additional-properties ':missing))
                    "a JSON false additionalProperties converts to native nil")

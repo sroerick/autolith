@@ -345,18 +345,18 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
                     0)))
     (coerce (nthcdr start messages) 'vector)))
 
-(-> web--external-web-access (configuration) (or boolean (eql false) string))
+(-> web--external-web-access (configuration) (or (eql t) (satisfies json-false-p) string))
 (defun web--external-web-access (configuration)
   "Return Codex's standalone endpoint access value for CONFIGURATION."
   (cond
     ((string= (config :web-search-mode configuration) "cached")
-     false)
+     (json-false))
     ((string= (config :web-search-mode configuration) "indexed")
      "indexed")
     ((string= (config :web-search-mode configuration) "live")
      t)
     (t
-     false)))
+     (json-false))))
 
 (-> provider-web-search-request-headers
     (subscription-provider oauth-credentials conversation)

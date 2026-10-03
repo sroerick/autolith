@@ -987,8 +987,7 @@
                (test-assert
                 (and (= (length memory-variants) 3)
                      (every (lambda (variant)
-                              (eq (json-get variant "additionalProperties")
-                                  false))
+                              (json-false-p (gethash "additionalProperties" variant)))
                             memory-variants))
                 "resource.edit advertises three closed memory operation variants")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))

@@ -192,7 +192,7 @@
                           (lambda (configuration)
                             (json-object "name" (lsp-server-configuration-name configuration)
                                          "extensions" (coerce (lsp-server-configuration-extensions configuration) 'vector)
-                                         "disabled" (if (lsp-server-configuration-disabled-p configuration) t yason:false)))
+                                         "disabled" (json-boolean (lsp-server-configuration-disabled-p configuration))))
                           (lsp-manager-configure manager (tool-context-configuration context)))
            "clients" (coerce (nreverse clients) 'vector))))))))
 

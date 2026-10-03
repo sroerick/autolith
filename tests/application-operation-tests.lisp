@@ -459,8 +459,8 @@
    (null (tool-boolean-argument (json-object "async" nil) "async"))
    "an explicit NIL JSON false is accepted")
   (test-assert
-   (null (tool-boolean-argument (json-object "async" false) "async"))
-   "an explicit Yason JSON false is accepted")
+   (null (tool-boolean-argument (json-object "async" (json-false)) "async"))
+   "an explicit JSON false marker is accepted")
   (test-assert
    (tool-boolean-argument (json-object "async" t) "async")
    "an explicit JSON true is accepted")

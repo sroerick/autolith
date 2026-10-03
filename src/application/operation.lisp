@@ -741,10 +741,10 @@ paths that do not contain QUERY as a contiguous substring."
   (cond
     ((eq value t)
      t)
-    ((eq value false)
-     false)
+    ((json-false-p value)
+     (json-false))
     ((null value)
-     false)
+     (json-false))
     ((eq value ':null)
      nil)
     ((stringp value)

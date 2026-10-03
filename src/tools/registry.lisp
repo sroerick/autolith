@@ -184,7 +184,7 @@
    "type" "object"
    "properties" properties
    "required" (coerce required 'vector)
-   "additionalProperties" false))
+   "additionalProperties" (json-false)))
 
 (-> tool-string-property (string) json-object)
 (defun tool-string-property (description)
@@ -688,7 +688,7 @@ spilling is unavailable, in which case the tail is discarded as before.")
        t)
       ((null value)
        nil)
-      ((eq value false)
+      ((json-false-p value)
        nil)
       (t
        (error 'tool-error
@@ -1159,7 +1159,7 @@ a spurious leading dot."
       ((member type '("integer" "number") :test #'equal)
        0)
       ((equal type "boolean")
-       false)
+       (json-false))
       ((equal type "array")
        #())
       ((equal type "object")

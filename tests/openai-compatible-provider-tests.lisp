@@ -964,7 +964,7 @@
                                 (json-array
                                  (json-object "type" "function" "name" "read"
                                               "description" "Read one file." "strict"
-                                              false "parameters"
+                                              (json-false) "parameters"
                                               (json-object "type" "object")))))))
              (conversation-append-user-message conversation "Read the file.")
              (multiple-value-bind (request delivery)

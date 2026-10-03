@@ -242,7 +242,7 @@
                           "task blocking is an explicit opt-in"))
            (let ((item (first (task-normalize-arguments
                                (json-object "task" "Use legacy blocking."
-                                            "async" false)))))
+                                            "async" (json-false))))))
              (test-assert (and (getf item :blocking)
                                (null (getf item :async)))
                           "legacy JSON false remains a blocking override"))
@@ -290,7 +290,7 @@
                 (progn
                   (task-normalize-arguments
                    (json-object "task" "Reject removed fields."
-                                "isolated" false))
+                                "isolated" (json-false)))
                   nil)
               (task-error () t))
             "task normalization rejects the removed isolated field")

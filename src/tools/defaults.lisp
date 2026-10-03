@@ -520,7 +520,7 @@
                  "type" "string"
                  "description" "pending, doing/in_progress, or done/completed."))
                "required" (json-array "step" "status")
-               "additionalProperties" false))
+               "additionalProperties" (json-false)))
              "explanation"
              (tool-string-property
               "Optional short explanation of the plan."))

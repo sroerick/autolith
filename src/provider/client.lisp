@@ -462,7 +462,7 @@ root's key, as the Codex reference does at commit 6f51c65958."
   "Return Codex fields shared by the concrete and generic Responses views."
   (let ((configuration (provider-configuration provider)))
     (append
-     (list "parallel_tool_calls" (if compaction-p false t)
+     (list "parallel_tool_calls" (if compaction-p (json-false) t)
            "include" (json-array "reasoning.encrypted_content")
            "prompt_cache_key" (provider--codex-prompt-cache-key
                                provider conversation)

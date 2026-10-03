@@ -178,7 +178,7 @@
                            :parameters (json-object
                                         "type" "object"
                                         "properties" (json-object)
-                                        "additionalProperties" false)))
+                                        "additionalProperties" (json-false))))
            (let* ((result (tool-registry-execute-call
                            registry
                            (json-object "namespace" "test"
@@ -451,8 +451,7 @@
                        "current UTC date")
               "web.run passes Codex search commands to provider search")
              (test-assert
-              (eq (json-get (json-get request "settings") "external_web_access")
-                  false)
+              (json-false-p (gethash "external_web_access" (json-get request "settings")))
               "cached web.run requests forbid direct web access")
              (let ((live-request
                      (web--search-request

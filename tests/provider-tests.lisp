@@ -654,7 +654,7 @@
            (test-assert
             (and (string= (json-get request "tool_choice") "auto")
                  (eq (json-get request "parallel_tool_calls") t)
-                 (eq (json-get request "store") false)
+                 (json-false-p (gethash "store" request))
                  (eq (json-get request "stream") t))
             "standard Responses requests carry their transport controls")
            (test-assert
@@ -713,7 +713,7 @@
                    (provider-request-object
                     provider conversation schemas :compaction-p t)))
              (test-assert
-              (and (eq (json-get compaction-request "parallel_tool_calls") false)
+              (and (json-false-p (gethash "parallel_tool_calls" compaction-request))
                    (zerop (length (json-get compaction-request "tools")))
                    (search "context checkpoint compaction"
                            (json-get compaction-request "instructions"))
@@ -2699,11 +2699,11 @@
              "tools" (json-array
                       (json-object "type" "function" "name" "read"
                                    "description" "Read one resource window."
-                                   "strict" false
+                                   "strict" (json-false)
                                    "parameters" (json-object "type" "object"))
                       (json-object "type" "function" "name" "edit"
                                    "description" "Apply structured edits."
-                                   "strict" false
+                                   "strict" (json-false)
                                    "parameters" (json-object "type" "object"))))
             (json-object
              "type" "namespace"
@@ -2712,7 +2712,7 @@
              "tools" (json-array
                       (json-object "type" "function" "name" "run"
                                    "description" "Run one shell command in the workspace."
-                                   "strict" false
+                                   "strict" (json-false)
                                    "parameters" (json-object "type" "object"))))))
          (cases
            ;; query, limit, expected (namespace (tool ...)) alist

@@ -76,7 +76,7 @@
                   (string= (json-get (json-get request "reasoning") "effort") effort)
                   "Grok 4.7 requests preserve each supported reasoning effort")))
             (test-assert
-             (eq (json-get request "parallel_tool_calls") false)
+             (json-false-p (gethash "parallel_tool_calls" request))
              "Grok requests disable parallel tool calls")
             (test-assert
              (find "web_search" tools

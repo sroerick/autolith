@@ -1392,7 +1392,7 @@
                   (test-assert
                    (every (lambda (variant)
                             (and (json-get variant "required")
-                                 (eq (json-get variant "additionalProperties") false)))
+                                 (json-false-p (gethash "additionalProperties" variant))))
                           variants)
                    "every resource edit operation schema requires its fields and rejects extras")
                   (let* ((replace-variant

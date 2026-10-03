@@ -902,9 +902,13 @@
                 #:with-configuration)
   (:import-from #:argo
                 #:json-array
+                #:json-boolean
                 #:json-decode
                 #:json-encode
                 #:json-encode-utf8
+                #:json-error
+                #:json-false
+                #:json-false-p
                 #:json-get
                 #:json-get-present
                 #:json-object

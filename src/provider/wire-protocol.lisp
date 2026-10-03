@@ -184,7 +184,7 @@ tool_search_output replays in history so the expansion stays loaded."
               "description" (format nil "Maximum number of tools to return. Defaults to ~D."
                                     *provider-tool-search-default-limit*)))
     "required" (json-array "query")
-    "additionalProperties" false)))
+    "additionalProperties" (json-false))))
 
 (-> provider-tool-search-call-p (t) boolean)
 (defun provider-tool-search-call-p (item)

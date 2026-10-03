@@ -226,9 +226,7 @@
                                      "required")
                            'list)
                           '("name"))
-                   (eq (json-get (json-get schema "parameters")
-                                 "additionalProperties")
-                       false))
+                   (json-false-p (gethash "additionalProperties" (json-get schema "parameters"))))
               "skill.load exposes one required exact-name argument"))
            (let ((outside-turn
                    (skill-tool-tests--call registry context "alpha")))

@@ -70,7 +70,7 @@
                 "capabilities" (json-object "completion_chat" t))
                (json-object
                 "id" "codestral-embed"
-                "capabilities" (json-object "completion_chat" false)))))))
+                "capabilities" (json-object "completion_chat" (json-false))))))))
       (test-assert
        (equal (openai-compatible--decode-model-list
                body
