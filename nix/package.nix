@@ -47,7 +47,7 @@ let
   # added to the qlfile without a buildASDFSystem entry fails evaluation here
   # instead of quietly shipping a release that never loaded it.
   qlotLibrariesWithBuildMetadata = [
-    "agentcomms" "cl-colorist" "cl-exec-sandbox" "cl-jobpond"
+    "agentcomms" "argo" "cl-colorist" "cl-exec-sandbox" "cl-jobpond"
     "cl-llm-provider-api" "cl-lsp" "cl-rfc8628" "cl-skills" "cl-termdown"
     "clifff" "clinedi" "clinker-transcript" "colordiff" "colorlisp" "fetch-gist"
     "idsmall" "image-daemon" "ls-compat" "ls-flock" "mcparen" "org-templater"
@@ -155,6 +155,17 @@ let
       lsFlock
       sexpStore
       structlisp
+    ];
+  };
+
+  argo = pkgs.sbcl.buildASDFSystem {
+    pname = "argo";
+    version = qlotVersion "argo";
+    src = qlotSource "argo";
+    lispLibs = with pkgs.sbclPackages; [
+      flexi-streams
+      serapeum
+      yason
     ];
   };
 
@@ -430,6 +441,7 @@ let
     systems = [ "autolith" "autolith/tests" ];
     lispLibs = with pkgs.sbclPackages; [
       agentcomms
+      argo
       bordeaux-threads
       cl-base64
       cffi

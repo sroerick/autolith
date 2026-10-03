@@ -170,3 +170,7 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/structlisp.git" :ref "66bbfbe947b69f3105f71f5e4293637decc91746")
   :version "git-66bbfbe947b69f3105f71f5e4293637decc91746"))
+("argo" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/lambda-symbolics/argo.git" :ref "bd7415c7d6df61889147979c7c1964a0246a8f19")
+  :version "git-bd7415c7d6df61889147979c7c1964a0246a8f19"))
