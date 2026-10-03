@@ -38,9 +38,7 @@
          (checksum (merge-pathnames (format nil "~A.sha256" archive-name)
                                     directory)))
     (release-server-tests--write-file archive content)
-    (uiop:run-program (list "sha256sum" "--" archive-name)
-                      :directory directory
-                      :output checksum)
+    (release-archive--checksum-file archive checksum)
     (values archive checksum)))
 
 (-> release-server-tests--source-tag (string string) release-source-tag)
@@ -179,9 +177,47 @@
                  "candidate setup keeps its requested working directory"))
   nil)
 
+(-> release-server-tests--test-artifact-checksums () null)
+(defun release-server-tests--test-artifact-checksums ()
+  "Exercise portable archive verification and malformed checksum refusal."
+  (with-test-configuration (configuration)
+    (let* ((directory (test-configuration-root configuration))
+           (tag "v0.32.2"))
+      (multiple-value-bind (archive checksum)
+          (release-server-tests--write-artifact directory tag "x86_64-linux" "archive")
+        (let* ((name (file-namestring archive))
+               (digest (release-archive--sha256-digest archive))
+               (valid (format nil "~A  ~A~%" digest name)))
+          (dolist (entry
+                    (list (list valid t)
+                          (list (format nil "~A *~A~%" (string-upcase digest) name) t)
+                          (list (format nil "~A  ~A~%" (make-string 64 :initial-element #\0)
+                                        name) nil)
+                          (list (format nil "~A  other.tar.gz~%" digest) nil)
+                          (list (concatenate 'string valid valid) nil)
+                          (list "malformed" nil)))
+            (destructuring-bind (record accepted-p) entry
+              (release-server-tests--write-file checksum record)
+              (let ((accepted
+                      (handler-case
+                          (progn
+                            (release-builder--validate-artifacts directory tag)
+                            t)
+                        (release-builder-error (condition)
+                          (test-assert
+                           (and (eq (release-builder-error-stage condition)
+                                    ':artifact-validation)
+                                (string= (release-builder-error-tag condition) tag))
+                           "invalid checksums identify their artifact validation stage and tag")
+                          nil))))
+                (test-assert (eq accepted accepted-p)
+                             "artifact validation verifies the digest and its single named record"))))))))
+  nil)
+
 (-> test-release-server () null)
 (defun test-release-server ()
   "Test semantic release selection and strict HTTP routing."
+  (release-server-tests--test-artifact-checksums)
   (release-server-tests--test-service-runtime-isolation)
   (test-assert (release-tag-valid-p "v0.11.1")
                "three-component release tags are valid")
@@ -620,14 +656,12 @@
                       (release-server--archive-name tag "x86_64-linux")
                       staging)))
                (release-server-tests--write-file linux "changed-linux")
-               (uiop:run-program
-                (list "sha256sum" "--"
-                      (release-server--archive-name tag "x86_64-linux"))
-                :directory staging
-                :output (merge-pathnames
-                         (format nil "~A.sha256"
-                                 (release-server--archive-name tag "x86_64-linux"))
-                         staging))
+               (release-archive--checksum-file
+                linux
+                (merge-pathnames
+                 (format nil "~A.sha256"
+                         (release-server--archive-name tag "x86_64-linux"))
+                 staging))
                (test-assert
                 (handler-case
                     (progn

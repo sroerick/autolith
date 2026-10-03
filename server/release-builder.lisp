@@ -667,6 +667,25 @@ tree intact lets one tag's object files fail a later tag's checks."
                  (uiop:file-exists-p checksum))
           collect (list archive checksum archive-name)))
 
+(-> release-builder--checksum-matches-p (pathname pathname) boolean)
+(defun release-builder--checksum-matches-p (archive checksum)
+  "Verify CHECKSUM's single GNU record names ARCHIVE and matches its SHA-256."
+  (let* ((name (file-namestring archive))
+         (record-length (+ 66 (length name)))
+         (record
+           (with-open-file (stream checksum :external-format ':utf-8)
+             (when (<= record-length (file-length stream) (+ record-length 2))
+               (let ((line (read-line stream nil nil)))
+                 (when (and line (null (read-line stream nil nil)))
+                   (string-right-trim '(#\Return) line)))))))
+    (and record
+         (= (length record) record-length)
+         (string= record name :start1 66)
+         (member (subseq record 64 66) '("  " " *") :test #'string=)
+         (string-equal record (release-archive--sha256-digest archive)
+                       :end1 64)
+         t)))
+
 (-> release-builder--validate-artifacts (pathname string) null)
 (defun release-builder--validate-artifacts (directory tag)
   "Require DIRECTORY's fetched archives to match their checksums."
@@ -690,17 +709,17 @@ tree intact lets one tag's object files fail a later tag's checks."
                  :tag tag
                  :cause (format nil "~A is missing its archive or checksum."
                                 archive-name)))
-        (handler-case
-            (uiop:run-program
-             (list "sha256sum" "--check" "--status" (file-namestring checksum))
-             :directory directory
-             :output ':interactive
-             :error-output ':interactive)
-          (error (cause)
-            (error 'release-builder-error
-                   :stage ':artifact-validation
-                   :tag tag
-                   :cause cause))))))
+        (unless (handler-case
+                    (release-builder--checksum-matches-p archive checksum)
+                  (error (cause)
+                    (error 'release-builder-error
+                           :stage ':artifact-validation
+                           :tag tag
+                           :cause cause)))
+          (error 'release-builder-error
+                 :stage ':artifact-validation
+                 :tag tag
+                 :cause (format nil "~A has an invalid checksum." archive-name))))))
   nil)
 
 (-> release-builder--install-artifact (pathname pathname) pathname)
