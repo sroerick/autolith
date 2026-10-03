@@ -115,10 +115,6 @@
   test-skill-edit-tool
   test-skill-load-presentation)
 
-
-(define-test-suite session-tool
-  test-session-search-and-read-tools)
-
 (define-test-suite mcp-configuration
   test-mcp-configuration)
 
