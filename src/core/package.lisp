@@ -938,7 +938,8 @@
                 #:json-string-member-p
                 #:json-string=
                 #:json-true-p
-                #:json-value)
+                #:json-value
+                #:make-json-limits)
   (:import-from #:ls-compat
                 #:utf8-octets-to-string
                 #:utf8-string-to-octets)

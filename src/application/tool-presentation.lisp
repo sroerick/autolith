@@ -51,32 +51,27 @@
         (json-error ()
           nil)))))
 
-(defparameter *application-provider-form-source-characters* 65536
-  "The largest provider argument source decoded solely for Lisp display.")
+(defparameter *application-provider-form-limits*
+  (make-json-limits :maximum-characters            65536
+                    :maximum-depth                 17
+                    :maximum-string-characters     24576
+                    :maximum-object-key-characters 512
+                    :maximum-object-members        128
+                    :maximum-array-elements        128)
+  "Bounds on provider arguments decoded solely for Lisp display.
+
+The depth counts the argument object itself, so values nest sixteen deep.")
 
 (defparameter *application-provider-form-characters* 32768
   "The largest complete provider-call Lisp form materialized for display.")
 
-(defparameter *application-provider-form-string-characters* 24576
-  "The largest individual JSON string rendered into a provider-call Lisp form.")
-
-(defparameter *application-provider-form-items* 128
-  "The largest object or array rendered into a provider-call Lisp form.")
-
-(defparameter *application-provider-form-depth* 16
-  "The largest nested container depth rendered into a provider-call Lisp form.")
-
 (defparameter *application-provider-form-name-characters* 160
   "The largest provider namespace or operation name rendered as Lisp.")
 
-(defparameter *application-provider-form-key-characters* 512
-  "The largest JSON object key rendered into a provider-call Lisp form.")
-
 (-> application--provider-form-string-p (t) boolean)
 (defun application--provider-form-string-p (value)
-  "Return whether VALUE is a bounded string safe in a provider-call Lisp form."
+  "Return whether VALUE is a string of characters safe in a provider-call Lisp form."
   (and (stringp value)
-       (<= (length value) *application-provider-form-string-characters*)
        (every (lambda (character)
                 (or (graphic-char-p character)
                     (member character '(#\Newline #\Return #\Tab)
@@ -107,11 +102,10 @@
 (defun application--provider-call-preserved-arguments (call)
   "Decode exactly one bounded CALL argument object while preserving JSON values."
   (let ((source (json-get call "arguments")))
-    (when (and (non-empty-string-p source)
-               (<= (length source)
-                   *application-provider-form-source-characters*))
+    (when (non-empty-string-p source)
       (handler-case
-          (let ((arguments (json-decode source)))
+          (let ((arguments (json-decode source
+                                        :limits *application-provider-form-limits*)))
             (and (json-object-p arguments) arguments))
         (json-error ()
           nil)))))
@@ -165,59 +159,46 @@
   (write-string text stream)
   nil)
 
-(-> application--json-lisp-value-write (stream t cons integer) null)
-(defun application--json-lisp-value-write (stream value budget depth)
-  "Write bounded deterministic Lisp recreating JSON VALUE to STREAM."
+(-> application--json-lisp-value-write (stream t cons) null)
+(defun application--json-lisp-value-write (stream value budget)
+  "Write deterministic Lisp recreating decoded JSON VALUE to STREAM within BUDGET.
+
+VALUE was decoded under *APPLICATION-PROVIDER-FORM-LIMITS*, which already
+bounds its nesting, container sizes, string lengths and key lengths."
   (cond
     ((eq value t)
      (application--provider-form-write stream "t" budget))
     ((json-false-p value)
      (application--provider-form-write stream "nil" budget))
-    ((or (null value) (eq value ':null))
+    ((null value)
      (application--provider-form-write stream ":null" budget))
     ((stringp value)
      (unless (application--provider-form-string-p value)
-       (application--provider-form-limit "the individual string boundary"))
+       (application--provider-form-limit "the string character boundary"))
      (application--provider-form-write
       stream (application--lisp-readable-atom value) budget))
     ((json-object-p value)
-     (unless (plusp depth)
-       (application--provider-form-limit "the nesting depth limit"))
-     (let ((count (hash-table-count value)))
-       (when (> count *application-provider-form-items*)
-         (application--provider-form-limit "the object item limit"))
-       (let ((keys
-               (sort (loop for key being the hash-keys of value
-                           when (stringp key)
+     (let ((keys (sort (loop for key being the hash-keys of value
                              collect key)
-                     #'string<)))
-         (unless (and (= (length keys) count)
-                      (every (lambda (key)
-                               (and (<= (length key)
-                                        *application-provider-form-key-characters*)
-                                    (every #'graphic-char-p key)))
-                             keys))
-           (application--provider-form-limit "the object key boundary"))
-         (application--provider-form-write stream "(json-object" budget)
-         (dolist (key keys)
-           (application--provider-form-write stream " " budget)
-           (application--provider-form-write
-            stream (application--lisp-readable-atom key) budget)
-           (application--provider-form-write stream " " budget)
-           (application--json-lisp-value-write
-            stream (json-get value key) budget (1- depth)))
-         (application--provider-form-write stream ")" budget))))
-    ((and (vectorp value) (not (stringp value)))
-     (unless (plusp depth)
-       (application--provider-form-limit "the nesting depth limit"))
-     (when (> (length value) *application-provider-form-items*)
-       (application--provider-form-limit "the array item limit"))
+                       #'string<)))
+       (unless (every (lambda (key)
+                        (every #'graphic-char-p key))
+                      keys)
+         (application--provider-form-limit "the object key boundary"))
+       (application--provider-form-write stream "(json-object" budget)
+       (dolist (key keys)
+         (application--provider-form-write stream " " budget)
+         (application--provider-form-write
+          stream (application--lisp-readable-atom key) budget)
+         (application--provider-form-write stream " " budget)
+         (application--json-lisp-value-write stream (json-get value key) budget))
+       (application--provider-form-write stream ")" budget)))
+    ((vectorp value)
      (application--provider-form-write stream "(vector" budget)
      (loop for item across value
            do
               (application--provider-form-write stream " " budget)
-              (application--json-lisp-value-write
-               stream item budget (1- depth)))
+              (application--json-lisp-value-write stream item budget))
      (application--provider-form-write stream ")" budget))
     (t
      (application--provider-form-write
@@ -238,26 +219,16 @@
                (<= (length name)
                    *application-provider-form-name-characters*))
       (handler-case
-          (let* ((canonical-name (format nil "~A.~A" namespace name))
-                 (keys
-                   (progn
-                     (when (> (hash-table-count arguments)
-                              *application-provider-form-items*)
-                       (application--provider-form-limit
-                        "the argument item limit"))
-                     (sort (loop for key being the hash-keys of arguments
-                                 when (stringp key)
-                                   collect key)
-                           #'string<)))
-                 (budget (list *application-provider-form-characters*)))
-            (unless (and (= (length keys) (hash-table-count arguments))
-                         (every (lambda (key)
-                                  (and (non-empty-string-p key)
-                                       (<= (length key)
-                                           *application-provider-form-key-characters*)
-                                       (every #'graphic-char-p key)
-                                       (string= key (string-downcase key))))
-                                keys))
+          (let ((canonical-name (format nil "~A.~A" namespace name))
+                (keys (sort (loop for key being the hash-keys of arguments
+                                  collect key)
+                            #'string<))
+                (budget (list *application-provider-form-characters*)))
+            (unless (every (lambda (key)
+                             (and (non-empty-string-p key)
+                                  (every #'graphic-char-p key)
+                                  (string= key (string-downcase key))))
+                           keys)
               (application--provider-form-limit
                "the local operation key boundary"))
             (with-output-to-string (stream)
@@ -270,10 +241,7 @@
                  stream (application--lisp-key-token key) budget)
                 (application--provider-form-write stream " " budget)
                 (application--json-lisp-value-write
-                 stream
-                 (json-get arguments key)
-                 budget
-                 *application-provider-form-depth*))
+                 stream (json-get arguments key) budget))
               (application--provider-form-write stream ")" budget)))
         (application-provider-form-limit ()
           nil)

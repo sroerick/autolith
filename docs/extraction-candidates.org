@@ -80,9 +80,14 @@ which every span function presents as their label, plus =widget-regions=,
 fullscreen viewport that consumes the regions remains its own candidate.
 
 ** Smaller items
-- JSON to readable Lisp form writer with budgets, depth and item limits
-  (=tool-presentation.lisp= 133-239, 447-558) and the reverse direction in
-  =operation.lisp= 719-790: a small codec library at most.
+- DONE 2026-10-03: JSON to readable Lisp form writer with budgets, depth and
+  item limits (=tool-presentation.lisp= 133-239, 447-558) and the reverse
+  direction in =operation.lisp= 719-790. Not argo material: the forms use the
+  local tool-call convention (=nil= is false, =:null= is null, lowercase keyword
+  arguments), the reverse of argo's value model, and the reverse direction's
+  coercion of pathnames, symbols and characters is local tool policy. The
+  duplicated part, the writer's own depth, item, string and key bounds, is now
+  argo's =json-limits= applied while decoding the arguments.
 - Grouped multi-column picker rows (=ui.lisp= 696-820) are the natural renderer
   for clinedi's =selector-arrange=.
 - Path completion under a root with dotfile and =..= policy

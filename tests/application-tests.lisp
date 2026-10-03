@@ -2365,20 +2365,22 @@
                  "type" "function_call"
                  "namespace" "resource"
                  "name" "read"
-                 "arguments" source))))
+                 "arguments" source)))
+
+             (bounded (source &rest limits)
+               "Render SOURCE with provider form decoding bounded by LIMITS."
+               (let ((*application-provider-form-limits*
+                       (apply #'make-json-limits limits)))
+                 (render source))))
       (test-assert
-       (and (let ((*application-provider-form-source-characters* 1))
-              (null (render "{}")))
-            (let ((*application-provider-form-items* 1))
-              (null (render "{\"a\":1,\"b\":2}")))
-            (let ((*application-provider-form-depth* 1))
-              (null (render "{\"value\":{\"a\":{\"b\":1}}}")))
-            (let ((*application-provider-form-string-characters* 3))
-              (null (render "{\"uri\":\"four\"}")))
-            (let ((*application-provider-form-key-characters* 2))
-              (null (render "{\"uri\":\"x\"}")))
+       (and (render "{\"value\":{\"a\":{\"b\":1}}}")
+            (null (bounded "{}" :maximum-characters 1))
+            (null (bounded "{\"a\":1,\"b\":2}" :maximum-object-members 1))
+            (null (bounded "{\"value\":{\"a\":{\"b\":1}}}" :maximum-depth 2))
+            (null (bounded "{\"uri\":\"four\"}" :maximum-string-characters 3))
+            (null (bounded "{\"uri\":\"x\"}" :maximum-object-key-characters 2))
             (null (render "{\"x\\ny\":1}")))
-       "provider forms enforce source, item, depth, string, and key boundaries"))
+       "provider forms enforce their decoding limits and key characters"))
     (let* ((source (format nil "~{form-line-~D~^~%~}"
                            (loop for index from 1 to 10 collect index)))
            (entry (response-item-entry
