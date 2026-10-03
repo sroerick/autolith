@@ -318,37 +318,6 @@
                                    :reasoning-effort "none"))
               "none")
      "none is passed through as a provider reasoning effort")
-    (test-assert (= (json-get (json-object "answer" 42) "answer") 42)
-                 "JSON object access preserves values")
-    (test-assert (vectorp (json-decode "[1,2,3]"))
-                 "JSON arrays have one consistent vector representation")
-    (let* ((decoded (json-decode
-                     "{\"false\":false,\"true\":true,\"null\":null}"))
-           (false-marker (gethash "false" decoded))
-           (true-value (json-get decoded "true"))
-           (null-value (json-get decoded "null")))
-      (test-assert (eq false-marker *json-decoded-false*)
-                   "JSON false retains a distinct internal marker")
-      (test-assert (null (json-get decoded "false"))
-                   "decoded JSON false remains false to ordinary object access")
-      (test-assert (eq true-value t)
-                   "JSON true retains its ordinary Lisp representation")
-      (test-assert (null null-value)
-                   "JSON null retains its ordinary Lisp representation")
-      (test-assert
-       (string= (json-encode (json-array false-marker true-value null-value))
-                "[false,true,null]")
-       "JSON false and null survive a decode and re-encode round trip"))
-    (let* ((value (json-object "text" "příliš žluťoučký"))
-           (encoded (json-encode value))
-           (octets (json-encode-utf8 value)))
-      (test-assert
-       (equalp octets
-               (sb-ext:string-to-octets encoded :external-format ':utf-8))
-       "direct UTF-8 JSON encoding preserves the compact wire representation")
-      (test-assert
-       (subtypep (array-element-type octets) '(unsigned-byte 8))
-       "direct UTF-8 JSON encoding returns octets without a wide string body"))
     (let ((*print-readably* t))
       (test-assert
        (search "Condition text."

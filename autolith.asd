@@ -5,6 +5,7 @@
   :version "0.56.0"
   :serial t
   :depends-on (#:agentcomms
+               #:argo
                #:cl-base64
                #:cl+ssl
                #:cl-colorist
@@ -60,7 +61,7 @@
                              (:file "core/conditions")
                              (:file "core/version")
                              (:file "localgroup/protocol")
-                             (:file "core/json")
+                             (:file "core/bounded-text")
                              (:file "core/time")
                              (:file "core/platform")
                              (:file "core/platform-posix" :if-feature (:not :win32))

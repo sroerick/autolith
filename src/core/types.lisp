@@ -34,18 +34,3 @@
 (deftype non-empty-string ()
   "A string containing at least one non-whitespace character."
   '(satisfies non-empty-string-p))
-
-(-> json-object-p (t) boolean)
-(defun json-object-p (value)
-  "Return true when VALUE is a string-keyed hash table suitable for JSON."
-  (and (hash-table-p value)
-       (loop for key being the hash-keys of value
-             always (stringp key))))
-
-(deftype json-object ()
-  "A string-keyed hash table representing a JSON object."
-  '(satisfies json-object-p))
-
-(deftype json-value ()
-  "A value accepted by Autolith's JSON codec."
-  '(or null string number symbol vector list json-object))

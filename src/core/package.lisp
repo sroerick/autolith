@@ -840,6 +840,20 @@
                 #:sbcl-worker-start
                 #:sbcl-worker-stop
                 #:sbcl-worker-used-image-identifier)
+  (:import-from #:argo
+                #:json-array
+                #:json-decode
+                #:json-encode
+                #:json-encode-utf8
+                #:json-get
+                #:json-get-present
+                #:json-object
+                #:json-object-copy
+                #:json-object-p
+                #:json-object-source-p
+                #:json-string-member-p
+                #:json-string=
+                #:json-value)
   (:import-from #:ls-compat
                 #:utf8-octets-to-string
                 #:utf8-string-to-octets)
