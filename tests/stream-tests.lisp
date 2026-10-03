@@ -81,3 +81,33 @@
      (zerop (read-character-sequence buffer stream))
      "bounded character reads return zero at end of input"))
   nil)
+
+
+;;;; -- Bounded Output Capture Tests --
+
+(-> test-bounded-output-stream () null)
+(defun test-bounded-output-stream ()
+  "Test that bounded output keeps a prefix, reports truncation, and tracks columns."
+  (let ((stream (bounded-output-stream-create 8)))
+    (format stream "abc~%de")
+    (test-assert (and (string= (bounded-output-stream-text stream)
+                               (format nil "abc~%de"))
+                      (not (bounded-output-stream-truncated-p stream)))
+                 "bounded output retains text within its capacity")
+    (test-assert (= (trivial-gray-streams:stream-line-column stream) 2)
+                 "bounded output tracks the column after a newline")
+    (write-string "fghij" stream)
+    (format stream "~&tail")
+    (test-assert (and (string= (bounded-output-stream-text stream)
+                               (format nil "abc~%defg"))
+                      (bounded-output-stream-truncated-p stream)
+                      (= (bounded-output-stream-capacity stream) 8))
+                 "bounded output keeps only the prefix and reports truncation")
+    (test-assert (= (trivial-gray-streams:stream-line-column stream) 4)
+                 "bounded output keeps following columns past its capacity"))
+  (let ((stream (bounded-output-stream-create 0)))
+    (write-char #\x stream)
+    (test-assert (and (string= (bounded-output-stream-text stream) "")
+                      (bounded-output-stream-truncated-p stream))
+                 "a zero-capacity stream retains nothing and reports truncation"))
+  nil)

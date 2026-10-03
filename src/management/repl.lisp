@@ -204,8 +204,7 @@
 (-> management-repl-write-frame (stream t (integer 1)) null)
 (defun management-repl-write-frame (stream value maximum-size)
   "Print VALUE readably and write one bounded network-order frame to STREAM."
-  (let ((capture (make-instance 'management-repl-bounded-output-stream
-                                :limit maximum-size)))
+  (let ((capture (bounded-output-stream-create maximum-size)))
     (with-standard-io-syntax
       (let ((*print-readably* t)
             (*print-circle* t)
@@ -213,10 +212,10 @@
             (*print-length* 256)
             (*package* (find-package '#:autolith)))
         (write value :stream capture)))
-    (when (management-repl-output-truncated-p capture)
+    (when (bounded-output-stream-truncated-p capture)
       (management-repl--protocol-error
        ':oversized "Management protocol response exceeds the configured frame bound."))
-    (let* ((text (management-repl-output-string capture))
+    (let* ((text (bounded-output-stream-text capture))
            (octets (utf8-string-to-octets text)))
       (when (> (length octets) maximum-size)
         (management-repl--protocol-error
@@ -383,71 +382,18 @@
 
 ;;;; -- Bounded Evaluation Output --
 
-(defclass management-repl-bounded-output-stream
-    (trivial-gray-streams:fundamental-character-output-stream)
-  ((buffer
-    :initform (make-array 0
-                          :element-type 'character
-                          :adjustable t
-                          :fill-pointer 0)
-    :reader management-repl-output-buffer
-    :documentation "The captured characters up to the configured limit.")
-   (limit
-    :initarg :limit
-    :reader management-repl-output-limit
-    :type (integer 0)
-    :documentation "The maximum captured character count.")
-   (truncated-p
-    :initform nil
-    :accessor management-repl-output-truncated-p
-    :type boolean
-    :documentation "Whether further output was discarded."))
-  (:documentation "A character output stream that never grows beyond a fixed limit."))
-
-(defmethod trivial-gray-streams:stream-write-char
-    ((stream management-repl-bounded-output-stream) character)
-  "Capture CHARACTER when STREAM still has capacity."
-  (if (< (fill-pointer (management-repl-output-buffer stream))
-         (management-repl-output-limit stream))
-      (vector-push-extend character (management-repl-output-buffer stream))
-      (setf (management-repl-output-truncated-p stream) t))
-  character)
-
-(defmethod trivial-gray-streams:stream-write-string
-    ((stream management-repl-bounded-output-stream) string
-     &optional (start 0) end)
-  "Capture the bounded slice of STRING accepted by STREAM."
-  (let* ((end (or end (length string)))
-         (available (- (management-repl-output-limit stream)
-                       (fill-pointer (management-repl-output-buffer stream))))
-         (count (min available (- end start))))
-    (loop for index from start below (+ start count)
-          do (vector-push-extend (char string index)
-                                 (management-repl-output-buffer stream)))
-    (when (< count (- end start))
-      (setf (management-repl-output-truncated-p stream) t)))
-  string)
-
-(-> management-repl-output-string
-    (management-repl-bounded-output-stream)
-    string)
-(defun management-repl-output-string (stream)
-  "Return a fresh string containing STREAM's bounded captured output."
-  (coerce (management-repl-output-buffer stream) 'string))
-
 (-> management-repl--print-bounded (t (integer 0)) (values string boolean))
 (defun management-repl--print-bounded (value limit)
   "Return a readable bounded rendering of VALUE and whether it was truncated."
-  (let ((stream (make-instance 'management-repl-bounded-output-stream
-                               :limit limit)))
+  (let ((stream (bounded-output-stream-create limit)))
     (let ((*print-readably* nil)
           (*print-escape* t)
           (*print-circle* t)
           (*print-level* 8)
           (*print-length* 64))
       (write value :stream stream))
-    (values (management-repl-output-string stream)
-            (management-repl-output-truncated-p stream))))
+    (values (bounded-output-stream-text stream)
+            (bounded-output-stream-truncated-p stream))))
 
 
 ;;;; -- Runtime State and Queue --
@@ -601,8 +547,7 @@
                 (max 16 (floor (config :management-repl-maximum-frame-size
                                 configuration)
                                4))))
-         (output (make-instance 'management-repl-bounded-output-stream
-                                :limit output-limit)))
+         (output (bounded-output-stream-create output-limit)))
     (labels ((condition-response (condition timed-out-p)
                "Return a structured bounded failure for CONDITION."
                (multiple-value-bind (report report-truncated-p)
@@ -612,9 +557,9 @@
                        :condition-type (string (type-of condition))
                        :report report
                        :report-truncated-p report-truncated-p
-                       :output (management-repl-output-string output)
+                       :output (bounded-output-stream-text output)
                        :output-truncated-p
-                       (management-repl-output-truncated-p output)))))
+                       (bounded-output-stream-truncated-p output)))))
       (handler-case
           (let ((remaining (management-repl--remaining-seconds request))
                 (debugger-hook
@@ -658,9 +603,9 @@
                           :status ':ok
                           :values (nreverse rendered)
                           :values-truncated-p truncated-p
-                          :output (management-repl-output-string output)
+                          :output (bounded-output-stream-text output)
                           :output-truncated-p
-                          (management-repl-output-truncated-p output)))))))
+                          (bounded-output-stream-truncated-p output)))))))
         (sb-ext:timeout (condition)
           (condition-response condition t))
         (serious-condition (condition)

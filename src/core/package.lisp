@@ -1006,6 +1006,12 @@
                 #:snapshot-write
                 #:store-error)
   (:import-from #:structlisp
+                #:bounded-sequence-builder
+                #:bounded-sequence-builder-maximum-count
+                #:bounded-sequence-builder-overflowed-p
+                #:bounded-sequence-builder-snapshot
+                #:bounded-sequence-builder-try-append
+                #:make-bounded-sequence-builder
                 #:deque
                 #:deque-append
                 #:deque->list

@@ -11,8 +11,7 @@
 (defparameter *application-async-lisp-output-display-interval* 0.25d0
   "Minimum seconds between live output deliveries.")
 
-(defclass application-async-lisp-output-stream
-    (trivial-gray-streams:fundamental-character-output-stream)
+(defclass application-async-lisp-output-stream (bounded-output-stream)
   ((output-function
     :initarg :output-function :accessor application-async-lisp-output-stream-output-function
     :documentation "Optional sink for sanitized, bounded live output chunks.")
@@ -26,38 +25,19 @@
     :initform (make-lock "async-lisp-output-display")
     :reader application-async-lisp-output-stream-display-lock
     :documentation "Serializes callbacks without holding the capture lock.")
-   (buffer
-    :initform (make-array *application-async-lisp-output-capture-limit* :element-type 'character)
-    :reader application-async-lisp-output-stream-buffer
-    :documentation "Fixed-capacity retained output prefix.")
-   (buffer-length
-    :initform 0 :accessor application-async-lisp-output-stream-buffer-length
-    :documentation "Number of retained prefix characters.")
-   (truncated-p
-    :initform nil :accessor application-async-lisp-output-stream-truncated-p
-    :documentation "Whether output exceeded the retained prefix capacity.")
    (pending
-    :initform (make-array *application-async-lisp-output-pending-limit* :element-type 'character)
+    :initarg :pending
     :reader application-async-lisp-output-stream-pending
-    :documentation "Fixed-capacity ring of pending display characters.")
-   (pending-start
-    :initform 0 :accessor application-async-lisp-output-stream-pending-start
-    :documentation "First retained ring index.")
-   (pending-length
-    :initform 0 :accessor application-async-lisp-output-stream-pending-length
-    :documentation "Number of occupied ring positions.")
+    :documentation "Bounded deque of pending display characters, evicting the oldest.")
    (pending-omitted
     :initform 0 :accessor application-async-lisp-output-stream-pending-omitted
-    :documentation "Saturating count of overwritten pending characters.")
+    :documentation "Saturating count of evicted pending characters.")
    (escape-state
     :initform nil :accessor application-async-lisp-output-stream-escape-state
     :documentation "Current ANSI sequence state: NIL, :ESCAPE, :CSI, :OSC, or :OSC-ESCAPE.")
    (last-display-time
     :initform 0.0d0 :accessor application-async-lisp-output-stream-last-display-time
-    :documentation "Internal time in seconds of the last display delivery.")
-   (column
-    :initform 0 :accessor application-async-lisp-output-stream-column
-    :documentation "Logical output column for FORMAT and FRESH-LINE."))
+    :documentation "Internal time in seconds of the last display delivery."))
   (:documentation "Bounded, synchronized Lisp output capture with a throttled live sink."))
 
 (-> application-async-lisp-output-stream-create
@@ -66,7 +46,11 @@
   "Create a bounded sanitized stream calling OUTPUT-FUNCTION for live chunks."
   (check-type *application-async-lisp-output-capture-limit* (integer 1))
   (check-type *application-async-lisp-output-pending-limit* (integer 1))
-  (make-instance 'application-async-lisp-output-stream :output-function output-function))
+  (make-instance 'application-async-lisp-output-stream
+                 :output-function output-function
+                 :builder (bounded-output-stream--make-builder
+                           *application-async-lisp-output-capture-limit*)
+                 :pending (make-deque :maximum-count *application-async-lisp-output-pending-limit*)))
 
 (-> application-async-lisp-output-stream--safe-character-p (character) boolean)
 (defun application-async-lisp-output-stream--safe-character-p (character)
@@ -75,33 +59,16 @@
                  (let ((code (char-code character)))
                    (or (<= 32 code 126) (>= code 160)))))))
 
-(defun application-async-lisp-output-stream--capture (stream character)
-  "Retain CHARACTER while STREAM's fixed prefix has room; caller holds its lock."
-  (unless (application-async-lisp-output-stream-truncated-p stream)
-    (let ((length (application-async-lisp-output-stream-buffer-length stream))
-          (limit (length (application-async-lisp-output-stream-buffer stream))))
-      (if (< length limit)
-          (progn
-            (setf (aref (application-async-lisp-output-stream-buffer stream) length) character)
-            (incf (application-async-lisp-output-stream-buffer-length stream)))
-          (setf (application-async-lisp-output-stream-truncated-p stream) t)))))
-
 (defun application-async-lisp-output-stream--pending (stream character)
-  "Append CHARACTER to STREAM's bounded pending ring; caller holds its lock."
-  (let* ((length (application-async-lisp-output-stream-pending-length stream))
-         (start (application-async-lisp-output-stream-pending-start stream))
-         (buffer (application-async-lisp-output-stream-pending stream))
-         (limit (length buffer)))
-    (if (< length limit)
-        (progn
-          (setf (aref buffer (mod (+ start length) limit)) character)
-          (incf (application-async-lisp-output-stream-pending-length stream)))
-        (progn
-          (setf (aref buffer start) character
-                (application-async-lisp-output-stream-pending-start stream) (mod (1+ start) limit))
-          (setf (application-async-lisp-output-stream-pending-omitted stream)
-                (min most-positive-fixnum
-                     (1+ (application-async-lisp-output-stream-pending-omitted stream))))))))
+  "Append CHARACTER to STREAM's pending deque, counting what it evicts; caller holds its lock."
+  (let ((evicted (nth-value 1 (deque-push-back
+                               (application-async-lisp-output-stream-pending stream)
+                               character))))
+    (when (plusp (length evicted))
+      (setf (application-async-lisp-output-stream-pending-omitted stream)
+            (min most-positive-fixnum
+                 (+ (application-async-lisp-output-stream-pending-omitted stream)
+                    (length evicted)))))))
 
 (defun application-async-lisp-output-stream--accept (stream character)
   "Consume CHARACTER without retaining terminal escape sequences; caller holds the lock."
@@ -126,41 +93,26 @@
        ((char= character #\Escape)
         (setf (application-async-lisp-output-stream-escape-state stream) ':escape))
        ((application-async-lisp-output-stream--safe-character-p character)
-        (application-async-lisp-output-stream--capture stream character)
-        (application-async-lisp-output-stream--pending stream character)
-        (setf (application-async-lisp-output-stream-column stream)
-              (case character
-                ((#\Newline #\Return) 0)
-                (#\Tab
-                 (+ (application-async-lisp-output-stream-column stream)
-                    (- 8 (mod (application-async-lisp-output-stream-column stream) 8))))
-                (otherwise
-                 (1+ (application-async-lisp-output-stream-column stream))))))))))
+        (bounded-output-stream--capture stream character)
+        (application-async-lisp-output-stream--pending stream character))))))
 
 (defun application-async-lisp-output-stream--pending-text (stream)
   "Copy STREAM's bounded pending tail and omission count; caller holds its lock."
-  (let* ((length (application-async-lisp-output-stream-pending-length stream))
-         (omitted (application-async-lisp-output-stream-pending-omitted stream))
-         (prefix (if (plusp omitted) (format nil "[~:D characters omitted]" omitted) ""))
-         (result (make-string (+ (length prefix) length)))
-         (start (application-async-lisp-output-stream-pending-start stream))
-         (buffer (application-async-lisp-output-stream-pending stream)))
-    (replace result prefix)
-    (loop for index below length
-          do (setf (char result (+ (length prefix) index))
-                   (aref buffer (mod (+ start index) (length buffer)))))
-    result))
+  (let ((omitted (application-async-lisp-output-stream-pending-omitted stream)))
+    (concatenate 'string
+                 (if (plusp omitted) (format nil "[~:D characters omitted]" omitted) "")
+                 (coerce (deque->vector (application-async-lisp-output-stream-pending stream))
+                         'string))))
 
 (defun application-async-lisp-output-stream--take-pending (stream force-p)
   "Drain pending output when due or FORCE-P; caller holds the capture lock."
   (let ((now (/ (get-internal-real-time) (float internal-time-units-per-second 1.0d0))))
-    (when (and (plusp (application-async-lisp-output-stream-pending-length stream))
+    (when (and (plusp (deque-count (application-async-lisp-output-stream-pending stream)))
                (or force-p (>= (- now (application-async-lisp-output-stream-last-display-time stream))
                                *application-async-lisp-output-display-interval*)))
       (prog1 (application-async-lisp-output-stream--pending-text stream)
-        (setf (application-async-lisp-output-stream-pending-start stream) 0
-              (application-async-lisp-output-stream-pending-length stream) 0
-              (application-async-lisp-output-stream-pending-omitted stream) 0
+        (deque-clear (application-async-lisp-output-stream-pending stream))
+        (setf (application-async-lisp-output-stream-pending-omitted stream) 0
               (application-async-lisp-output-stream-last-display-time stream) now)))))
 
 (defun application-async-lisp-output-stream--display (stream force-p)
@@ -205,7 +157,7 @@
 (defmethod trivial-gray-streams:stream-line-column ((stream application-async-lisp-output-stream))
   "Return STREAM's synchronized logical output column."
   (with-lock-held ((application-async-lisp-output-stream-lock stream))
-    (application-async-lisp-output-stream-column stream)))
+    (call-next-method)))
 
 (defmethod trivial-gray-streams:stream-force-output ((stream application-async-lisp-output-stream))
   "Offer pending output without bypassing the live display rate limit."
@@ -221,19 +173,19 @@
 (defun application-async-lisp-output-text (stream)
   "Return bounded sanitized output with truncation and presentation failure details."
   (with-lock-held ((application-async-lisp-output-stream-lock stream))
-    (let* ((buffer (application-async-lisp-output-stream-buffer stream))
-           (capacity (length buffer))
+    (let* ((capacity (bounded-output-stream-capacity stream))
            (marker
              (bounded-string
               (format nil "~A~@[~%[live output failed: ~A]~]"
-                      (if (application-async-lisp-output-stream-truncated-p stream)
+                      (if (bounded-output-stream-truncated-p stream)
                           (format nil "~%[output truncated]")
                           "")
                       (application-async-lisp-output-stream-display-error stream))
               :limit capacity))
-           (count (min (application-async-lisp-output-stream-buffer-length stream)
-                       (- capacity (length marker)))))
-      (concatenate 'string (subseq buffer 0 count) marker))))
+           (text (bounded-output-stream-text stream)))
+      (concatenate 'string
+                   (subseq text 0 (min (length text) (- capacity (length marker))))
+                   marker))))
 
 (defun application-async-lisp-output-flush (stream)
   "Flush STREAM's pending display tail immediately."

@@ -51,11 +51,13 @@ recovery object protocol, =self-read-form=, and the package. The LLM diagnosis
 UI and stay.
 
 ** Bounded, sanitising, throttled capture streams (new library, or ls-compat)
-=src/application/async-lisp-output.lisp=, whole file: fixed-capacity Gray
-streams with truncation markers, a pending ring with omission counts,
-incremental ANSI stripping, a rate-limited sink and column tracking.
-=management/repl.lisp= 386-436 is a second, simpler copy. Cut: only
-=bounded-string= and =sanitize-text=, both already from clinedi.
+2026-10-03: the two copies are one. =bounded-output-stream= in
+=core/streams.lisp= keeps a structlisp bounded builder prefix and the column on
+trivial-gray-streams; the management REPL uses it directly, and
+=async-lisp-output.lisp= subclasses it with ANSI stripping, a pending structlisp
+deque with omission counts, and the rate-limited sink. Moving the stream into a
+library is still open. Cut: only =bounded-string= and =sanitize-text=, both
+already from clinedi.
 
 ** Reader thread with pause and exclusive ownership (clinedi input pump)
 =src/terminal/responsive-input.lisp= 2741-2928. A polling reader thread,

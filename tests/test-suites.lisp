@@ -46,7 +46,8 @@
 (define-test-suite hyperlinks
   test-hyperlinked-rendering)
 (define-test-suite stream
-  test-bounded-character-reads)
+  test-bounded-character-reads
+  test-bounded-output-stream)
 
 (define-test-suite version
   test-version-comparison)
