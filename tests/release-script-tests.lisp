@@ -2944,15 +2944,24 @@ esac
     (let ((missing (merge-pathnames "no-sandbox/" root)))
       (test-assert (null (release-archive--sandbox-helper missing))
                    "sandbox helper lookup is silent for an unrelated source root")
-      (test-assert
-       (equal
-        (truename (release-archive--sandbox-helper
-                   (asdf:system-source-directory :autolith)))
-        (truename
-         (merge-pathnames
-          "build/cl-exec-sandbox-helper"
-          (asdf:system-source-directory :cl-exec-sandbox))))
-       "sandbox helper lookup uses the locked ASDF dependency")
+      (let* ((source-directory (symbol-function 'asdf:system-source-directory))
+             (source-root (asdf:system-source-directory :autolith))
+             (library-root (merge-pathnames "sandbox-library/" root))
+             (helper (merge-pathnames "build/cl-exec-sandbox-helper" library-root)))
+        (release-script-tests--write-file helper "fixture helper")
+        (test-call-with-function-replacements
+         (list
+          (list 'asdf:system-source-directory
+                (lambda (system)
+                  (if (eq system ':cl-exec-sandbox)
+                      library-root
+                      (funcall source-directory system)))))
+         (lambda ()
+           (test-assert
+            (equal
+             (platform-truename *platform* (release-archive--sandbox-helper source-root))
+             (platform-truename *platform* helper))
+            "sandbox helper lookup uses the locked ASDF dependency"))))
       (test-assert (null (release-archive--process-group-helper missing))
                    "process-group helper lookup is silent for an unrelated source root")
       (test-assert
