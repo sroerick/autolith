@@ -475,7 +475,7 @@ HEADER-P renders field labels rather than status values."
   "Run the attachment loop, restoring client screen ownership even after connection loss.
 
 Return the session's exit plist when it ended the attachment while exiting."
-  (let ((output (make-instance 'fullscreen-output-stream :output *standard-output*)))
+  (let ((output (make-mode-tracking-output-stream *standard-output*)))
     (unwind-protect
          (image-daemon:daemon-attach-client-run
           socket-stream :mode mode :socket socket :output-stream output
@@ -487,7 +487,7 @@ Return the session's exit plist when it ended the attachment while exiting."
               (setf *terminal-resize-pending-p* nil)
               (multiple-value-bind (rows columns) (terminal-current-size)
                 (list :rows rows :columns columns :styled-p (terminal-environment-styling-p))))))
-      (fullscreen-output-stream-restore output))))
+      (mode-tracking-output-stream-restore output))))
 
 (-> localgroup--wait-for-handoff-entry
     (configuration string string integer)

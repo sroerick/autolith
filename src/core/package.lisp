@@ -539,6 +539,8 @@
                 #:alternate-screen-leave-sequence
                 #:mouse-reporting-enable-sequence
                 #:mouse-reporting-disable-sequence
+                #:make-mode-tracking-output-stream
+                #:mode-tracking-output-stream-restore
                 #:default-color-sequence
                 #:default-color-reset-sequence
                 #:read-event
