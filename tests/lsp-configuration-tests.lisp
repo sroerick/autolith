@@ -19,7 +19,7 @@
     (lsp-configuration-error () t)))
 
 (defun test-lsp-configuration ()
-  "Test strict native LSP configuration and bounded project-root selection."
+  "Test strict native LSP configuration decoding."
   (with-test-configuration (configuration)
     (test-assert (null (lsp-load-configurations configuration))
                  "missing lsp.sexp returns NIL")
@@ -46,22 +46,4 @@
                  "non-positive timeout is rejected")
     (test-assert (lsp-configuration-tests--signals-p configuration
                   "(:version 1 :servers ((:name \"x\" :command \"x\" :language-id \"x\" :settings \"[]\")))")
-                 "non-object JSON settings are rejected")
-    (let* ((workspace (test-configuration-root configuration))
-           (project (merge-pathnames "project/" workspace))
-           (nested (merge-pathnames "project/packages/client/" workspace))
-           (file (merge-pathnames "main.ts" nested)))
-      (ensure-directories-exist file)
-      (with-open-file (stream file :direction ':output :if-does-not-exist ':create)
-        (write-string "" stream))
-      (with-open-file (stream (merge-pathnames "package.json" project)
-                             :direction ':output :if-does-not-exist ':create)
-        (write-string "{}" stream))
-      (test-assert (equal (lsp-project-root file workspace '("package.json"))
-                          (uiop:ensure-directory-pathname project))
-                   "nearest marker directory is selected")
-      (test-assert (equal (lsp-project-root
-                           (uiop:pathname-parent-directory-pathname workspace)
-                           workspace '("package.json"))
-                          (uiop:ensure-directory-pathname workspace))
-                   "paths outside workspace fall back to workspace"))))
+                 "non-object JSON settings are rejected")))

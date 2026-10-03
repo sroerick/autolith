@@ -232,32 +232,6 @@ surfaces through the LSP tools instead of failing registry creation."
            t)
     (lsp-configuration-error () t)))
 
-(-> lsp-project-root (pathname pathname list) pathname)
-(defun lsp-project-root (path workspace markers)
-  "Return the nearest ancestor of PATH containing one of MARKERS.
-Only directories within WORKSPACE are considered; WORKSPACE is the fallback."
-  (let* ((workspace (uiop:ensure-directory-pathname
-                     (platform-truename *platform* workspace)))
-         (path (platform-truename *platform* (pathname path)))
-         (directory (if (uiop:directory-pathname-p path)
-                        (uiop:ensure-directory-pathname path)
-                        (uiop:pathname-directory-pathname path))))
-    (unless (uiop:string-prefix-p (namestring workspace) (namestring directory))
-      (return-from lsp-project-root workspace))
-    (loop repeat *workspace-project-depth-limit*
-          for candidate = directory then (uiop:pathname-parent-directory-pathname candidate)
-          for parent = (uiop:pathname-parent-directory-pathname candidate)
-          when (some (lambda (marker)
-                       (or (uiop:file-exists-p (merge-pathnames marker candidate))
-                           (uiop:directory-exists-p (merge-pathnames marker candidate))))
-                     markers)
-            return candidate
-          when (equal candidate workspace)
-            return workspace
-          when (equal candidate parent)
-            return workspace
-          finally (return workspace))))
-
 (-> lsp-manager-configure (lsp-manager configuration) list)
 (defun lsp-manager-configure (manager configuration)
   "Load user-owned server definitions once until refresh or runtime retirement."

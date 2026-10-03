@@ -102,6 +102,7 @@
                 #:lsp-server-configuration-arguments
                 #:lsp-server-configuration-extensions
                 #:lsp-server-configuration-root-markers
+                #:lsp-project-root
                 #:lsp-server-configuration-initialization-options
                 #:lsp-server-configuration-timeout-seconds
                 #:lsp-server-configuration-disabled-p

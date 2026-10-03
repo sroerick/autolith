@@ -92,8 +92,8 @@
   :version "git-fd05933ce7950a1b0a2ccbc1c61228d3e633867a"))
 ("cl-lsp" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-lsp.git" :ref "9d0afd74511134308dc92cd9174396f10374d931")
-  :version "git-9d0afd74511134308dc92cd9174396f10374d931"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-lsp.git" :ref "5aa382d21564901457debaa194308ccea6cb35ec")
+  :version "git-5aa382d21564901457debaa194308ccea6cb35ec"))
 ("cl-skills" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-skills.git" :ref "3c219ae44379a1891bbd8f374692763cae9215f8")
