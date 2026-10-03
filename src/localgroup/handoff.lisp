@@ -140,33 +140,75 @@ exit \"$status\""
   "Return PATHNAME's temporary launcher start-gate pathname."
   (localgroup-handoff--state-pathname pathname ':gate))
 
+(-> localgroup-handoff--timestamp-p (t) boolean)
+(defun localgroup-handoff--timestamp-p (value)
+  "Return true when VALUE is a handoff timestamp."
+  (typep value 'timestamp))
+
+(-> localgroup-handoff--mode-p (t) boolean)
+(defun localgroup-handoff--mode-p (value)
+  "Return true when VALUE names a supported handoff mode."
+  (not (null (member value '(:detach :take-over)))))
+
+(-> localgroup-handoff--state-p (t) boolean)
+(defun localgroup-handoff--state-p (value)
+  "Return true when VALUE names a supported handoff state."
+  (not (null (member value '(:pending :claimed :cancelled)))))
+
+(-> localgroup-handoff--positive-integer-p (t) boolean)
+(defun localgroup-handoff--positive-integer-p (value)
+  "Return true when VALUE is a positive process identifier."
+  (typep value '(integer 1)))
+
+(-> localgroup-handoff--optional-positive-integer-p (t) boolean)
+(defun localgroup-handoff--optional-positive-integer-p (value)
+  "Return true when VALUE is NIL or a positive process identifier."
+  (or (null value) (localgroup-handoff--positive-integer-p value)))
+
+(-> localgroup-handoff--conversation-id-p (t) boolean)
+(defun localgroup-handoff--conversation-id-p (value)
+  "Return true when VALUE is NIL or a valid conversation identifier."
+  (or (null value)
+      (and (stringp value)
+           (ignore-errors
+             (conversation-identifier-validate-path-component value)
+             t))))
+
 (-> localgroup-handoff--record-p (t) boolean)
 (defun localgroup-handoff--record-p (record)
   "Return true when RECORD is one supported detached-process handoff."
-  (and (proper-list-p record)
-       (eq (first record) ':localgroup-handoff)
-       (= (or (getf (rest record) :version) 0)
-          *localgroup-handoff-version*)
-       ;; Client-first launches use a private nonce until a conversation exists.
-       (or (non-empty-string-p (getf (rest record) :launch-id))
-           (non-empty-string-p (getf (rest record) :session-id)))
-       (non-empty-string-p (getf (rest record) :token))
-       (typep (getf (rest record) :created-at) 'timestamp)
-       (member (getf (rest record) :mode) '(:detach :take-over))
-       (member (getf (rest record) :state) '(:pending :claimed :cancelled))
-       (typep (getf (rest record) :fresh-conversation-p) 'boolean)
-       (typep (getf (rest record) :old-pid) '(integer 1))
-       (let ((replacement-pid (getf (rest record) :replacement-pid)))
-         (or (null replacement-pid)
-             (typep replacement-pid '(integer 1))))
-       (let ((conversation-id (getf (rest record) :conversation-id)))
-         (or (null conversation-id)
-             (and (stringp conversation-id)
-                  (ignore-errors
-                    (conversation-identifier-validate-path-component
-                     conversation-id)
-                    t))))
-       (stringp (or (getf (rest record) :draft) ""))))
+  (and
+   (record-check
+    record :tag ':localgroup-handoff :versions (list *localgroup-handoff-version*)
+    :allow-other-keys nil :keyword-keys-p t :maximum-length 36
+    :fields
+    `((:indicator :launch-id :validate ,(lambda (value) (or (null value) (stringp value))))
+      (:indicator :session-id :validate ,(lambda (value) (or (null value) (stringp value))))
+      (:indicator :token :required t :validate non-empty-string-p)
+      (:indicator :created-at :required t
+       :validate localgroup-handoff--timestamp-p)
+      (:indicator :mode :required t :validate localgroup-handoff--mode-p)
+      (:indicator :state :required t :validate localgroup-handoff--state-p)
+      (:indicator :fresh-conversation-p
+       :validate ,(lambda (value) (typep value 'boolean)))
+      (:indicator :attach-expected-p
+       :validate ,(lambda (value) (typep value 'boolean)))
+      (:indicator :resume-command-p
+       :validate ,(lambda (value) (typep value 'boolean)))
+      (:indicator :styled-p
+       :validate ,(lambda (value) (typep value 'boolean)))
+      (:indicator :rows :validate localgroup-handoff--positive-integer-p)
+      (:indicator :columns :validate localgroup-handoff--positive-integer-p)
+      (:indicator :recovery-diagnosis)
+      (:indicator :old-pid :required t
+       :validate localgroup-handoff--positive-integer-p)
+      (:indicator :replacement-pid
+       :validate localgroup-handoff--optional-positive-integer-p)
+      (:indicator :conversation-id :validate localgroup-handoff--conversation-id-p)
+      (:indicator :draft :validate ,(lambda (value) (or (null value) (stringp value))))))
+   ;; Client-first launches use a private nonce until a conversation exists.
+   (or (non-empty-string-p (record-property record :launch-id))
+       (non-empty-string-p (record-property record :session-id)))))
 
 (-> localgroup-handoff--disk-record (list) list)
 (defun localgroup-handoff--disk-record (record)

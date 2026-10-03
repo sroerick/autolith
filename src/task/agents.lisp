@@ -389,33 +389,6 @@
 
 ;;;; -- Safe Native Reader --
 
-(-> task-agent--file-byte-length (pathname) (integer 0))
-(defun task-agent--file-byte-length (pathname)
-  "Return PATHNAME's byte length without allocating its contents."
-  (with-open-file (stream pathname :direction ':input
-                                   :element-type '(unsigned-byte 8))
-    (file-length stream)))
-
-(-> task-agent--read-bounded-contents (pathname keyword string) string)
-(defun task-agent--read-bounded-contents (pathname source definition-name)
-  "Read PATHNAME as UTF-8 while enforcing the byte bound on bytes consumed."
-  (with-open-file (stream pathname
-                          :direction ':input
-                          :element-type '(unsigned-byte 8))
-    (let* ((limit *task-agent-file-maximum-bytes*)
-           (octets (make-array (1+ limit)
-                               :element-type '(unsigned-byte 8)))
-           (count (read-sequence octets stream))
-           (end (gensym "END"))
-           (next (read-byte stream nil end)))
-      (when (or (> count limit) (not (eq next end)))
-        (task-agent-definition--error
-         :pathname pathname :source source
-         :cause "The native role file exceeds its byte bound."
-         :definition-name definition-name))
-      (utf8-octets-to-string octets
-                               :start 0
-                               :end count))))
 
 (-> task-agent--source-grammar () source-grammar)
 (defun task-agent--source-grammar ()
@@ -431,114 +404,57 @@ the static field names."
    :keyword-predicate #'task-agent-native-keyword-name-p
    :maximum-depth *task-agent-form-maximum-depth*
    :maximum-nodes *task-agent-form-maximum-nodes*
+   :maximum-string-characters *task-agent-string-maximum-characters*
    :block-comments-permitted-p t
-   :improper-lists-permitted-p t))
+   :improper-lists-permitted-p t
+   :shared-strings-permitted-p nil
+   :allowed-atom-predicate
+   (lambda (value)
+     (or (null value)
+         (eq value t)
+         (keywordp value)
+         (stringp value)
+         (integerp value)
+         (and (floatp value)
+              (task-output--json-number-p value))))))
 
 (-> task-agent--validate-readable-tree
     (t &key (:pathname pathname) (:source keyword) (:definition-name string))
     null)
 (defun task-agent--validate-readable-tree
     (form &key pathname source definition-name)
-  "Reject shared, circular, oversized, or non-portable objects in FORM."
-  (let ((seen (make-hash-table :test #'eq))
-        (nodes 0)
-        (pending (list form)))
-    (loop while pending
-          for value = (pop pending)
-          do
-             (incf nodes)
-             (when (> nodes *task-agent-form-maximum-nodes*)
-               (task-agent-definition--error
-                :pathname pathname :source source
-                :cause "The native role form exceeds its node bound."
-                :definition-name definition-name))
-             (typecase value
-               (null nil)
-               (cons
-                (when (gethash value seen)
-                  (task-agent-definition--error
-                   :pathname pathname :source source
-                   :cause "Shared and circular reader objects are not allowed."
-                   :definition-name definition-name))
-                (setf (gethash value seen) t)
-                (push (rest value) pending)
-                (push (first value) pending))
-               (string
-                (when (gethash value seen)
-                  (task-agent-definition--error
-                   :pathname pathname :source source
-                   :cause "Shared reader strings are not allowed."
-                   :definition-name definition-name))
-                (setf (gethash value seen) t)
-                (when (> (length value)
-                         *task-agent-string-maximum-characters*)
-                  (task-agent-definition--error
-                   :pathname pathname :source source
-                   :cause "A native role string exceeds its character bound."
-                   :definition-name definition-name)))
-               (symbol
-                (unless (or (keywordp value) (eq value t))
-                  (task-agent-definition--error
-                   :pathname pathname :source source
-                   :cause (format nil "Non-keyword symbol ~S is not portable role data."
-                                  value)
-                   :definition-name definition-name)))
-               (integer nil)
-               (float
-                (unless (task-output--json-number-p value)
-                  (task-agent-definition--error
-                   :pathname pathname :source source
-                   :cause "A native role contains a non-finite float."
-                   :definition-name definition-name)))
-               (t
-                (task-agent-definition--error
-                 :pathname pathname :source source
-                 :cause (format nil "Object ~S is not supported native role data."
-                                value)
-                 :definition-name definition-name)))))
-  nil)
+  "Validate the generic structure of FORM with sexp-config.
+
+Domain-specific diagnostics remain at the task boundary while bounded tree
+walking, cycle detection, node limits, and string limits stay in sexp-config."
+  (handler-case
+      (progn
+        (validate-tree form (task-agent--source-grammar))
+        nil)
+    (sexp-config-error (condition)
+      (task-agent-definition--error
+       :pathname pathname
+       :source source
+       :line (or (sexp-config-error-line condition) 1)
+       :cause condition
+       :definition-name definition-name))))
 
 (-> task-agent--read-native-form (pathname keyword string) t)
 (defun task-agent--read-native-form (pathname source definition-name)
-  "Read exactly one bounded native role form from PATHNAME.
-
-SEXP-CONFIG owns the bounded scan and the restricted read. The value vocabulary
-stays here, in TASK-AGENT--VALIDATE-READABLE-TREE, because its diagnostics name
-the offending object rather than only reporting that one was rejected."
+  "Read one bounded role file, translating library diagnostics with its provenance."
   (handler-case
-      (progn
-        (when (> (task-agent--file-byte-length pathname)
-                 *task-agent-file-maximum-bytes*)
-          (task-agent-definition--error
-           :pathname pathname :source source
-           :cause "The native role file exceeds its byte bound."
-           :definition-name definition-name))
-        (let* ((contents
-                 (task-agent--read-bounded-contents
-                  pathname source definition-name))
-               (form
-                 (handler-case
-                     (read-source contents (task-agent--source-grammar))
-                   (sexp-config-error (condition)
-                     (task-agent-definition--error
-                      :pathname pathname :source source
-                      :line (or (sexp-config-error-line condition) 1)
-                      :cause (sexp-config-error-message condition)
-                      :definition-name definition-name)))))
-          (task-agent--validate-readable-tree
-           form
-           :pathname pathname
-           :source source
-           :definition-name definition-name)
-          form))
-    (task-agent-definition-error (condition)
-      (error condition))
-    (error (condition)
+      (read-source-file pathname (task-agent--source-grammar)
+                        :maximum-octets *task-agent-file-maximum-bytes*)
+    (sexp-config-error (condition)
       (task-agent-definition--error
        :pathname pathname :source source
-       :line 1
+       :line (or (sexp-config-error-line condition) 1)
        :cause condition
-       :definition-name definition-name))))
+       :definition-name definition-name))
+    (error (condition)
+      (task-agent-definition--error
+       :pathname pathname :source source :line 1
+       :cause condition :definition-name definition-name))))
 
 (-> task-agent--required-value
     (keyword list &key (:pathname pathname) (:source keyword)

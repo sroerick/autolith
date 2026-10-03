@@ -117,6 +117,16 @@
                (typep restored 'user-message-input)
                (string= (user-message-input-text restored) "draft survives"))
               "handoff records preserve durable conversation identity and draft")
+             (dolist (properties '((:token "duplicate") (:unknown t)
+                                   (:rows 0) (:resume-command-p :invalid)))
+               (snapshot-write handoff-pathname
+                               (append (localgroup-handoff--disk-record record)
+                                       properties))
+               (test-assert
+                (handler-case
+                    (progn (localgroup-handoff--read configuration handoff-pathname) nil)
+                (localgroup-error () t))
+                "malformed persisted handoff fields fail at the localgroup boundary"))
              (setf (getf (rest record) :session-id) "abcdef012345")
              (localgroup-handoff--write-record handoff-pathname record)
              (let ((*localgroup-handoff-setsid-function* (lambda () 0)))

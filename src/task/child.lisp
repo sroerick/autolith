@@ -498,6 +498,56 @@ candidates."
               nil))))))
   nil)
 
+(defparameter *task-result-maximum-octets* (* 16 1024 1024)
+  "The largest durable child result accepted by task inspection.")
+
+(-> task--result-grammar () source-grammar)
+(defun task--result-grammar ()
+  "Return the bounded portable data dialect used by durable child results."
+  (make-source-grammar
+   :label "Child result artifact"
+   :maximum-depth 128 :maximum-nodes 262144
+   :maximum-string-characters *task-result-maximum-octets*
+   :qualified-common-lisp-symbols-permitted-p t
+   :readable-strings-permitted-p t
+   :read-default-float-format 'single-float
+   :allowed-atom-predicate
+   (lambda (value)
+     (or (null value) (eq value t) (keywordp value) (stringp value)
+         (task-output--json-number-p value)))))
+
+(-> task--result-fields () list)
+(defun task--result-fields ()
+  "Describe the terminal child result fields consumed by job inspection."
+  (append
+   (list (list :indicator ':status :required t
+               :validate (lambda (value)
+                           (not (null (member value '(:success :failed :aborted))))))
+         (list :indicator ':request-count
+               :validate (lambda (value) (typep value '(integer 0))))
+         (list :indicator ':duration-ms
+               :validate (lambda (value) (typep value '(integer 0))))
+         (list :indicator ':usage
+               :validate (lambda (value)
+                           (or (null value) (task-progress--usage-object-p value)))))
+   (mapcar (lambda (key)
+             (list :indicator key
+                   :validate (lambda (value) (or (null value) (stringp value)))))
+           '(:id :name :agent :assignment :error :label :model :conversation-file))
+   (mapcar (lambda (key)
+             (list :indicator key :validate (lambda (value) (typep value 'boolean))))
+           '(:yielded-p :structured-output-present-p :detached))))
+
+(-> task--read-result-artifact
+    ((or pathname string) &key (:maximum-octets (integer 1))) list)
+(defun task--read-result-artifact
+    (pathname &key (maximum-octets *task-result-maximum-octets*))
+  "Read exactly one bounded, schema-checked durable child result."
+  (sexp-store:snapshot-read-record
+   pathname :grammar (task--result-grammar) :maximum-octets maximum-octets
+   :properties-p t :keyword-keys-p t :maximum-length 128
+   :fields (task--result-fields)))
+
 (-> task--write-result-artifact (task-job list) pathname)
 (defun task--write-result-artifact (job result)
   "Publish portable RESULT once and prune old completed sibling artifacts."

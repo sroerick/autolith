@@ -1126,6 +1126,9 @@ Example:
 independent batch. Nonblocking work detaches by default. =blocking: true=
 waits. A role with =:blocking-p t= always waits. Each child must finish
 with one =yield.submit= of =success=, =failed=, or =aborted=.
+Persisted child results must contain one data-only form with valid terminal
+status and field types. The default reading limits are 16 MiB, 128 nesting
+levels, and 262,144 tree nodes.
 
 Primary shell and Lisp executions and child agents appear as live rows with
 spinners and elapsed time. The command and agent strips share a viewport bound,

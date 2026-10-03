@@ -354,7 +354,7 @@ let
     pname = "sexp-store";
     version = qlotVersion "sexp-store";
     src = qlotSource "sexp-store";
-    lispLibs = [ lsCompat lsFlock ];
+    lispLibs = [ lsCompat lsFlock sexpConfig ];
   };
 
   sbclWorkers = pkgs.sbcl.buildASDFSystem {

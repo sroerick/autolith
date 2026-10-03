@@ -203,6 +203,37 @@
        (equal (management-repl-read-frame input 4096)
               '(:evaluate :source "(+ 1 2)"))
        "management framing round-trips one readable S-expression")))
+  (dolist (case
+           (list (list "   " ':empty)
+                 (list "(:authenticate :proof \"x\") nil" ':trailing)
+                 (list "#1=(:authenticate :proof #1#)" ':malformed)
+                 (list "(:authenticate :proof #A((999999999) BASE-CHAR . \"x\"))" ':malformed)
+                 (list "(:authenticate :proof management-untrusted-symbol)" ':malformed)
+                 (list "(:authenticate :proof :management-untrusted-keyword)" ':malformed)
+                 (list (format nil "~A nil ~A" (make-string 100 :initial-element #\()
+                               (make-string 100 :initial-element #\)))
+                       ':oversized)
+                 (list (format nil "(~{~A ~})" (make-list 600 :initial-element "nil"))
+                       ':oversized)))
+    (destructuring-bind (source reason) case
+      (let* ((octets (utf8-string-to-octets source))
+             (output (make-in-memory-output-stream)))
+        (write-sequence (management-repl--integer->header (length octets)) output)
+        (write-sequence octets output)
+        (test-assert
+         (handler-case
+             (progn
+               (management-repl-read-frame
+                (flexi-streams:make-in-memory-input-stream
+                 (get-output-stream-sequence output)) 65536)
+               nil)
+           (management-repl-protocol-error (condition)
+             (eq (management-repl-protocol-error-reason condition) reason)))
+         "pre-authentication frames reject non-protocol data through bounded diagnostics"))))
+  (test-assert
+   (and (null (find-symbol "MANAGEMENT-UNTRUSTED-SYMBOL" '#:autolith))
+        (null (find-symbol "MANAGEMENT-UNTRUSTED-KEYWORD" '#:keyword)))
+   "unauthenticated frames cannot intern arbitrary protocol symbols")
   (test-assert
    (handler-case
        (progn (management-repl--read-source-form "(+ 1 2) (+ 3 4)") nil)

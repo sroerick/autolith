@@ -600,18 +600,7 @@ Only the current primary conversation's artifact root is searched."
     (unless (and path (probe-file path))
       (return-from task--durable-job-result (values nil nil)))
     (handler-case
-        (let ((result (snapshot-read path)))
-          (unless (and (listp result)
-                       (member (getf result :status)
-                               '(:success :failed :aborted)
-                               :test #'eq))
-            (error 'task-error
-                   :message (format nil
-                                    "Durable job result ~A is invalid."
-                                    identifier)
-                   :tool-name tool-name
-                   :task-id identifier))
-          (values result path))
+        (values (task--read-result-artifact path) path)
       (task-error (condition)
         (error condition))
       (error (condition)

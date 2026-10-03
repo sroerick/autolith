@@ -91,32 +91,37 @@
           :operating-system-version (software-version)
           :architecture (machine-type))))
 
+(-> active-image--source-files-p (t) boolean)
+(defun active-image--source-files-p (source-files)
+  "Return true when SOURCE-FILES contains unique source/blob pairs."
+  (and (proper-list-p source-files :nonempty-p t)
+       (every (lambda (entry)
+                (and (proper-list-p entry)
+                     (= (length entry) 2)
+                     (non-empty-string-p (first entry))
+                     (non-empty-string-p (second entry))))
+              source-files)
+       (= (length source-files)
+          (length (remove-duplicates source-files
+                                     :key #'first
+                                     :test #'string=)))))
+
 (-> active-image-build-record-p (t) boolean)
 (defun active-image-build-record-p (value)
   "Return true when VALUE is a complete portable active-image build record."
-  (and (listp value)
-       (eq (first value) :active-image-build)
-       (= (or (getf (rest value) :version) 0)
-          *active-image-protocol-version*)
-       (non-empty-string-p (getf (rest value) :source-commit))
-       (member (getf (rest value) :source-clean-p) '(t nil))
-       (let ((source-files (getf (rest value) :source-files)))
-         (and (consp source-files)
-              (every (lambda (entry)
-                       (and (listp entry)
-                            (= (length entry) 2)
-                            (non-empty-string-p (first entry))
-                            (non-empty-string-p (second entry))))
-                     source-files)
-              (= (length source-files)
-                 (length (remove-duplicates source-files
-                                            :key #'first
-                                            :test #'string=)))))
-       (non-empty-string-p (getf (rest value) :sbcl-version))
-       (non-empty-string-p (getf (rest value) :operating-system))
-       (non-empty-string-p (getf (rest value) :operating-system-version))
-       (non-empty-string-p (getf (rest value) :architecture))
-       t))
+  (values
+   (record-check
+    value :tag ':active-image-build :versions '(1)
+    :allow-other-keys nil :keyword-keys-p t :maximum-length 16
+    :fields
+    `((:indicator :source-commit :required t :validate non-empty-string-p)
+      (:indicator :source-clean-p :required t
+       :validate ,(lambda (value) (typep value 'boolean)))
+      (:indicator :source-files :required t :validate active-image--source-files-p)
+      (:indicator :sbcl-version :required t :validate non-empty-string-p)
+      (:indicator :operating-system :required t :validate non-empty-string-p)
+      (:indicator :operating-system-version :required t :validate non-empty-string-p)
+      (:indicator :architecture :required t :validate non-empty-string-p)))))
 
 (-> active-image-build-record-compatible-p (t pathname) boolean)
 (defun active-image-build-record-compatible-p (record source-root)

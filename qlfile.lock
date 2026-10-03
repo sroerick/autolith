@@ -164,12 +164,12 @@
   :version "git-4cfe637597a90263c6259ad2d114053618312243"))
 ("sexp-config" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-config.git" :ref "71d665f3ae81038b6721cce37bfa62cedd52ba2c")
-  :version "git-71d665f3ae81038b6721cce37bfa62cedd52ba2c"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-config.git" :ref "09e0b86650d08d98c7624ec525d346a41b98323c")
+  :version "git-09e0b86650d08d98c7624ec525d346a41b98323c"))
 ("sexp-store" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-store.git" :ref "56ecbeda4edbe33463b743d9c93bc7cf0dec5910")
-  :version "git-56ecbeda4edbe33463b743d9c93bc7cf0dec5910"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-store.git" :ref "bae02e6f93ee6102a77b62d9762dfdd664e6a8f9")
+  :version "git-bae02e6f93ee6102a77b62d9762dfdd664e6a8f9"))
 ("sophisticated-clipboard" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sophisticated-clipboard.git" :ref "756b65f4f8be18c786e2331de89708729df42bd4")

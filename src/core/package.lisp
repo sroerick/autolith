@@ -1016,6 +1016,8 @@
                 #:log-read
                 #:log-write
                 #:make-record
+                #:plist-schema-problem
+                #:plist-schema-p
                 #:record-check
                 #:record-property
                 #:record-property-present-p

@@ -63,32 +63,34 @@
 (defun application-recovery-input-vault--pending-form-shape-p (form)
   "Return true when FORM has one supported pending-input record shape."
   (values
-   (record-check
-    form :tag ':pending-inputs :versions '(1 2) :allow-other-keys nil
-    :fields
-    (case (record-version form)
-      (1
-       '((:indicator :conversation-id :required t)
-         (:indicator :steering :required t)
-         (:indicator :work :required t)))
-      (2
-       '((:indicator :snapshot-identifier :required t)
-         (:indicator :conversation-id :required t)
-         (:indicator :active-work :required t)
-         (:indicator :steering-in-flight :required t)
-         (:indicator :steering :required t)
-         (:indicator :work :required t)
-         (:indicator :vault-capture-identifiers)
-         (:indicator :steering-promotion-prefix-count)))))))
+    (record-check
+     form :tag ':pending-inputs :versions '(1 2) :allow-other-keys nil
+     :keyword-keys-p t :maximum-length 18
+     :fields
+     (case (record-version form)
+       (1
+        '((:indicator :conversation-id :required t)
+          (:indicator :steering :required t)
+          (:indicator :work :required t)))
+       (2
+        '((:indicator :snapshot-identifier :required t)
+          (:indicator :conversation-id :required t)
+          (:indicator :active-work :required t)
+          (:indicator :steering-in-flight :required t)
+          (:indicator :steering :required t)
+          (:indicator :work :required t)
+          (:indicator :vault-capture-identifiers)
+          (:indicator :steering-promotion-prefix-count)))))))
 
 (-> application-recovery-input-vault--form-shape-p (t) boolean)
 (defun application-recovery-input-vault--form-shape-p (form)
   "Return true when FORM has the supported recovery input vault schema."
   (values
-   (record-check
-    form :tag ':recovery-input-vault :versions '(1) :allow-other-keys nil
-    :fields (list (list :indicator ':conversation-id :required t :validate #'stringp)
-                  (list :indicator ':captures :required t :validate #'proper-list-p)))))
+    (record-check
+     form :tag ':recovery-input-vault :versions '(1) :allow-other-keys nil
+     :keyword-keys-p t :maximum-length 6
+     :fields (list (list :indicator ':conversation-id :required t :validate #'stringp)
+                   (list :indicator ':captures :required t :validate #'proper-list-p)))))
 
 (-> application-recovery-input-vault--pending-payload-form (list) list)
 (defun application-recovery-input-vault--pending-payload-form (state)

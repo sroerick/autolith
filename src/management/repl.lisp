@@ -72,47 +72,42 @@
 (defparameter *management-repl-minimum-frame-size* 128
   "The smallest frame bound that can carry a structured protocol failure.")
 
-(-> management-repl--proper-list-length (t) (integer 0))
-(defun management-repl--proper-list-length (value)
-  "Return VALUE's bounded proper-list length or reject cycles and dotted tails."
-  (let ((seen (make-hash-table :test #'eq))
-        (length 0)
-        (tail value))
-    (loop while (consp tail)
-          do (when (or (gethash tail seen)
-                       (>= length *management-repl-maximum-protocol-list-length*))
-               (management-repl--protocol-error
-                ':malformed "Management protocol form is cyclic or too long."))
-             (setf (gethash tail seen) t
-                   tail (rest tail))
-             (incf length))
-    (unless (null tail)
-      (management-repl--protocol-error
-       ':malformed "Management protocol form is not a proper list."))
-    length))
-
 (-> management-repl--decode-schema (t keyword list) list)
 (defun management-repl--decode-schema (form tag required-keys)
   "Decode FORM as exact TAG with one occurrence of every REQUIRED-KEY."
-  (let ((length (management-repl--proper-list-length form)))
-    (unless (and (plusp length) (eq (first form) tag) (oddp length))
+  (unless (and (consp form) (eq (first form) tag))
+    (management-repl--protocol-error
+     ':request "Management protocol request has the wrong tag."))
+  (multiple-value-bind (problem key)
+      (plist-schema-problem
+       (rest form) :allowed-keys required-keys :required-keys required-keys
+       :maximum-length (1- *management-repl-maximum-protocol-list-length*))
+    (declare (ignore key))
+    (when problem
       (management-repl--protocol-error
-       ':request "Management protocol request has the wrong shape."))
-    (let ((properties (rest form))
-          (seen nil))
-      (loop for tail on properties by #'cddr
-            for key = (first tail)
-            do (unless (member key required-keys)
-                 (management-repl--protocol-error
-                  ':request "Management protocol request contains an unknown key."))
-               (when (member key seen)
-                 (management-repl--protocol-error
-                  ':request "Management protocol request contains a duplicate key."))
-               (push key seen))
-      (unless (= (length seen) (length required-keys))
-        (management-repl--protocol-error
-         ':request "Management protocol request is missing a required key."))
-      properties)))
+       (if (member problem '(:improper :too-long)) ':malformed ':request)
+       "Management protocol request does not match its schema.")))
+  (rest form))
+
+(-> management-repl--frame-grammar ((integer 1)) source-grammar)
+(defun management-repl--frame-grammar (maximum-size)
+  "Return the bounded data vocabulary for management requests and responses."
+  (make-source-grammar
+   :label "Management protocol frame"
+   :keywords '(:authenticate :proof :evaluate :source :challenge :version
+               :algorithm :hmac-sha-256 :nonce :authenticated :protocol-error
+               :reason :oversized :truncated :encoding :empty :trailing :malformed
+               :request :evaluation-result :status :ok :timeout :condition
+               :condition-type :report :report-truncated-p :output
+               :output-truncated-p :values :values-truncated-p)
+   :maximum-depth 8 :maximum-nodes 1024
+   :maximum-string-characters maximum-size
+   :readable-strings-permitted-p t
+   :qualified-common-lisp-symbols-permitted-p t
+   :allowed-atom-predicate
+   (lambda (value)
+     (or (null value) (eq value t) (keywordp value)
+         (stringp value) (integerp value)))))
 
 (-> management-repl--protocol-error (keyword string) nil)
 (defun management-repl--protocol-error (reason message)
@@ -176,30 +171,16 @@
                  (error ()
                    (management-repl--protocol-error
                     ':encoding "Management protocol frame is not valid UTF-8.")))))
-        (with-standard-io-syntax
-          (let ((*read-eval* nil)
-                (*readtable* (copy-readtable nil))
-                (*package* (find-package '#:autolith))
-                (position 0))
-            (handler-case
-                (multiple-value-bind (form next)
-                    (read-from-string source nil ':end-of-input :start position)
-                  (when (eq form ':end-of-input)
-                    (management-repl--protocol-error
-                     ':empty "Management protocol frame contains no form."))
-                  (setf position next)
-                  (multiple-value-bind (trailing trailing-position)
-                      (read-from-string source nil ':end-of-input :start position)
-                    (declare (ignore trailing-position))
-                    (unless (eq trailing ':end-of-input)
-                      (management-repl--protocol-error
-                       ':trailing "Management protocol frame contains trailing data.")))
-                  form)
-              (management-repl-protocol-error (condition)
-                (error condition))
-              (error ()
-                (management-repl--protocol-error
-                 ':malformed "Management protocol frame is malformed.")))))))))
+        (handler-case
+            (read-source source (management-repl--frame-grammar maximum-size))
+          (sexp-config-error (condition)
+            (management-repl--protocol-error
+             (case (sexp-config-error-kind condition)
+               (:no-form ':empty)
+               (:multiple-forms ':trailing)
+               ((:data-too-deep :data-too-large) ':oversized)
+               (otherwise ':malformed))
+             "Management protocol frame violates the bounded data grammar.")))))))
 
 (-> management-repl-write-frame (stream t (integer 1)) null)
 (defun management-repl-write-frame (stream value maximum-size)

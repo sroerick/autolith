@@ -113,9 +113,9 @@
                       (task-tests--agent-definition-error
                        pathname :project))))
              (test-assert
-              (search "Non-keyword symbol"
-                      (princ-to-string
-                      (task-agent-definition-error-cause condition)))
+              (let ((cause (task-agent-definition-error-cause condition)))
+                (and (typep cause 'sexp-config-error)
+                     (eq (sexp-config-error-kind cause) ':invalid-value)))
                "the native role reader starts from a fresh standard readtable"))
            (let ((bare-name "AUTOLITH-TASK-READER-BARE-LEAK-71D21A")
                  (qualified-name
@@ -156,9 +156,9 @@
                       (make-string 65537 :initial-element #\é))
                      :project)))
              (test-assert
-              (search "byte bound"
-                      (princ-to-string
-                       (task-agent-definition-error-cause condition)))
+              (let ((cause (task-agent-definition-error-cause condition)))
+                (and (typep cause 'sexp-config-error)
+                     (eq (sexp-config-error-kind cause) ':data-too-large)))
               "the native role file limit counts consumed UTF-8 bytes"))
            (dolist
                (case

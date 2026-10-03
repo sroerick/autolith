@@ -151,6 +151,45 @@
             (null (directory (merge-pathnames "nested/*.tmp" root)))
             "run-job leaves no destination-directory temporary file"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (let* ((path (merge-pathnames "child-result.sexp" root))
+           (result '(:status :success :output "child output" :yielded-p t
+                     :structured-output-present-p t
+                     :structured-output (:object ("answer" "yes"))
+                     :request-count 1 :usage (("input_tokens" 2)))))
+      (snapshot-write path result)
+      (test-assert (equal (run-job--read-task-result-artifact path) result)
+                   "headless jobs read the durable child printer's result dialect")
+      (dolist (source
+               (list "(:status :unknown)"
+                     "(:status :success :status :failed)"
+                     "(:status :success :error 42)"
+                     "(:status :success :request-count -1)"
+                     "(:status :success :usage ((1 2)))"
+                     "(:status :success) (:status :failed)"
+                     "#1=(:status :success :output #1#)"
+                     "#.(error \"reader evaluation\")"
+                     (format nil "(:status :success :output ~A nil ~A)"
+                             (make-string 200 :initial-element #\()
+                             (make-string 200 :initial-element #\)))))
+        (with-open-file (stream path :direction ':output :if-exists ':supersede
+                                     :external-format ':utf-8)
+          (write-string source stream))
+        (test-assert
+         (handler-case
+             (progn (run-job--read-task-result-artifact path) nil)
+           (run-job-error (condition)
+             (eq (run-job-error-category condition) ':artifact-failure)))
+         "headless jobs translate malformed child artifacts into artifact failures"))
+      (snapshot-write path result)
+      (let ((*run-job-maximum-result-bytes* 16))
+        (test-assert
+         (handler-case
+             (progn (run-job--read-task-result-artifact path) nil)
+           (run-job-error (condition)
+             (eq (run-job-error-category condition) ':artifact-failure)))
+         "headless jobs enforce their artifact byte limit"))))
   (let* ((application (make-instance 'application))
          (request
            (run-job-validate-envelope (run-job-tests--request-form)))

@@ -1380,6 +1380,20 @@ exactly that race."
                               (namestring artifact-path))
                      (getf artifact :available-p))
                 "job.get reconstructs a bounded terminal record from its artifact"))
+             (snapshot-write artifact-path '(:status :success :status :failed))
+             (test-assert
+              (handler-case
+                  (progn (execute-get primary-a execution-identifier) nil)
+                (task-error (condition)
+                  (string= (tool-error-tool-name condition) "job.get")))
+              "job.get reports malformed durable result records at the task boundary")
+             (snapshot-write artifact-path durable-result)
+             (let ((*task-result-maximum-octets* 16))
+               (test-assert
+                (handler-case
+                    (progn (execute-get primary-a execution-identifier) nil)
+                  (task-error () t))
+                "job.get bounds durable artifacts before reconstructing results"))
              (dolist (viewer (list primary-b child))
                (let ((report
                        (task-tests--job-tool-error-report

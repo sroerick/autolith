@@ -46,12 +46,6 @@
                     :type (integer 1) :documentation "The wall-clock job deadline."))
   (:documentation "One validated version-one non-interactive job request."))
 
-(defstruct (run-job-reader-state (:constructor run-job-reader-state-create))
-  "Mutable state for the bounded data-only S-expression reader."
-  (source "" :type string)
-  (index 0 :type (integer 0))
-  (nodes 0 :type (integer 0)))
-
 (-> run-job--error (keyword string &rest t) null)
 (defun run-job--error (category control &rest arguments)
   "Signal a categorized RUN-JOB failure using CONTROL and ARGUMENTS."
@@ -59,157 +53,30 @@
          :category category
          :message (apply #'format nil control arguments)))
 
-(-> run-job--reader-character (run-job-reader-state) (option character))
-(defun run-job--reader-character (state)
-  "Return STATE's current source character, if any."
-  (let ((index (run-job-reader-state-index state))
-        (source (run-job-reader-state-source state)))
-    (and (< index (length source)) (char source index))))
-
-(-> run-job--reader-advance (run-job-reader-state) null)
-(defun run-job--reader-advance (state)
-  "Advance STATE by one character."
-  (incf (run-job-reader-state-index state))
-  nil)
-
-(-> run-job--reader-skip-whitespace (run-job-reader-state) null)
-(defun run-job--reader-skip-whitespace (state)
-  "Skip ordinary whitespace in STATE."
-  (loop for character = (run-job--reader-character state)
-        while (and character (member character '(#\Space #\Tab #\Newline #\Return)))
-        do (run-job--reader-advance state))
-  nil)
-
-(-> run-job--reader-count-node (run-job-reader-state) null)
-(defun run-job--reader-count-node (state)
-  "Count one parsed node and enforce the global object-tree bound."
-  (when (> (incf (run-job-reader-state-nodes state)) *run-job-maximum-nodes*)
-    (run-job--error ':invalid-input "The job form exceeds the object-tree bound."))
-  nil)
-
-(-> run-job--reader-string (run-job-reader-state) string)
-(defun run-job--reader-string (state)
-  "Read one bounded string from STATE."
-  (run-job--reader-advance state)
-  (let ((output (make-array 64 :element-type 'character :adjustable t :fill-pointer 0)))
-    (loop for character = (run-job--reader-character state)
-          do
-             (unless character
-               (run-job--error ':invalid-input "The job form contains an unterminated string."))
-             (run-job--reader-advance state)
-             (cond
-               ((char= character #\")
-                (return output))
-               ((char= character #\\)
-                (let ((escaped (run-job--reader-character state)))
-                  (unless escaped
-                    (run-job--error ':invalid-input "The job form contains an incomplete string escape."))
-                  (run-job--reader-advance state)
-                  (vector-push-extend escaped output)))
-               (t
-                (vector-push-extend character output)))
-             (when (> (length output) *run-job-maximum-string-characters*)
-               (run-job--error ':invalid-input "A job string exceeds the character bound.")))))
-
-(-> run-job--numeric-token-p (string) boolean)
-(defun run-job--numeric-token-p (token)
-  "Return true when TOKEN contains only conservative Common Lisp number syntax."
-  (and (plusp (length token))
-       (every (lambda (character)
-                (or (digit-char-p character)
-                    (find character "+-.eEdDsSfFlL" :test #'char=)))
-              token)))
-
-(-> run-job--parse-number-token (string) (option number))
-(defun run-job--parse-number-token (token)
-  "Return TOKEN's finite integer or float value, or NIL when it is not one."
-  (when (run-job--numeric-token-p token)
-    (handler-case
-        (with-standard-io-syntax
-          (let ((*read-eval* nil))
-            (multiple-value-bind (value position)
-              (read-from-string token nil nil)
-              (and (= position (length token))
-                 (task-output--json-number-p value)
-                 value))))
-      (error () nil))))
-
-(-> run-job--reader-token (run-job-reader-state) t)
-(defun run-job--reader-token (state)
-  "Read one keyword, boolean, null, or finite number token from STATE."
-  (let* ((source (run-job-reader-state-source state))
-         (start (run-job-reader-state-index state)))
-    (loop for character = (run-job--reader-character state)
-          while (and character
-                     (not (member character
-                                  '(#\Space #\Tab #\Newline #\Return #\( #\)))))
-          do
-             (when (find character "#'`,;|" :test #'char=)
-               (run-job--error ':invalid-input
-                               "The job form contains a forbidden reader character ~S."
-                               character))
-             (run-job--reader-advance state))
-    (let ((token (subseq source start (run-job-reader-state-index state))))
-      (cond
-        ((zerop (length token))
-         (run-job--error ':invalid-input "The job form contains an unreadable token."))
-        ((string-equal token "T") t)
-        ((string-equal token "NIL") nil)
-        ((char= (char token 0) #\:)
-         (when (or (= (length token) 1)
-                   (position #\: token :start 1))
-           (run-job--error ':invalid-input "Package-qualified symbols are not allowed."))
-         (intern (string-upcase (subseq token 1)) :keyword))
-        (t
-         (or (run-job--parse-number-token token)
-             (run-job--error ':invalid-input
-                             "Only keywords, T, NIL, strings, and finite numbers are allowed; found ~S."
-                             token)))))))
-
-(-> run-job--reader-value (run-job-reader-state integer) t)
-(defun run-job--reader-value (state depth)
-  "Read one data-only value from STATE at DEPTH."
-  (when (> depth *run-job-maximum-depth*)
-    (run-job--error ':invalid-input "The job form exceeds the nesting bound."))
-  (run-job--reader-skip-whitespace state)
-  (run-job--reader-count-node state)
-  (let ((character (run-job--reader-character state)))
-    (unless character
-      (run-job--error ':invalid-input "The job form ended before a value."))
-    (cond
-      ((char= character #\()
-       (run-job--reader-advance state)
-       (loop with values = nil
-             do (run-job--reader-skip-whitespace state)
-                (let ((next (run-job--reader-character state)))
-                  (unless next
-                    (run-job--error ':invalid-input
-                                    "The job form contains an unterminated list."))
-                  (if (char= next #\))
-                      (progn
-                        (run-job--reader-advance state)
-                        (return (nreverse values)))
-                      (push (run-job--reader-value state (1+ depth))
-                            values)))))
-      ((char= character #\))
-       (run-job--error ':invalid-input "The job form contains an unmatched closing parenthesis."))
-      ((char= character #\")
-       (run-job--reader-string state))
-      (t
-       (run-job--reader-token state)))))
+(-> run-job--source-grammar () source-grammar)
+(defun run-job--source-grammar ()
+  "Return RUN-JOB's bounded data-only input dialect."
+  (make-source-grammar
+   :label "Job input"
+   :maximum-depth *run-job-maximum-depth*
+   :maximum-nodes *run-job-maximum-nodes*
+   :maximum-string-characters *run-job-maximum-string-characters*
+   :read-default-float-format 'single-float
+   :allowed-atom-predicate
+   (lambda (value)
+     (or (null value) (eq value t) (keywordp value) (stringp value)
+         (task-output--json-number-p value)))))
 
 (-> run-job-read-string (string) t)
 (defun run-job-read-string (source)
   "Read exactly one bounded safe data-only S-expression from SOURCE."
-  (when (> (length source) *run-job-maximum-input-bytes*)
+  (when (or (> (length source) *run-job-maximum-input-bytes*)
+            (> (length (utf8-string-to-octets source)) *run-job-maximum-input-bytes*))
     (run-job--error ':invalid-input "The job input exceeds the byte bound."))
-  (let ((state (run-job-reader-state-create :source source)))
-    (run-job--reader-skip-whitespace state)
-    (let ((value (run-job--reader-value state 0)))
-      (run-job--reader-skip-whitespace state)
-      (unless (= (run-job-reader-state-index state) (length source))
-        (run-job--error ':invalid-input "The input must contain exactly one job form."))
-      value)))
+  (handler-case
+      (read-source source (run-job--source-grammar))
+    (sexp-config-error (condition)
+      (run-job--error ':invalid-input "~A" (sexp-config-error-message condition)))))
 
 (-> run-job-read-file ((or pathname string)) t)
 (defun run-job-read-file (pathname)
@@ -217,11 +84,12 @@
   (let ((path (pathname pathname)))
     (unless (probe-file path)
       (run-job--error ':input-not-found "The job input does not exist: ~A" path))
-    (when (> (with-open-file (stream path :direction ':input :element-type '(unsigned-byte 8))
-               (file-length stream))
-             *run-job-maximum-input-bytes*)
-      (run-job--error ':invalid-input "The job input exceeds the byte bound."))
-    (run-job-read-string (uiop:read-file-string path))))
+    (handler-case
+        (sexp-config:read-source-file
+         path (run-job--source-grammar)
+         :maximum-octets *run-job-maximum-input-bytes*)
+      (sexp-config-error (condition)
+        (run-job--error ':invalid-input "~A" (sexp-config-error-message condition))))))
 
 (-> run-job--envelope-pairs (t) list)
 (defun run-job--envelope-pairs (form)
@@ -342,29 +210,12 @@
 
 (-> run-job--read-task-result-artifact ((or pathname string)) list)
 (defun run-job--read-task-result-artifact (pathname)
-  "Read exactly one bounded task result artifact from PATHNAME without evaluation."
-  (let ((path (pathname pathname)))
-    (when (> (with-open-file (stream path :direction ':input
-                                     :element-type '(unsigned-byte 8))
-               (file-length stream))
-             *run-job-maximum-result-bytes*)
-      (run-job--error ':artifact-failure
-                      "The child result artifact exceeds the supported size."))
-    (with-open-file (stream path :direction ':input :external-format ':utf-8)
-      (with-standard-io-syntax
-        (let ((*read-eval* nil)
-              (end (gensym "END")))
-          (let ((result (read stream nil end)))
-            (when (eq result end)
-              (run-job--error ':artifact-failure
-                              "The child result artifact is empty."))
-            (unless (eq (read stream nil end) end)
-              (run-job--error ':artifact-failure
-                              "The child result artifact contains trailing data."))
-            (unless (listp result)
-              (run-job--error ':artifact-failure
-                              "The child result artifact is not a result list."))
-            result))))))
+  "Read one bounded child result, translating artifact failures for RUN-JOB."
+  (handler-case
+      (task--read-result-artifact
+       pathname :maximum-octets *run-job-maximum-result-bytes*)
+    (store-error (condition)
+      (run-job--error ':artifact-failure "~A" condition))))
 
 (-> run-job-result-envelope
     (string keyword
