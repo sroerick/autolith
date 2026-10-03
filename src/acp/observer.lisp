@@ -15,9 +15,18 @@
                   :documentation "The durable user-message sequence qualifying tool identifiers.")
    (streamed-text :initform (text-buffer-create) :accessor acp-observer-streamed-text :type string
                   :documentation "Text already emitted for the current provider response.")
+   (update-buffer :reader acp-observer-update-buffer :type agentcomms:acp-update-buffer
+                  :documentation "The ordered buffer coalescing visible thought fragments.")
    (lock :initform (make-lock "Autolith ACP updates") :reader acp-observer-lock
          :documentation "The lock serializing short presentation updates, never permission waits."))
   (:documentation "An incremental ACP presentation sink with editor authorization."))
+
+(defmethod initialize-instance :after ((observer acp-observer) &key)
+  "Bind each observer's update buffer to its session's wire envelope."
+  (let ((session (acp-observer-session observer)))
+    (setf (slot-value observer 'update-buffer)
+          (agentcomms:make-agent-update-buffer
+           (acp-session-service session) (acp-session-identifier session)))))
 
 (-> acp-observer-create (acp-session) acp-observer)
 (defun acp-observer-create (session)
@@ -31,8 +40,14 @@
   "Send one update, including terminal tool outcomes during cancellation."
   (let ((session (acp-observer-session observer)))
     (unless (acp-service-closed-p (acp-session-service session))
-      (agentcomms:agent-send-update
-       (acp-session-service session) (acp-session-identifier session) update)))
+      (agentcomms:update-buffer-send (acp-observer-update-buffer observer) update)))
+  nil)
+
+(-> acp-observer-flush (acp-observer) null)
+(defun acp-observer-flush (observer)
+  "Deliver pending thoughts before a permission request or terminal prompt response."
+  (unless (acp-service-closed-p (acp-session-service (acp-observer-session observer)))
+    (agentcomms:update-buffer-flush (acp-observer-update-buffer observer)))
   nil)
 
 (-> acp-tool-identifier (integer string) string)
@@ -65,6 +80,38 @@
       (error ()
         (json-object)))))
 
+(-> acp-tool--argument-preview (t) string)
+(defun acp-tool--argument-preview (value)
+  "Render a bounded argument summary before sanitizing or measuring display cells."
+  (let ((text (cond
+                ((stringp value)
+                 (subseq value 0 (min (length value) 192)))
+                ((hash-table-p value)
+                 (format nil "{~D fields}" (hash-table-count value)))
+                ((vectorp value)
+                 (format nil "[~D items]" (length value)))
+                ((and (integerp value) (> (integer-length value) 64))
+                 "<integer>")
+                (t
+                 (json-encode value)))))
+    (text-cell-prefix (sanitize-text text :single-line-p t) 48)))
+
+(-> acp-tool-title (string t) string)
+(defun acp-tool-title (name arguments)
+  "Return NAME with a bounded, single-line preview of its principal argument."
+  (let* ((key (when (json-object-p arguments)
+                (or (find-if (lambda (key) (nth-value 1 (gethash key arguments)))
+                             '("form" "command" "uri" "query" "patterns" "path"
+                               "url" "system" "name" "task" "text"))
+                    (first (sort (loop for key being the hash-keys of arguments
+                                      collect key)
+                                 #'string<)))))
+         (preview (when key
+                    (acp-tool--argument-preview (gethash key arguments)))))
+    (if (non-empty-string-p preview)
+        (format nil "~A · ~A" name preview)
+        name)))
+
 (-> acp-observer--tool-report
     (acp-observer &key (:identifier string) (:title string) (:status keyword)
                   (:arguments t) (:output (option string))) hash-table)
@@ -72,7 +119,7 @@
   "Construct a tool report using the same identity for progress and authorization."
   (agentcomms:acp-tool-call
    (acp-tool-identifier (acp-observer-turn-sequence observer) identifier)
-   title :name title :kind (acp-tool-kind title) :status status
+   (acp-tool-title title arguments) :name title :kind (acp-tool-kind title) :status status
    :raw-input arguments :raw-output output
    :content (when output
               (list (agentcomms:acp-tool-call-content (agentcomms:acp-text-content output))))))
@@ -158,6 +205,7 @@
   "Request a bounded editor decision and accept only an offered option."
   (let ((session (acp-observer-session observer)))
     (acp-session-check-cancelled session)
+    (acp-observer-flush observer)
     (let ((choice
            (handler-case
                (multiple-value-bind (outcome identifier)

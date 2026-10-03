@@ -244,7 +244,8 @@
   "Compare live and durable replay identities across two actual tool turns."
   (with-test-configuration (configuration root)
     (let ((identifier nil)
-          (live nil))
+          (live nil)
+          (titles nil))
       (acp-session-test--call-with-client
        configuration
        (lambda (service client)
@@ -256,6 +257,12 @@
          (test-assert (= 2 (length live)) "both live turns emit a tool declaration")
          (test-assert (= 2 (length (remove-duplicates live :test #'equal)))
                       "live tool identities are distinct across turns")
+         (setf titles
+               (loop for update in (reverse (acp-session-test-updates client))
+                     when (eq ':tool-call (agentcomms:acp-update-kind update))
+                       collect (agentcomms:json-get update "title")))
+         (test-assert (every (lambda (title) (search "workspace:." title)) titles)
+                      "live tool titles identify the resource being read")
          (test-assert
           (equal live (acp-session-test--tool-identifiers (acp-session-test-updates client)
                                                           ':tool-call-update))
@@ -276,6 +283,12 @@
          (test-assert
           (equal live (acp-session-test--tool-identifiers (acp-session-test-updates client) ':tool-call))
           "replayed tool declarations reuse live identities")
+         (test-assert
+          (equal titles
+                 (loop for update in (reverse (acp-session-test-updates client))
+                       when (eq ':tool-call (agentcomms:acp-update-kind update))
+                         collect (agentcomms:json-get update "title")))
+          "replayed tool titles use their persisted arguments")
          (test-assert
           (equal live (acp-session-test--tool-identifiers (acp-session-test-updates client)
                                                           ':tool-call-update))
@@ -401,4 +414,70 @@
                                client identifier (list (agentcomms:acp-text-content "after repair"))))
                "the repaired session admits another prompt")))
           :provider provider)))))
+  nil)
+
+
+(-> test-acp-session-flushes-thoughts-on-prompt-exit () null)
+(defun test-acp-session-flushes-thoughts-on-prompt-exit ()
+  "Deliver pending thoughts before success, cancellation, or error replies."
+  (with-test-configuration (configuration root)
+    (acp-session-test--call-with-client
+     configuration
+     (lambda (service client)
+       (let ((identifier (agentcomms:client-new-session client (namestring root)))
+             (original (make-condition 'simple-error :format-control "Original turn failure")))
+         (dolist (outcome '(:success :cancelled :error :flush-error))
+           (setf (acp-session-test-updates client) nil)
+           (test-call-with-function-replacements
+            (append
+             (list
+              (list 'agent-run-user-turn
+                    (lambda (agent text &key observer)
+                      (declare (ignore agent text))
+                      (agent-observer-reasoning observer "pending ")
+                      (agent-observer-reasoning observer "thought")
+                      (ecase outcome
+                        (:success nil)
+                        (:cancelled (error 'application-turn-cancelled))
+                        ((:error :flush-error) (error original))))))
+             (when (eq outcome ':flush-error)
+               (list (list 'acp-observer-flush
+                           (lambda (observer)
+                             (declare (ignore observer))
+                             (error "Flush failed"))))))
+            (lambda ()
+              (case outcome
+                (:flush-error
+                 (handler-case
+                     (progn
+                       (agentcomms:agent-prompt service identifier
+                                               (list (agentcomms:acp-text-content "turn")) nil)
+                       (test-assert nil "the original turn fails"))
+                   (serious-condition (condition)
+                     (test-assert (eq original condition)
+                                  "cleanup failure does not replace the original condition"))))
+                (:error
+                 (test-assert
+                  (handler-case
+                      (progn
+                        (agentcomms:client-prompt client identifier
+                                                 (list (agentcomms:acp-text-content "turn")))
+                        nil)
+                    (agentcomms:acp-remote-error () t))
+                  "a failed turn returns a protocol error"))
+                (otherwise
+                 (test-assert
+                  (eq (if (eq outcome ':success) ':end-turn ':cancelled)
+                      (agentcomms:client-prompt client identifier
+                                               (list (agentcomms:acp-text-content "turn"))))
+                  "the prompt returns its terminal outcome")))))
+           (unless (eq outcome ':flush-error)
+             (let ((updates (reverse (acp-session-test-updates client))))
+               (test-assert
+                (and (= 1 (length updates))
+                     (eq ':agent-thought-chunk (agentcomms:acp-update-kind (first updates)))
+                     (equal "pending thought"
+                            (agentcomms:acp-content-text
+                             (agentcomms:json-get (first updates) "content"))))
+                "the client handles the final thought batch before the terminal reply"))))))))
   nil)

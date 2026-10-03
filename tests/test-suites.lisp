@@ -766,6 +766,8 @@
   test-acp-observer-streams-one-response
   test-acp-observer-permission-validates-offered-choice
   test-acp-observer-forwards-serialized-tool-execution
+  test-acp-observer-tool-title-previews
+  test-acp-observer-batches-thoughts-before-permission
   test-acp-session-wire-new-prompt-replay-close
   test-acp-session-busy-admission-is-owner-safe
   test-acp-session-cancel-blocked-provider-and-reuse
@@ -774,6 +776,7 @@
   test-acp-session-live-and-replayed-tool-identities
   test-acp-session-close-timeout-retains-ownership
   test-acp-session-delayed-cancel-during-finalization
+  test-acp-session-flushes-thoughts-on-prompt-exit
   test-acp-mcp-overlay-configuration
   test-acp-mcp-overlay-discovery-call-and-cleanup
   test-acp-mcp-overlay-duplicate-validation)

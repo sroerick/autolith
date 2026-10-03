@@ -196,6 +196,7 @@
          (conversation (application-conversation application))
          (text (acp-prompt->text prompt))
          (start-sequence (conversation-next-sequence conversation))
+         (observer nil)
          (claimed-p nil))
     (acp-service--call-with-operation
      service session
@@ -216,10 +217,14 @@
                         (*default-pathname-defaults*
                          (config :working-directory (application-configuration application))))
                     (acp-session-check-cancelled session)
-                    (agent-run-user-turn (application-agent application) text
-                                         :observer (acp-observer-create session))
+                    (setf observer (acp-observer-create session))
+                    (agent-run-user-turn (application-agent application) text :observer observer)
                     (acp-session--call-with-finalization
-                     session (lambda () (acp-session-check-cancelled session) ':end-turn))))
+                     session
+                     (lambda ()
+                       (acp-session-check-cancelled session)
+                       (acp-observer-flush observer)
+                       ':end-turn))))
               (application-turn-cancelled (condition)
                 (acp-session--call-with-finalization
                  session
@@ -228,6 +233,9 @@
                      (application--record-turn-aborted application condition
                                                        :turn-start-sequence start-sequence
                                                        :reason ':cancelled))
+                   (when observer
+                     (handler-case (acp-observer-flush observer)
+                       (serious-condition () nil)))
                    ':cancelled)))
               (serious-condition (condition)
                 (acp-session--call-with-finalization
@@ -237,6 +245,9 @@
                      (application--record-turn-aborted application condition
                                                        :turn-start-sequence start-sequence
                                                        :reason ':application-error))
+                   (when observer
+                     (handler-case (acp-observer-flush observer)
+                       (serious-condition () nil)))
                    (error condition)))))
          (when claimed-p
            (with-lock-held ((acp-session-lock session))

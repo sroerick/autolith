@@ -13,7 +13,7 @@ ql serapeum 2026-01-01
 ql winhttp 2026-01-01
 ql yason 2026-01-01
 
-git agentcomms https://github.com/lambda-symbolics/agentcomms.git :ref f1cf782201f94719c5efd418dc5d769e347b7f38
+git agentcomms https://github.com/lambda-symbolics/agentcomms.git :ref b3d3026ab5da868663f742b2c2d36ff3cf8700b4
 git fetch-gist https://github.com/lambda-symbolics/fetch-gist.git :ref 0adb33b6801d1218ce6249d2a751b05f88b98c40
 git cl-colorist https://github.com/luciusmagn/cl-colorist.git :ref a70749493fbdbe79d6766f254a664119042102b9
 git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 4304caef0ff80398e68ea185664d2b8609fa0954
