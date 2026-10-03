@@ -86,7 +86,7 @@
       (let ((directories
               (mcp-configuration--property
                form :directories :required-p t :pathname pathname)))
-        (unless (mcp-configuration--proper-list-p directories)
+        (unless (proper-list-p directories)
           (mcp-configuration--error
            "Directory-scope :DIRECTORIES must be a proper list."
            :pathname pathname

@@ -46,31 +46,11 @@ Oversized text ends with an explicit truncation marker whenever LIMIT permits it
                         (subseq text 0 (- limit (length marker)))
                         marker))))))
 
-(-> conversation-user-operation--proper-list-p (t) boolean)
-(defun conversation-user-operation--proper-list-p (value)
-  "Return true when VALUE is a finite nonempty proper list."
-  (handler-case
-      (let ((length (list-length value)))
-        (and (integerp length) (plusp length)))
-    (error ()
-      nil)))
-
 (-> conversation-user-operation--properties-p (t) boolean)
 (defun conversation-user-operation--properties-p (properties)
   "Return true when PROPERTIES has bounded unique keys and every required field."
-  (and (conversation-user-operation--proper-list-p properties)
-       (evenp (length properties))
-       (<= (length properties) 32)
-       (let* ((required '(:seq :time :kind :source :status :result))
-              (keys
-                (loop for key in properties by #'cddr
-                      collect key)))
-         (and (every #'keywordp keys)
-              (= (length keys)
-                 (length (remove-duplicates keys :test #'eq)))
-              (every (lambda (key)
-                       (member key keys :test #'eq))
-                     required)))))
+  (plist-schema-p properties :maximum-length 32
+                            :required-keys '(:seq :time :kind :source :status :result)))
 
 (-> conversation-user-operation--replay-text-p (t) boolean)
 (defun conversation-user-operation--replay-text-p (value)

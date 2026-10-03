@@ -226,7 +226,7 @@
 (-> run-job--envelope-pairs (t) list)
 (defun run-job--envelope-pairs (form)
   "Validate FORM's version-one envelope shape and return field pairs."
-  (unless (and (task--proper-list-p form) (eq (first form) :autolith-job))
+  (unless (and (proper-list-p form) (eq (first form) :autolith-job))
     (run-job--error ':invalid-envelope "The input must begin with :AUTOLITH-JOB."))
   (handler-case
       (task--plist-alist
@@ -277,7 +277,7 @@
 (-> run-job--recover-identifier (t) string)
 (defun run-job--recover-identifier (form)
   "Return FORM's unique bounded identifier, or an empty string when unavailable."
-  (if (and (task--proper-list-p form) (eq (first form) ':autolith-job))
+  (if (and (proper-list-p form) (eq (first form) ':autolith-job))
       (let ((identifiers nil))
         (loop for tail = (rest form) then (cddr tail)
               while (and (consp tail) (consp (rest tail)))

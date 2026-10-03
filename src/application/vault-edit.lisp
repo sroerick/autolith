@@ -186,9 +186,9 @@ SETF of this place to publish a replacement, rather than mutating a returned lis
     (labels ((invalid ()
                (application-recovery-input-vault--signal
                 pathname ':edit :message "Vault entries must be (:message INPUT), (:command TEXT), or (:lisp SOURCE).")))
-      (unless (application-recovery-input-vault--proper-list-p value) (invalid))
+      (unless (proper-list-p value) (invalid))
       (mapcar (lambda (entry)
-                (unless (and (application-recovery-input-vault--proper-list-p entry)
+                (unless (and (proper-list-p entry)
                              (= (length entry) 2)
                              (member (first entry) '(:message :command :lisp))
                              (typep (second entry) '(or string user-message-input))

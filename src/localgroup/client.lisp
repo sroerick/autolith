@@ -48,7 +48,7 @@
                       :operation operation
                       :session-id session-id
                       :cause condition)))))
-    (unless (and (localgroup--proper-list-p response)
+    (unless (and (proper-list-p response)
                  (eq (first response) ':ok))
       (error 'localgroup-error
              :message (or (getf (rest response) :message)

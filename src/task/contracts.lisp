@@ -166,16 +166,6 @@
         while end
         do (setf start (1+ end))))
 
-(-> task--proper-list-p (t) boolean)
-(defun task--proper-list-p (value)
-  "Return true when VALUE is a finite proper list."
-  (handler-case
-      (or (null value)
-          (and (consp value)
-               (integerp (list-length value))))
-    (type-error ()
-      nil)))
-
 (-> task--plist-key-present-p (list keyword) boolean)
 (defun task--plist-key-present-p (plist key)
   "Return true when proper PLIST contains KEY in a key position."
@@ -191,38 +181,25 @@
 (defun task--plist-alist
     (value allowed-fields &key pathname source line definition-name)
   "Validate native plist VALUE and return its ordered key-value pairs."
-  (unless (task--proper-list-p value)
-    (task-agent-definition--error
-     :pathname pathname :source source :line line
-     :cause "The value must be a proper list."
-     :definition-name definition-name))
-  (unless (evenp (length value))
-    (task-agent-definition--error
-     :pathname pathname :source source :line line
-     :cause "The property list has a key without a value."
-     :definition-name definition-name))
-  (let ((seen (make-hash-table :test #'eq))
-        (pairs nil))
-    (loop for (key child) on value by #'cddr
-          do
-             (unless (keywordp key)
-               (task-agent-definition--error
-                :pathname pathname :source source :line line
-                :cause (format nil "Property key ~S is not a keyword." key)
-                :definition-name definition-name))
-             (unless (member key allowed-fields :test #'eq)
-               (task-agent-definition--error
-                :pathname pathname :source source :line line :field key
-                :cause "The property is not part of the native role contract."
-                :definition-name definition-name))
-             (when (gethash key seen)
-               (task-agent-definition--error
-                :pathname pathname :source source :line line :field key
-                :cause "The property occurs more than once."
-                :definition-name definition-name))
-             (setf (gethash key seen) t)
-             (push (cons key child) pairs))
-    (nreverse pairs)))
+  (multiple-value-bind (problem key)
+      (plist-schema-problem value :allowed-keys allowed-fields)
+    (when problem
+      (task-agent-definition--error
+       :pathname pathname :source source :line line
+       :field (and (member problem '(:unknown :duplicate)) key)
+       :cause (case problem
+                (:improper
+                 "The value must be a proper list.")
+                (:odd
+                 "The property list has a key without a value.")
+                (:non-keyword
+                 (format nil "Property key ~S is not a keyword." key))
+                (:unknown
+                 "The property is not part of the native role contract.")
+                (:duplicate
+                 "The property occurs more than once."))
+       :definition-name definition-name)))
+  (loop for (key child) on value by #'cddr collect (cons key child)))
 
 (-> task--alist-value (keyword list) (values t boolean))
 (defun task--alist-value (key pairs)

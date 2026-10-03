@@ -143,7 +143,7 @@ exit \"$status\""
 (-> localgroup-handoff--record-p (t) boolean)
 (defun localgroup-handoff--record-p (record)
   "Return true when RECORD is one supported detached-process handoff."
-  (and (localgroup--proper-list-p record)
+  (and (proper-list-p record)
        (eq (first record) ':localgroup-handoff)
        (= (or (getf (rest record) :version) 0)
           *localgroup-handoff-version*)

@@ -36,28 +36,12 @@
 
 ;;;; -- Strict Durable Forms --
 
-(-> application-recovery-input-vault--proper-list-p (t) boolean)
-(defun application-recovery-input-vault--proper-list-p (value)
-  "Return true when VALUE is a finite proper list."
-  (handler-case
-      (not (null (list-length value)))
-    (error ()
-      nil)))
-
 (-> application-recovery-input-vault--properties-p (t list list) boolean)
 (defun application-recovery-input-vault--properties-p
     (properties allowed-keys required-keys)
   "Return true when PROPERTIES is a unique bounded property list with valid keys."
-  (and (application-recovery-input-vault--proper-list-p properties)
-       (evenp (length properties))
-       (let ((keys (loop for key in properties by #'cddr collect key)))
-         (and (every (lambda (key)
-                       (member key allowed-keys :test #'eq))
-                     keys)
-              (= (length keys) (length (remove-duplicates keys :test #'eq)))
-              (every (lambda (key)
-                       (member key keys :test #'eq))
-                     required-keys)))))
+  (plist-schema-p properties :allowed-keys allowed-keys :required-keys required-keys
+                            :keyword-keys-p nil))
 
 (-> application-recovery-input-vault--read-form (pathname keyword) t)
 (defun application-recovery-input-vault--read-form (pathname operation)
@@ -85,10 +69,10 @@
 (-> application-recovery-input-vault--pending-form-shape-p (t) boolean)
 (defun application-recovery-input-vault--pending-form-shape-p (form)
   "Return true when FORM has one supported pending-input record shape."
-  (and (application-recovery-input-vault--proper-list-p form)
+  (and (proper-list-p form)
        (eq (first form) ':pending-inputs)
        (let* ((properties (rest form))
-              (version (and (application-recovery-input-vault--proper-list-p
+              (version (and (proper-list-p
                              properties)
                             (getf properties :version))))
          (case version
@@ -280,7 +264,7 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
 (defun application-recovery-input-vault--capture-from-form
     (form conversation-identifier pathname)
   "Return one validated normalized vault capture from FORM."
-  (when (and (application-recovery-input-vault--proper-list-p form)
+  (when (and (proper-list-p form)
              (application-recovery-input-vault--properties-p
               form
               '(:id :captured-at :active-work :steering-in-flight :steering :work
@@ -385,13 +369,13 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
         (let* ((form
                  (application-recovery-input-vault--read-form pathname ':read-vault))
                (properties
-                 (and (application-recovery-input-vault--proper-list-p form)
+                 (and (proper-list-p form)
                       (rest form)))
                (conversation-identifier
                  (conversation-identifier
                   (application-conversation application))))
           (unless
-              (and (application-recovery-input-vault--proper-list-p form)
+              (and (proper-list-p form)
                    (eq (first form) ':recovery-input-vault)
                    (application-recovery-input-vault--properties-p
                     properties
@@ -401,7 +385,7 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
                    (stringp (getf properties :conversation-id))
                    (string= (getf properties :conversation-id)
                             conversation-identifier)
-                   (application-recovery-input-vault--proper-list-p
+                   (proper-list-p
                     (getf properties :captures)))
             (application-recovery-input-vault--signal
              pathname ':validate-vault

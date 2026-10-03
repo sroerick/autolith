@@ -16,14 +16,6 @@
                         (char= character #\-)
                         (not (null (digit-char-p character 16)))))))
 
-(-> conversation-identifier-migration--proper-list-p (t) boolean)
-(defun conversation-identifier-migration--proper-list-p (value)
-  "Return true when VALUE is a finite proper list."
-  (handler-case
-      (and (listp value) (or (list-length value) (null value)) t)
-    (type-error ()
-      nil)))
-
 (-> conversation-identifier-migration--signal
     (configuration keyword string &key (:pathname (option pathname)) (:cause t))
     null)
@@ -42,7 +34,7 @@
 (-> conversation-identifier-migration--entry-p (t) boolean)
 (defun conversation-identifier-migration--entry-p (value)
   "Return true when VALUE is one complete legacy-to-current mapping entry."
-  (and (conversation-identifier-migration--proper-list-p value)
+  (and (proper-list-p value)
        (= (length value) 6)
        (conversation-identifier-migration--legacy-identifier-p
         (getf value :old))
@@ -54,7 +46,7 @@
 (-> conversation-identifier-migration--record-p (t) boolean)
 (defun conversation-identifier-migration--record-p (value)
   "Return true when VALUE is a complete supported migration record."
-  (and (conversation-identifier-migration--proper-list-p value)
+  (and (proper-list-p value)
        (= (length value) 9)
        (eq (first value) :conversation-identifier-migration)
        (= (or (getf (rest value) :version) 0)
@@ -67,7 +59,7 @@
              always (member key '(:version :status :updated-at :entries)
                             :test #'eq))
        (let ((entries (getf (rest value) :entries)))
-         (and (conversation-identifier-migration--proper-list-p entries)
+         (and (proper-list-p entries)
               (every #'conversation-identifier-migration--entry-p entries)
               (= (length entries)
                  (length (remove-duplicates

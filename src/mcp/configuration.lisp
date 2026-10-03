@@ -269,16 +269,6 @@
          :field field
          :cause cause))
 
-(-> mcp-configuration--proper-list-p (t) boolean)
-(defun mcp-configuration--proper-list-p (value)
-  "Return true when VALUE is a finite proper list."
-  (or (null value)
-      (and (listp value)
-           (handler-case
-               (integerp (list-length value))
-             (type-error ()
-               nil)))))
-
 (-> mcp-configuration--bounded-string-p
     (t integer &key (:empty-p boolean))
     boolean)
@@ -338,38 +328,24 @@ bound policy takes effect without reloading this file."
 (defun mcp-configuration--validate-plist
     (value allowed-keys &key pathname server-name)
   "Return VALUE after validating a proper keyword plist against ALLOWED-KEYS."
-  (unless (mcp-configuration--proper-list-p value)
-    (mcp-configuration--error
-     "An MCP native object must be a proper property list."
-     :pathname pathname
-     :server-name server-name))
-  (unless (evenp (length value))
-    (mcp-configuration--error
-     "An MCP native object has a property without a value."
-     :pathname pathname
-     :server-name server-name))
-  (let ((seen (make-hash-table :test #'eq)))
-    (loop for tail on value by #'cddr
-          for key = (first tail)
-          do
-             (unless (keywordp key)
-               (mcp-configuration--error
-                (format nil "MCP configuration key ~S is not a keyword." key)
-                :pathname pathname
-                :server-name server-name))
-             (unless (member key allowed-keys)
-               (mcp-configuration--error
-                (format nil "Unknown MCP configuration key ~S." key)
-                :pathname pathname
-                :server-name server-name
-                :field key))
-             (when (gethash key seen)
-               (mcp-configuration--error
-                (format nil "Duplicate MCP configuration key ~S." key)
-                :pathname pathname
-                :server-name server-name
-                :field key))
-             (setf (gethash key seen) t)))
+  (multiple-value-bind (problem key)
+      (plist-schema-problem value :allowed-keys allowed-keys)
+    (when problem
+      (mcp-configuration--error
+       (case problem
+         (:improper
+          "An MCP native object must be a proper property list.")
+         (:odd
+          "An MCP native object has a property without a value.")
+         (:non-keyword
+          (format nil "MCP configuration key ~S is not a keyword." key))
+         (:unknown
+          (format nil "Unknown MCP configuration key ~S." key))
+         (:duplicate
+          (format nil "Duplicate MCP configuration key ~S." key)))
+       :pathname pathname
+       :server-name server-name
+       :field (and (member problem '(:unknown :duplicate)) key))))
   value)
 
 (-> mcp-configuration--property
@@ -436,7 +412,7 @@ bound policy takes effect without reloading this file."
 (defun mcp-configuration--binding
     (form &key header-p pathname server-name)
   "Parse one environment-backed process or HTTP binding FORM."
-  (unless (and (mcp-configuration--proper-list-p form)
+  (unless (and (proper-list-p form)
                (= (length form) 3)
                (eq (second form) :environment))
     (mcp-configuration--error
@@ -470,7 +446,7 @@ bound policy takes effect without reloading this file."
 (defun mcp-configuration--bindings
     (forms &key header-p pathname server-name)
   "Validate and copy unique environment-backed binding FORMS."
-  (unless (mcp-configuration--proper-list-p forms)
+  (unless (proper-list-p forms)
     (mcp-configuration--error
      "MCP environment bindings must be a proper list."
      :pathname pathname
@@ -560,7 +536,7 @@ bound policy takes effect without reloading this file."
        :pathname pathname
        :server-name server-name
        :field ':command))
-    (unless (and (mcp-configuration--proper-list-p arguments)
+    (unless (and (proper-list-p arguments)
                  (<= (length arguments) *mcp-stdio-maximum-arguments*)
                  (every
                   (lambda (argument)
@@ -800,7 +776,7 @@ bound policy takes effect without reloading this file."
     mcp-transport-configuration)
 (defun mcp-configuration--transport (form &key pathname server-name)
   "Parse one native MCP transport FORM."
-  (unless (mcp-configuration--proper-list-p form)
+  (unless (proper-list-p form)
     (mcp-configuration--error
      "An MCP transport must be a native property list."
      :pathname pathname
@@ -868,7 +844,7 @@ bound policy takes effect without reloading this file."
      :field ':approval))
   (unless
       (and
-       (mcp-configuration--proper-list-p trusted-read-only-tools)
+       (proper-list-p trusted-read-only-tools)
        (<= (length trusted-read-only-tools)
            *mcp-maximum-trusted-read-only-tools*)
        (every
@@ -892,7 +868,7 @@ bound policy takes effect without reloading this file."
      :pathname pathname
      :server-name name
      :field ':trusted-read-only-tools))
-  (unless (and (mcp-configuration--proper-list-p child-tools)
+  (unless (and (proper-list-p child-tools)
                (<= (length child-tools) *mcp-maximum-child-tools*)
                (every
                 (lambda (tool-name)
@@ -1077,7 +1053,7 @@ bound policy takes effect without reloading this file."
     (let ((servers
             (mcp-configuration--property
              form :servers :required-p t :pathname pathname)))
-      (unless (mcp-configuration--proper-list-p servers)
+      (unless (proper-list-p servers)
         (mcp-configuration--error
          "MCP :SERVERS must be a proper list."
          :pathname pathname
@@ -1135,7 +1111,7 @@ bound policy takes effect without reloading this file."
 (-> mcp--validate-registration-list (list) list)
 (defun mcp--validate-registration-list (registrations)
   "Return REGISTRATIONS after validating every MCP registration layer."
-  (unless (mcp-configuration--proper-list-p registrations)
+  (unless (proper-list-p registrations)
     (mcp-configuration--error
      "The MCP server registry snapshot must be a proper list."))
   (let ((seen (make-hash-table :test #'equal))

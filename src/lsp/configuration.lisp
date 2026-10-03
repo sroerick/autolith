@@ -44,34 +44,28 @@
        (<= (length value) *lsp-configuration-maximum-string-characters*)
        (or empty-p (plusp (length value)))))
 
-(-> lsp-configuration--proper-list-p (t) boolean)
-(defun lsp-configuration--proper-list-p (value)
-  "Return true for a finite proper list, including NIL."
-  (and (listp value)
-       (handler-case (not (null (list-length value))) (type-error () nil))))
-
 (-> lsp-configuration--list-p (t function) boolean)
 (defun lsp-configuration--list-p (value predicate)
   "Return true for a bounded proper list whose elements satisfy PREDICATE."
-  (and (lsp-configuration--proper-list-p value)
+  (and (proper-list-p value)
        (<= (length value) *lsp-configuration-maximum-list-elements*)
        (every predicate value)))
 
 (-> lsp-configuration--plist (t list pathname &key (:server-name t)) list)
 (defun lsp-configuration--plist (form allowed pathname &key server-name)
   "Validate unique allowed keys in an even proper property list."
-  (unless (and (lsp-configuration--proper-list-p form) (evenp (length form)))
-    (lsp-configuration--error "LSP configuration requires an even proper property list."
-                              :pathname pathname :server-name server-name))
-  (let ((seen (make-hash-table :test #'eq)))
-    (loop for (key value) on form by #'cddr
-          do (unless (member key allowed)
-               (lsp-configuration--error (format nil "Unknown LSP configuration key ~S." key)
-                                         :pathname pathname :server-name server-name :field key))
-             (when (gethash key seen)
-               (lsp-configuration--error (format nil "Duplicate LSP configuration key ~S." key)
-                                         :pathname pathname :server-name server-name :field key))
-             (setf (gethash key seen) t)))
+  (multiple-value-bind (problem key)
+      (plist-schema-problem form :allowed-keys allowed :keyword-keys-p nil)
+    (case problem
+      ((:improper :odd)
+       (lsp-configuration--error "LSP configuration requires an even proper property list."
+                                 :pathname pathname :server-name server-name))
+      (:unknown
+       (lsp-configuration--error (format nil "Unknown LSP configuration key ~S." key)
+                                 :pathname pathname :server-name server-name :field key))
+      (:duplicate
+       (lsp-configuration--error (format nil "Duplicate LSP configuration key ~S." key)
+                                 :pathname pathname :server-name server-name :field key))))
   form)
 
 (-> lsp-configuration--property (list keyword &key (:required-p boolean) (:pathname t) (:server-name t)) t)
@@ -203,7 +197,7 @@
                    *lsp-configuration-version*)
         (lsp-configuration--error "LSP configuration must use version 1." :pathname pathname :field :version))
       (let ((servers (lsp-configuration--property form :servers :required-p t :pathname pathname)))
-        (unless (and (lsp-configuration--proper-list-p servers)
+        (unless (and (proper-list-p servers)
                      (<= (length servers) *lsp-configuration-maximum-servers*))
           (lsp-configuration--error "LSP :SERVERS must be a list of at most 32 entries."
                                     :pathname pathname :field :servers))

@@ -91,7 +91,7 @@
 (defun task-agent--validate-string-list
     (value field &key pathname source definition-name allow-empty-p)
   "Validate and copy a proper unique string list for FIELD."
-  (unless (and (task--proper-list-p value)
+  (unless (and (proper-list-p value)
                (or allow-empty-p value)
                (every #'non-empty-string-p value)
                (task--unique-list-p value :test #'string-equal))
@@ -150,7 +150,7 @@
   (cond
     ((null value) nil)
     ((eq value :all) :all)
-    ((task--proper-list-p value)
+    ((proper-list-p value)
      (let ((tools
              (task-agent--validate-string-list
               value :tools
@@ -183,7 +183,7 @@
   (cond
     ((null value) nil)
     ((eq value :all) :all)
-    ((task--proper-list-p value)
+    ((proper-list-p value)
      (let ((spawns
              (task-agent--validate-string-list
               value :spawns

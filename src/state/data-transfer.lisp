@@ -51,13 +51,9 @@
 (-> data-transfer--properties-p (t list) boolean)
 (defun data-transfer--properties-p (value keys)
   "Return true for a proper plist containing each of KEYS exactly once."
-  (handler-case
-      (and (listp value)
-           (eql (list-length value) (* 2 (length keys)))
-           (let ((actual (loop for tail on value by #'cddr collect (first tail))))
-             (and (every (lambda (key) (member key keys)) actual)
-                  (= (length actual) (length (remove-duplicates actual))))))
-    (error () nil)))
+  (and (plist-schema-p value :allowed-keys keys :required-keys keys
+                            :keyword-keys-p nil)
+       (= (length value) (* 2 (length keys)))))
 
 (-> data-transfer--portable-p (t) boolean)
 (defun data-transfer--portable-p (value)

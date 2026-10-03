@@ -20,14 +20,6 @@
     '(:shared :exclusive :exclusive-without-arguments)
     "The supported command policies for terminal reader ownership.")
 
-  (defun application-command--proper-list-p (value)
-    "Return true when VALUE is a finite proper list."
-    (handler-case
-        (and (listp value)
-             (integerp (list-length value)))
-      (type-error ()
-        nil)))
-
   (defun application-command--identifier-p (value)
     "Return true when VALUE is one normalized slash-command identifier."
     (and (non-empty-string-p value)
@@ -47,7 +39,7 @@
 
   (defun application-command--static-options-p (value)
     "Return true when VALUE is a unique proper list of printable strings."
-    (and (application-command--proper-list-p value)
+    (and (proper-list-p value)
          (not (null value))
          (every (lambda (option)
                   (and (non-empty-string-p option)
@@ -86,7 +78,7 @@
                (incf maximum))
               (:optional
                (unless (or (symbolp entry)
-                           (and (application-command--proper-list-p entry)
+                           (and (proper-list-p entry)
                                 (<= 1 (length entry) 3)
                                 (symbolp (first entry))))
                  (error "Invalid optional application command parameter ~S." entry))
@@ -115,7 +107,7 @@
     (unless (application-command--identifier-p name)
       (error "Application command name ~S is not a lowercase slash identifier."
              name))
-    (unless (application-command--proper-list-p aliases)
+    (unless (proper-list-p aliases)
       (error "Application command ~A aliases are not a proper literal list."
              name))
     (unless (every #'application-command--identifier-p aliases)
@@ -156,7 +148,7 @@
                  (symbol-package definition-name))
       (error
        "An application command definition name must be an interned non-keyword symbol."))
-    (unless (and (application-command--proper-list-p metadata)
+    (unless (and (proper-list-p metadata)
                  (evenp (length metadata)))
       (error "Application command ~S metadata is not a literal property list."
              definition-name))
@@ -190,7 +182,7 @@
       (when (and (= argument-count 1) static-options)
         (error "Application command ~S cannot duplicate static options in :ARGUMENT."
                definition-name))
-      (unless (and (application-command--proper-list-p lambda-list)
+      (unless (and (proper-list-p lambda-list)
                    (plusp (length lambda-list))
                    (symbolp (first lambda-list))
                    (first lambda-list)
@@ -668,7 +660,7 @@ without changing the registry."
 (-> application-command--registry-restore (list) null)
 (defun application-command--registry-restore (snapshot)
   "Atomically replace command registrations with exact ordered SNAPSHOT."
-  (unless (application-command--proper-list-p snapshot)
+  (unless (proper-list-p snapshot)
     (error 'configuration-error
            :message "An application command registry snapshot must be a proper list."))
   (with-extension-registry-transaction

@@ -29,15 +29,6 @@
   (:documentation
    "A localgroup failure joined to Autolith's condition hierarchy."))
 
-(-> localgroup--proper-list-p (t) boolean)
-(defun localgroup--proper-list-p (value)
-  "Return true when VALUE is a proper list."
-  (and (listp value)
-       (handler-case
-           (not (null (list-length value)))
-         (type-error ()
-           nil))))
-
 
 ;;;; -- image-daemon Host Wiring --
 

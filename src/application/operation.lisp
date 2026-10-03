@@ -715,14 +715,6 @@ paths that do not contain QUERY as a contiguous substring."
 
 ;;;; -- Lisp Argument Boundary --
 
-(-> application-operation--proper-list-p (t) boolean)
-(defun application-operation--proper-list-p (value)
-  "Return true when VALUE is a finite proper list."
-  (handler-case
-      (and (listp value) (integerp (list-length value)))
-    (type-error ()
-      nil)))
-
 (-> application-operation--json-key (t) non-empty-string)
 (defun application-operation--json-key (key)
   "Return KEY as one lowercase JSON object member name."
@@ -774,7 +766,7 @@ paths that do not contain QUERY as a contiguous substring."
        object))
     ((vectorp value)
      (map 'vector #'application-operation--json-value value))
-    ((application-operation--proper-list-p value)
+    ((proper-list-p value)
      (map 'vector #'application-operation--json-value value))
     (t
      (error 'configuration-error
@@ -786,7 +778,7 @@ paths that do not contain QUERY as a contiguous substring."
 (-> application-operation--tool-arguments (list) json-object)
 (defun application-operation--tool-arguments (arguments)
   "Translate alternating Lisp keyword ARGUMENTS into one JSON object."
-  (unless (and (application-operation--proper-list-p arguments)
+  (unless (and (proper-list-p arguments)
                (evenp (length arguments)))
     (error 'configuration-error
            :message
@@ -846,7 +838,7 @@ paths that do not contain QUERY as a contiguous substring."
 (defun application-operation--immediate-argument-p (form)
   "Return whether FORM is literal data safe to evaluate beside an active turn."
   (or (constantp form)
-      (and (application-operation--proper-list-p form)
+      (and (proper-list-p form)
            (member (first form) '(list vector json-object) :test #'eq)
            (every #'application-operation--immediate-argument-p (rest form)))))
 
@@ -901,7 +893,7 @@ wait for the serialized application boundary."
         (cond
           ((application-operation--immediate-vault-form-p form)
            ':execute)
-          ((and (application-operation--proper-list-p form)
+          ((and (proper-list-p form)
                 (symbolp (first form)))
            (let* ((operation (application-operation-find application (first form)))
                   (arguments (rest form)))
@@ -917,7 +909,7 @@ wait for the serialized application boundary."
 (-> application-operation--vault-place-p (t) boolean)
 (defun application-operation--vault-place-p (form)
   "Return whether FORM is a VAULT-CONTENTS place with an optional index."
-  (and (application-operation--proper-list-p form)
+  (and (proper-list-p form)
        (eq (first form) 'vault-contents)
        (<= (length (rest form)) 1)))
 
@@ -925,7 +917,7 @@ wait for the serialized application boundary."
 (defun application-operation--immediate-vault-form-p (form)
   "Recognize direct vault reads and SETF with exclusively vault places."
   (or (application-operation--vault-place-p form)
-      (and (application-operation--proper-list-p form)
+      (and (proper-list-p form)
            (eq (first form) 'setf)
            (rest form)
            (evenp (length (rest form)))
