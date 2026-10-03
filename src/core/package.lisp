@@ -840,6 +840,66 @@
                 #:sbcl-worker-start
                 #:sbcl-worker-stop
                 #:sbcl-worker-used-image-identifier)
+  (:import-from #:setinka
+                #:*configuration*
+                #:*configuration-default-function*
+                #:*configuration-store*
+                #:*settings*
+                #:boolean-setting
+                #:choice-setting
+                #:config
+                #:configuration
+                #:configuration-add-listener
+                #:configuration-group-values
+                #:configuration-missing
+                #:configuration-persist
+                #:configuration-remove-listener
+                #:configuration-set
+                #:configuration-setting
+                #:configuration-setting-list
+                #:configuration-setting-source
+                #:configuration-setting-value
+                #:configuration-source
+                #:configuration-unset
+                #:configuration-validate-deferred
+                #:configuration-validation-deferred-p
+                #:define-setting
+                #:derived-setting
+                #:find-setting
+                #:integer-setting
+                #:make-setting-registry
+                #:pathname-setting
+                #:setting
+                #:setting-coerce
+                #:setting-default
+                #:setting-default-value
+                #:setting-documentation
+                #:setting-environment
+                #:setting-error
+                #:setting-function
+                #:setting-group
+                #:setting-invalid
+                #:setting-label
+                #:setting-maximum
+                #:setting-minimum
+                #:setting-name
+                #:setting-options
+                #:setting-options-designator
+                #:setting-parse
+                #:setting-read-only
+                #:setting-reject
+                #:setting-render-value
+                #:setting-scope
+                #:setting-store
+                #:setting-type
+                #:setting-unknown
+                #:setting-validate
+                #:setting-visible-p
+                #:settings-list
+                #:store-read-values
+                #:store-write-value
+                #:string-setting
+                #:with-configuration)
   (:import-from #:argo
                 #:json-array
                 #:json-decode

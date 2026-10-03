@@ -12,7 +12,7 @@
   "Return an isolated test configuration for one namespaced OpenCode MODEL."
   (declare (ignore provider-endpoint))
   (let ((configuration (configuration-copy (test-configuration))))
-    (setf (configuration-provider-validation-p configuration) nil
+    (setf (configuration-validation-deferred-p configuration) t
           (config :model configuration) model
           (config :reasoning-effort configuration) *default-reasoning-effort*)
     configuration))

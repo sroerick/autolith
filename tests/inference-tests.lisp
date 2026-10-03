@@ -550,7 +550,7 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
               (test-assert
                (handler-case
                    (progn (rlm--tool-routing tool context arguments) nil)
-                 ((or rlm-inference-error configuration-error) () t))
+                 ((or rlm-inference-error setting-error) () t))
                "invalid routing is rejected")
               (test-assert (null (rlm-routing-test-configurations provider))
                            "invalid routing never reconfigures the provider"))))

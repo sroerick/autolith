@@ -49,10 +49,6 @@
 (define-test-suite stream
   test-bounded-character-reads)
 
-(define-test-suite setting
-  test-setting-kinds
-  test-setting-registry)
-
 (define-test-suite version
   test-version-comparison)
 

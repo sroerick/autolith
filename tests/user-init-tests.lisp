@@ -585,6 +585,6 @@
                      "setf config without an instance changes the running session"))
       (let ((*active-application* nil))
         (test-assert (handler-case (progn (config :model) nil)
-                       (configuration-error () t))
-                     "config without any session signals a configuration error"))))
+                       (configuration-missing () t))
+                     "config without any session signals a missing configuration"))))
   nil)

@@ -322,6 +322,23 @@ configuration can be created before executable user initialization loads."
   "Return true when an effective provider registration serves MODEL."
   (not (null (member model *supported-models* :test #'string=))))
 
+(-> configuration--model-problem (string t) (option string))
+(defun configuration--model-problem (model configuration)
+  "Return why no effective provider registration serves MODEL, or NIL when one does."
+  (declare (ignore configuration))
+  (unless (configuration--model-supported-p model)
+    (format nil "Unsupported model ~S. The choices are ~{~A~^, ~}."
+            model *supported-models*)))
+
+(-> configuration--reasoning-effort-problem (string t) (option string))
+(defun configuration--reasoning-effort-problem (effort configuration)
+  "Return why CONFIGURATION's model does not support EFFORT, or NIL when it does."
+  (let* ((model (config :model configuration))
+         (efforts (configuration--reasoning-efforts-for model)))
+    (unless (member effort efforts :test #'string=)
+      (format nil "Unsupported reasoning effort ~S for model ~A. The choices are ~{~A~^, ~}."
+              effort model efforts))))
+
 (defparameter *default-context-window* 272000
   "The conservative context window assumed for unknown models.")
 

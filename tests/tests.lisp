@@ -82,7 +82,7 @@
                   (configuration-create :source-root root
                                         :working-directory root)
                   nil)
-              (configuration-error ()
+              (setting-error ()
                 t))
             "AUTOLITH_MODEL rejects unsupported models")
            (let ((configuration
@@ -95,7 +95,7 @@
                   (progn
                     (provider-bootstrap-configuration configuration)
                     nil)
-                (configuration-error ()
+                (setting-error ()
                   t))
               "deferred model validation rejects unsupported models after bootstrap")))
       (tests--restore-environment variable saved)))
@@ -272,7 +272,7 @@
                      (progn
                        (configuration-copy configuration :model "gpt-4")
                        nil)
-                   (configuration-error ()
+                   (setting-error ()
                      t))
                  "model copies reject identifiers outside the 5.6 family")
     (let ((moved (configuration-copy configuration :working-directory "tests")))

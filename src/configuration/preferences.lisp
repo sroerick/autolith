@@ -2,6 +2,15 @@
 
 ;;;; -- Durable Settings --
 
+(defclass preferences-store (setting-store)
+  ((lock
+    :initform (make-lock "Autolith preferences store")
+    :reader preferences-store-lock
+    :type t
+    :documentation "The lock serializing preferences file reads and writes."))
+  (:documentation
+   "The durable setting store kept in each configuration's preferences file."))
+
 (defparameter *preferences-version* 8
   "The readable global preferences file format version.
 
@@ -76,13 +85,26 @@ name; unknown keys survive rewrites so releases can share one file.")
                :cause cause))))
   nil)
 
+(defmethod store-read-values ((store preferences-store) configuration)
+  "Read CONFIGURATION's durable values from its preferences file."
+  (declare (ignore store))
+  (preferences-load-values configuration))
+
+(defmethod store-write-value ((store preferences-store) configuration name value)
+  "Merge NAME and VALUE into CONFIGURATION's preferences file."
+  (declare (ignore store))
+  (preferences-store configuration name value))
+
+(defvar *preferences-store* (make-instance 'preferences-store)
+  "The one preferences store of the process, shared by every configuration.")
+
 (-> preferences-load-values (configuration) list)
 (defun preferences-load-values (configuration)
   "Return CONFIGURATION's persisted durable values.
 
 Report malformed or unsupported files through PREFERENCES-LOAD-WARNING and
 return NIL."
-  (with-lock-held ((configuration-preferences-lock configuration))
+  (with-lock-held ((preferences-store-lock *preferences-store*))
     (handler-case
         (preferences--read configuration)
       (preferences-error (condition)
@@ -97,7 +119,7 @@ return NIL."
 
 The file is re-read before writing so values another process stored since
 this one started are kept."
-  (with-lock-held ((configuration-preferences-lock configuration))
+  (with-lock-held ((preferences-store-lock *preferences-store*))
     (let ((plist (handler-case (preferences--read configuration)
                    (preferences-error ()
                      nil))))
@@ -105,5 +127,4 @@ this one started are kept."
       (preferences--write configuration plist)))
   nil)
 
-(setf *configuration-durable-values-function* 'preferences-load-values
-      *configuration-persist-function* 'preferences-store)
+(setf *configuration-store* *preferences-store*)

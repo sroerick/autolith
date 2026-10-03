@@ -7518,7 +7518,7 @@
                             (progn
                               (application-set-model application "gpt-4")
                               nil)
-                          (configuration-error ()
+                          (setting-error ()
                             t))
                         "unsupported models are rejected with the choices")
            (conversation-append-user-message conversation "persist this choice")

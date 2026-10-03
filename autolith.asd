@@ -44,6 +44,7 @@
                #:parenchek
                #:quri
                #:serapeum
+               #:setinka
                #:sb-posix
                #:sb-bsd-sockets
                #:sbcl-generations
@@ -69,7 +70,6 @@
                              (:file "core/source-files")
                              (:file "core/streams")
                              (:file "core/text-buffer")
-                             (:file "configuration/setting")
                              (:file "configuration/settings")
                              (:file "configuration/configuration")
                              (:file "provider/registry")
@@ -256,7 +256,6 @@
                              (:file "device-authentication-test-support")
                              (:file "stream-tests")
                              (:file "version-tests")
-                             (:file "setting-tests")
                              (:file "memory-tests")
                              (:file "papercut-tests")
                              (:file "update-tests")

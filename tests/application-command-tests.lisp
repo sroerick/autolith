@@ -1250,14 +1250,14 @@
                  (progn
                    (application--builtin-settings-command application "no-such-setting" "on")
                    nil)
-               (configuration-error () t))
+               (setting-unknown () t))
              "unknown settings are refused")
             (test-assert
              (handler-case
                  (progn
                    (application--builtin-settings-command application "compaction-threshold-percent" "abc")
                    nil)
-               (configuration-error () t))
+               (setting-invalid () t))
              "values are validated by the setting")
             (let ((*application-command-interactive-p* t))
               (setf picks (list "turn-timestamps-p" "on" "context-window" nil))

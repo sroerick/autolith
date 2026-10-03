@@ -1,239 +1,13 @@
 (in-package #:autolith)
 
-;;;; -- Configuration Object --
+;;;; -- Configuration Access --
 
-(defvar *configuration* nil
-  "The configuration CONFIG reads and writes when no instance is given.
-
-When unbound to an instance, CONFIG falls back to the running session's
-configuration through *CONFIGURATION-DEFAULT-FUNCTION*.")
-
-(defvar *configuration-default-function* nil
-  "A function of no arguments returning the running session's configuration, or NIL.
-
-The application installs it so user code at the prompt reaches the live
-configuration without naming it.")
-
-(defvar *configuration-durable-values-function* nil
-  "A function of a configuration returning its persisted durable values as a plist.
-
-The preferences module installs it; without it nothing durable is read.")
-
-(defvar *configuration-persist-function* nil
-  "A function of (configuration name value) storing one durable value.
-
-The preferences module installs it; without it durable changes stay in memory.")
-
-(defclass configuration ()
-  ((settings
-    :initarg :settings
-    :reader configuration-settings
-    :type ordered-map
-    :documentation "The settings this configuration understands, by name.")
-   (values
-    :initform (make-hash-table :test #'eq)
-    :reader configuration-values
-    :type hash-table
-    :documentation "Stored values by setting name; absent names take their default.")
-   (sources
-    :initform (make-hash-table :test #'eq)
-    :reader configuration-sources
-    :type hash-table
-    :documentation "Where each stored value came from: :override, :environment, :durable, or :session.")
-   (lock
-    :initform (make-lock "Autolith configuration")
-    :reader configuration-lock
-    :type t
-    :documentation "The lock serializing value reads and writes.")
-   (listeners
-    :initform nil
-    :accessor configuration-listeners
-    :type list
-    :documentation "Functions of (configuration setting old new) called after a value changes.")
-   (provider-validation-p
-    :initarg :provider-validation-p
-    :initform t
-    :accessor configuration-provider-validation-p
-    :type boolean
-    :documentation "Whether model choices are checked against the provider registry.")
-   (preferences-lock
-    :initform (make-lock "Autolith preferences store")
-    :reader configuration-preferences-lock
-    :type t
-    :documentation "The lock serializing durable value reads and writes."))
-  (:documentation "The settings of one Autolith process, agent, or frame."))
-
-(deftype configuration-source ()
-  "How a stored configuration value was chosen."
-  '(member :override :environment :durable :session))
-
-(-> configuration-current () (option configuration))
-(defun configuration-current ()
-  "Return the bound *CONFIGURATION*, else the running session's configuration."
-  (or *configuration*
-      (and *configuration-default-function*
-           (funcall *configuration-default-function*))))
-
-(-> configuration--required ((option configuration)) configuration)
-(defun configuration--required (configuration)
-  "Return CONFIGURATION, or signal when no configuration is current."
-  (or configuration
-      (error 'configuration-error
-             :message "No configuration is current; pass one or bind *configuration*.")))
-
-(-> configuration-setting (configuration keyword) setting)
-(defun configuration-setting (configuration name)
-  "Return the setting NAME known to CONFIGURATION."
-  (find-setting name (configuration-settings configuration)))
-
-(-> configuration-setting-list (configuration) list)
-(defun configuration-setting-list (configuration)
-  "Return CONFIGURATION's settings in definition order."
-  (settings-list (configuration-settings configuration)))
-
-(-> configuration--stored-value (configuration setting) (values t boolean))
-(defun configuration--stored-value (configuration setting)
-  "Return SETTING's stored value in CONFIGURATION and whether one is stored."
-  (with-lock-held ((configuration-lock configuration))
-    (gethash (setting-name setting) (configuration-values configuration))))
-
-(-> configuration-setting-value (configuration setting) t)
-(defun configuration-setting-value (configuration setting)
-  "Return SETTING's current value in CONFIGURATION, computing derived and default values."
-  (if (typep setting 'derived-setting)
-      (funcall (setting-function setting) configuration)
-      (multiple-value-bind (value present-p)
-          (configuration--stored-value configuration setting)
-        (if present-p
-            value
-            (setting-default-value setting configuration)))))
-
-(-> configuration-group-values (configuration keyword) list)
-(defun configuration-group-values (configuration group)
-  "Return CONFIGURATION's stored or default values of GROUP's settings as a plist."
-  (loop for setting in (configuration-setting-list configuration)
-        when (and (eq (setting-group setting) group)
-                  (not (eq (setting-scope setting) ':derived)))
-          append (list (setting-name setting)
-                       (configuration-setting-value configuration setting))))
-
-(-> configuration-setting-source (configuration keyword) (option configuration-source))
-(defun configuration-setting-source (configuration name)
-  "Return where CONFIGURATION's value for NAME came from, or NIL for a default."
-  (with-lock-held ((configuration-lock configuration))
-    (values (gethash name (configuration-sources configuration)))))
-
-(-> config (keyword &optional (option configuration)) t)
-(defun config (name &optional (configuration (configuration-current)))
-  "Return the value of setting NAME in CONFIGURATION, by default the current one."
-  (let ((configuration (configuration--required configuration)))
-    (configuration-setting-value
-     configuration (configuration-setting configuration name))))
-
-(-> (setf config) (t keyword &optional (option configuration)) t)
-(defun (setf config) (value name &optional (configuration (configuration-current)))
-  "Store VALUE as setting NAME in CONFIGURATION after coercion and validation."
-  (let ((configuration (configuration--required configuration)))
-    (configuration-set configuration (configuration-setting configuration name) value
-                       :source ':session)))
-
-(-> configuration-set
-    (configuration setting t &key (:source configuration-source))
-    t)
-(defgeneric configuration-set (configuration setting value &key source)
-  (:documentation
-   "Coerce, validate, store VALUE for SETTING in CONFIGURATION, and notify listeners.
-
-SOURCE records how the value was chosen. Returns the stored value."))
-
-(defmethod configuration-set
-    ((configuration configuration) (setting setting) value &key (source ':session))
-  "Store the coerced value and tell listeners about a change."
-  (when (eq (setting-scope setting) ':derived)
-    (error 'configuration-error
-           :message (format nil "~A is derived and cannot be set."
-                            (setting-label setting))))
-  (let ((coerced (setting-coerce setting value configuration)))
-    (setting-validate setting coerced configuration)
-    (let ((old (configuration-setting-value configuration setting)))
-      (with-lock-held ((configuration-lock configuration))
-        (setf (gethash (setting-name setting) (configuration-values configuration))
-              coerced
-              (gethash (setting-name setting) (configuration-sources configuration))
-              source))
-      (when (and (eq (setting-scope setting) ':durable)
-                 (eq source ':session)
-                 *configuration-persist-function*)
-        (funcall *configuration-persist-function* configuration
-                 (setting-name setting) coerced))
-      (configuration--note-change configuration setting old coerced)
-      coerced)))
-
-(-> configuration-persist (configuration keyword) null)
-(defun configuration-persist (configuration name)
-  "Write CONFIGURATION's current value of durable setting NAME to the preferences store."
-  (let ((setting (configuration-setting configuration name)))
-    (unless (eq (setting-scope setting) ':durable)
-      (error 'configuration-error
-             :message (format nil "~A is not a durable setting." (setting-label setting))))
-    (when *configuration-persist-function*
-      (funcall *configuration-persist-function* configuration name
-               (configuration-setting-value configuration setting))))
-  nil)
-
-(-> configuration-unset (configuration keyword) null)
-(defun configuration-unset (configuration name)
-  "Forget CONFIGURATION's stored value for NAME so its default applies again."
-  (let* ((setting (configuration-setting configuration name))
-         (old (configuration-setting-value configuration setting)))
-    (with-lock-held ((configuration-lock configuration))
-      (remhash name (configuration-values configuration))
-      (remhash name (configuration-sources configuration)))
-    (configuration--note-change
-     configuration setting old (configuration-setting-value configuration setting)))
-  nil)
-
-(-> configuration-add-listener (configuration function) null)
-(defun configuration-add-listener (configuration listener)
-  "Call LISTENER with (configuration setting old new) after each value change."
-  (with-lock-held ((configuration-lock configuration))
-    (pushnew listener (configuration-listeners configuration)))
-  nil)
-
-(-> configuration-remove-listener (configuration function) null)
-(defun configuration-remove-listener (configuration listener)
-  "Stop calling LISTENER for CONFIGURATION's changes."
-  (with-lock-held ((configuration-lock configuration))
-    (setf (configuration-listeners configuration)
-          (remove listener (configuration-listeners configuration))))
-  nil)
-
-(-> configuration--note-change (configuration setting t t) null)
-(defun configuration--note-change (configuration setting old new)
-  "Tell CONFIGURATION's listeners that SETTING changed from OLD to NEW."
-  (unless (equal old new)
-    (dolist (listener (with-lock-held ((configuration-lock configuration))
-                        (copy-list (configuration-listeners configuration))))
-      (funcall listener configuration setting old new)))
-  nil)
-
-(defmacro with-configuration ((configuration) &body body)
-  "Evaluate BODY with CONFIGURATION as the current configuration for CONFIG."
-  `(let ((*configuration* ,configuration))
-     ,@body))
-
+;; The setting protocol, the configuration object, and CONFIG come from
+;; setinka. Autolith defines its setting kinds and settings below, persists
+;; durable values through the preferences store, and keeps its constructors,
+;; which name validation deferral after the provider registry it waits for.
 
 ;;;; -- Setting Kinds Specific to Autolith --
-
-(defclass model-setting (choice-setting)
-  ()
-  (:default-initargs :type 'non-empty-string)
-  (:documentation "The provider model, validated against the registry when enabled."))
-
-(defclass reasoning-effort-setting (choice-setting)
-  ()
-  (:default-initargs :type 'non-empty-string)
-  (:documentation "The reasoning effort, validated against the current model's efforts."))
 
 (defclass working-directory-setting (pathname-setting)
   ()
@@ -281,57 +55,6 @@ SOURCE records how the value was chosen. Returns the stored value."))
                      (if (stringp value) (parse-namestring value) value))))
       (configuration--resolve-site-config-root pathname))))
 
-(defmethod setting-options ((setting model-setting) configuration)
-  "Offer every model the effective provider registry serves."
-  (declare (ignore setting configuration))
-  (copy-list *supported-models*))
-
-(defmethod setting-validate ((setting model-setting) value configuration)
-  "Require a registered model unless CONFIGURATION defers provider validation."
-  (unless (typep value (setting-type setting))
-    (error 'configuration-error
-           :message (format nil "~A does not accept ~S." (setting-label setting) value)))
-  (when (and (configuration-provider-validation-p configuration)
-             (not (configuration--model-supported-p value)))
-    (error 'configuration-error
-           :message (format nil "Unsupported model ~S. The choices are ~{~A~^, ~}."
-                            value *supported-models*)))
-  nil)
-
-(defmethod setting-options ((setting reasoning-effort-setting) configuration)
-  "Offer the efforts the current model supports."
-  (declare (ignore setting))
-  (configuration--reasoning-efforts-for (config :model configuration)))
-
-(defmethod setting-validate ((setting reasoning-effort-setting) value configuration)
-  "Require an effort the current model supports, once providers are validated.
-
-Before executable user initialization registers providers, a model's efforts
-are unknown, so deferred validation accepts any effort name."
-  (unless (typep value (setting-type setting))
-    (error 'configuration-error
-           :message (format nil "~A does not accept ~S." (setting-label setting) value)))
-  (let ((model (config :model configuration))
-        (efforts (setting-options setting configuration)))
-    (unless (or (not (configuration-provider-validation-p configuration))
-                (member value efforts :test #'string=))
-      (error 'configuration-error
-             :message
-             (format nil "Unsupported reasoning effort ~S for model ~A. The choices are ~{~A~^, ~}."
-                     value model efforts))))
-  nil)
-
-(defmethod configuration-set :after
-    ((configuration configuration) (setting model-setting) value &key source)
-  "Keep the reasoning effort valid for the newly selected model."
-  (declare (ignore value source))
-  (when (configuration-provider-validation-p configuration)
-    (let ((effort (configuration-setting configuration :reasoning-effort))
-          (efforts (configuration--reasoning-efforts-for (config :model configuration))))
-      (unless (member (configuration-setting-value configuration effort) efforts
-                      :test #'string=)
-        (configuration-set configuration effort (first efforts) :source ':session)))))
-
 (defmethod setting-coerce ((setting working-directory-setting) value configuration)
   "Resolve user-supplied text to an existing directory; store pathnames as given.
 
@@ -360,8 +83,8 @@ exist yet, and is only put in directory form."
   (call-next-method)
   (when (and (eq value ':unix)
              (not (platform-supports-p *platform* ':local-sockets)))
-    (error 'configuration-error
-           :message "AUTOLITH_MANAGEMENT_REPL_TRANSPORT=unix needs filesystem sockets, which this platform lacks; use tcp."))
+    (setting-reject setting value
+                    "AUTOLITH_MANAGEMENT_REPL_TRANSPORT=unix needs filesystem sockets, which this platform lacks; use tcp."))
   nil)
 
 
@@ -451,22 +174,34 @@ exist yet, and is only put in directory form."
              (declare (ignore configuration))
              (configuration--default-grok-bootstrap-path)))
 
-(define-setting :model (model-setting)
+(define-setting :model (choice-setting)
   :label "Model"
   :group :model
   :documentation "The provider model identifier."
+  :type 'non-empty-string
   :scope :durable
   :environment "AUTOLITH_MODEL"
+  :deferrable-p t
+  :options (lambda (configuration)
+             (declare (ignore configuration))
+             (copy-list *supported-models*))
+  :validator 'configuration--model-problem
   :default (lambda (configuration)
              (declare (ignore configuration))
              *default-model*))
 
-(define-setting :reasoning-effort (reasoning-effort-setting)
+(define-setting :reasoning-effort (choice-setting)
   :label "Reasoning effort"
   :group :model
   :documentation "The user-visible reasoning effort."
+  :type 'non-empty-string
   :scope :durable
   :environment "AUTOLITH_REASONING_EFFORT"
+  :deferrable-p t
+  :depends-on '(:model)
+  :options (lambda (configuration)
+             (configuration--reasoning-efforts-for (config :model configuration)))
+  :validator 'configuration--reasoning-effort-problem
   :default (lambda (configuration)
              (declare (ignore configuration))
              *default-reasoning-effort*))
@@ -714,81 +449,34 @@ exist yet, and is only put in directory form."
 
 ;;;; -- Construction --
 
-(-> configuration--settings-snapshot () ordered-map)
-(defun configuration--settings-snapshot ()
-  "Return a fresh ordered map of the registered settings."
-  (let ((snapshot (make-ordered-map :test #'eq)))
-    (dolist (setting (settings-list))
-      (ordered-map-set snapshot (setting-name setting) setting))
-    snapshot))
-
-(-> configuration--override-order (configuration list) list)
-(defun configuration--override-order (configuration overrides)
-  "Return OVERRIDES as (name . value) pairs in setting definition order."
-  (let ((pairs nil))
-    (dolist (setting (configuration-setting-list configuration))
-      (let ((cell (member (setting-name setting) overrides)))
-        (when cell
-          (push (cons (setting-name setting) (second cell)) pairs))))
-    (loop for (name value) on overrides by #'cddr
-          unless (assoc name pairs)
-            do (find-setting name (configuration-settings configuration)))
-    (nreverse pairs)))
-
 (-> make-configuration (&rest t) configuration)
 (defun make-configuration (&rest overrides &key (provider-validation-p t) &allow-other-keys)
   "Return a configuration holding only OVERRIDES over the setting defaults.
 
 Neither the environment nor the preferences file is consulted, which makes
 the result deterministic for tests and child agents. Overrides apply in
-setting definition order, so a model override precedes its reasoning effort."
-  (let ((configuration (make-instance 'configuration
-                                      :settings (configuration--settings-snapshot)
-                                      :provider-validation-p provider-validation-p))
-        (overrides (let ((copy (copy-list overrides)))
-                     (remf copy :provider-validation-p)
-                     copy)))
-    (loop for (name . value) in (configuration--override-order configuration overrides)
-          do (configuration-set configuration (configuration-setting configuration name)
-                                value :source ':override))
-    configuration))
+setting definition order, so a model override precedes its reasoning effort.
+PROVIDER-VALIDATION-P NIL defers model checks until the provider registry is
+known."
+  (setinka:make-configuration
+   :overrides (configuration--overrides overrides '(:provider-validation-p))
+   :validation-deferred-p (not provider-validation-p)))
 
 (-> configuration-copy (configuration &rest t) configuration)
 (defun configuration-copy
     (configuration &rest overrides
-     &key (provider-validation-p (configuration-provider-validation-p configuration))
+     &key (provider-validation-p
+           (not (configuration-validation-deferred-p configuration)))
      &allow-other-keys)
   "Return a copy of CONFIGURATION with OVERRIDES applied in setting order.
 
 PROVIDER-VALIDATION-P defaults to the original's; passing NIL lets a copy name
 a model the registry does not serve. Listeners stay with the original; a child
 or frame reacts to its own changes."
-  (let ((copy (make-instance 'configuration
-                             :settings (configuration-settings configuration)
-                             :provider-validation-p provider-validation-p))
-        (overrides (let ((copy (copy-list overrides)))
-                     (remf copy :provider-validation-p)
-                     copy)))
-    (with-lock-held ((configuration-lock configuration))
-      (maphash (lambda (name value)
-                 (setf (gethash name (configuration-values copy)) value))
-               (configuration-values configuration))
-      (maphash (lambda (name source)
-                 (setf (gethash name (configuration-sources copy)) source))
-               (configuration-sources configuration)))
-    (loop for (name . value) in (configuration--override-order copy overrides)
-          do (configuration-set copy (configuration-setting copy name) value
-                                :source ':override))
-    copy))
-
-(-> configuration--environment-value (setting) (values t boolean))
-(defun configuration--environment-value (setting)
-  "Return SETTING's environment variable text and whether it is set and non-empty."
-  (let* ((variable (setting-environment setting))
-         (value (and variable (uiop:getenv variable))))
-    (if (non-empty-string-p value)
-        (values value t)
-        (values nil nil))))
+  (setinka:configuration-copy
+   configuration
+   :overrides (configuration--overrides overrides '(:provider-validation-p))
+   :validation-deferred-p (not provider-validation-p)))
 
 (-> configuration-create (&rest t) configuration)
 (defun configuration-create
@@ -797,87 +485,22 @@ or frame reacts to its own changes."
 
 Each setting takes the first source that supplies it: an explicit override,
 its environment variable, the durable preferences file for durable settings,
-then its default. Overrides and the environment apply first so the file is
-read from the roots they select. A durable value that no longer validates is
-dropped rather than applied. DEFER-PROVIDER-VALIDATION-P leaves model checks
-to CONFIGURATION-VALIDATE-MODEL once executable user initialization has
+then its default. A durable value that no longer validates is dropped rather
+than applied. DEFER-PROVIDER-VALIDATION-P leaves model checks to
+CONFIGURATION-VALIDATE-DEFERRED once executable user initialization has
 registered providers. DURABLE-P NIL skips the preferences file."
-  (let ((configuration (make-instance 'configuration
-                                      :settings (configuration--settings-snapshot)
-                                      :provider-validation-p
-                                      (not defer-provider-validation-p)))
-        (overrides (let ((copy (copy-list overrides)))
-                     (remf copy :defer-provider-validation-p)
-                     (remf copy :durable-p)
-                     copy)))
-    (dolist (setting (configuration-setting-list configuration))
-      (unless (eq (setting-scope setting) ':derived)
-        (let ((override (member (setting-name setting) overrides)))
-          (multiple-value-bind (environment environment-p)
-              (configuration--environment-value setting)
-            (cond
-              (override
-               (configuration-set configuration setting (second override)
-                                  :source ':override))
-              (environment-p
-               (configuration-set configuration setting environment
-                                  :source ':environment)))))))
-    (when durable-p
-      (let ((durable (configuration-durable-values configuration)))
-        (dolist (setting (configuration-setting-list configuration))
-          (let ((cell (member (setting-name setting) durable)))
-            (when (and cell
-                       (eq (setting-scope setting) ':durable)
-                       (not (nth-value 1 (configuration--stored-value
-                                          configuration setting))))
-              (handler-case
-                  (configuration-set configuration setting (second cell)
-                                     :source ':durable)
-                (configuration-error ()
-                  nil)))))))
-    (configuration--validate-defaults configuration)
-    configuration))
+  (setinka:configuration-load
+   :overrides (configuration--overrides
+               overrides '(:defer-provider-validation-p :durable-p))
+   :validation-deferred-p defer-provider-validation-p
+   :durable-p durable-p))
 
-(-> configuration--validate-defaults (configuration) null)
-(defun configuration--validate-defaults (configuration)
-  "Validate every unset process setting's default, surfacing host limits early."
-  (dolist (setting (configuration-setting-list configuration))
-    (when (and (eq (setting-scope setting) ':process)
-               (not (nth-value 1 (configuration--stored-value configuration setting))))
-      (setting-validate setting (configuration-setting-value configuration setting)
-                        configuration)))
-  nil)
-
-(-> configuration-durable-values (configuration) list)
-(defun configuration-durable-values (configuration)
-  "Return CONFIGURATION's persisted durable settings as a (name value ...) plist."
-  (if *configuration-durable-values-function*
-      (funcall *configuration-durable-values-function* configuration)
-      nil))
-
-(-> configuration-validate-model (configuration) configuration)
-(defun configuration-validate-model (configuration)
-  "Enable provider validation on CONFIGURATION and check its model and effort.
-
-A durable model the effective registry no longer serves reverts to the
-default; an explicit or environment model that fails validation signals."
-  (setf (configuration-provider-validation-p configuration) t)
-  (let ((model (configuration-setting configuration :model)))
-    (handler-case
-        (setting-validate model (config :model configuration) configuration)
-      (configuration-error (condition)
-        (if (eq (configuration-setting-source configuration :model) ':durable)
-            (configuration-unset configuration :model)
-            (error condition))))
-    (let ((efforts (configuration--reasoning-efforts-for (config :model configuration))))
-      (unless (member (config :reasoning-effort configuration) efforts :test #'string=)
-        (if (member (configuration-setting-source configuration :reasoning-effort)
-                    '(:durable nil))
-            (configuration-unset configuration :reasoning-effort)
-            (setting-validate (configuration-setting configuration :reasoning-effort)
-                              (config :reasoning-effort configuration)
-                              configuration)))))
-  configuration)
+(-> configuration--overrides (list list) list)
+(defun configuration--overrides (arguments options)
+  "Return the setting overrides in ARGUMENTS without the constructor OPTIONS."
+  (loop for (name value) on arguments by #'cddr
+        unless (member name options)
+          append (list name value)))
 
 
 ;;;; -- Derived Helpers --

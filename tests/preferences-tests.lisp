@@ -92,11 +92,11 @@
                         "an optional choice can be unset durably")
            (test-assert
             (handler-case (progn (setf (config :permission-mode created) ':sandboxed) nil)
-              (configuration-error () t))
+              (setting-invalid () t))
             "session-only permission modes cannot be saved")
            (test-assert
             (handler-case (progn (setf (config :context-window created) 1) nil)
-              (configuration-error () t))
+              (setting-read-only () t))
             "derived settings cannot be set"))
          (with-test-environment (("AUTOLITH_MODEL" "gpt-5.6-terra")
                                  ("AUTOLITH_CODEX_FAST_MODE" "on"))
@@ -114,7 +114,7 @@
          (with-test-environment (("AUTOLITH_CODEX_FAST_MODE" "invalid"))
            (test-assert
             (handler-case (progn (preferences-tests--create configuration) nil)
-              (configuration-error () t))
+              (setting-invalid () t))
             "invalid Codex Fast mode environment values are rejected"))
          (snapshot-write pathname
                          '(:preferences :version 8
