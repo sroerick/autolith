@@ -805,15 +805,18 @@ registered providers. DURABLE-P NIL skips the preferences file."
 
 (-> make-identifier () string)
 (defun make-identifier ()
-  "Return a process-independent identifier suitable for conversations and requests."
-  (flet ((fallback ()
-           (format nil "~36R-~16,'0X"
-                   (get-universal-time)
-                   (random (ash 1 64)))))
-    (handler-case
-        (platform-unique-identifier *platform*)
-      (error ()
-        (fallback)))))
+  "Return a random version 4 UUID, unguessable and unique across processes.
+
+Its octets come from ironclad's operating-system random source on every host."
+  (let ((octets (random-data 16)))
+    (setf (aref octets 6) (logior #x40 (logand (aref octets 6) #x0F))
+          (aref octets 8) (logior #x80 (logand (aref octets 8) #x3F)))
+    (format nil "~(~{~2,'0X~}-~{~2,'0X~}-~{~2,'0X~}-~{~2,'0X~}-~{~2,'0X~}~)"
+            (coerce (subseq octets 0 4) 'list)
+            (coerce (subseq octets 4 6) 'list)
+            (coerce (subseq octets 6 8) 'list)
+            (coerce (subseq octets 8 10) 'list)
+            (coerce (subseq octets 10 16) 'list))))
 
 (-> configuration--resolve-site-config-root ((option pathname)) (option pathname))
 (defun configuration--resolve-site-config-root (site-config-root)

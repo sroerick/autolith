@@ -118,22 +118,6 @@
                (zerop (sb-posix:wexitstatus status))
                t)))))
 
-(defmethod platform-unique-identifier ((platform posix-platform))
-  "Return a kernel-generated UUID string."
-  (string-trim
-   '(#\Space #\Tab #\Newline #\Return)
-   #+linux
-   (with-open-file (stream #P"/proc/sys/kernel/random/uuid"
-                           :direction ':input
-                           :external-format ':utf-8)
-     (read-line stream))
-   #+(and (not linux) (or darwin macos macosx bsd))
-   (uiop:run-program '("/usr/bin/uuidgen") :output :string)
-   #-(or linux darwin macos macosx bsd)
-   (error 'platform-capability-unavailable
-          :message "This host provides no kernel identifier generator."
-          :capability ':unique-identifiers)))
-
 
 ;;;; -- Environment --
 

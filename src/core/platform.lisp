@@ -184,12 +184,6 @@ child process itself, normally through SAVE-LISP-AND-DIE; returning from it
 counts as failure. Signal PLATFORM-ERROR with operation :FORK when no child
 could be started and :WAIT when its exit could not be observed."))
 
-(defgeneric platform-unique-identifier (platform)
-  (:documentation
-   "Return a fresh identifier string drawn from operating-system randomness.
-
-Signal PLATFORM-CAPABILITY-UNAVAILABLE when the host offers no such source."))
-
 
 ;;;; -- Environment --
 

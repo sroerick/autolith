@@ -26,6 +26,7 @@
   test-context-window-environment
   test-model-environment-validation
   test-text-line-splitting
+  test-make-identifier
   test-configuration-source-platform-reading)
 
 (define-test-suite fullscreen

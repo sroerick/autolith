@@ -111,8 +111,6 @@
 (win32--define win32--get-console-screen-buffer-info "GetConsoleScreenBufferInfo"
     win32-bool
   (handle win32-handle) (information (* t)))
-(win32--define win32--generate-random "SystemFunction036" (sb-alien:unsigned 8)
-  (buffer (* t)) (size win32-dword))
 
 
 ;;;; -- Win32 Constants --
@@ -599,30 +597,6 @@ protocol."
    ':forked-image-saver
    "Windows cannot fork a process that shares this image's heap; image saves run in a fresh process instead."))
 
-(-> win32--random-octets ((integer 1)) (simple-array (unsigned-byte 8) (*)))
-(defun win32--random-octets (count)
-  "Return COUNT octets from the system random number generator."
-  (sb-alien:with-alien ((buffer (sb-alien:array (sb-alien:unsigned 8) 64)))
-    (when (zerop (win32--generate-random (sb-alien:alien-sap buffer) count))
-      (error 'platform-capability-unavailable
-             :message "The Windows random number generator is unavailable."
-             :capability ':unique-identifiers))
-    (let ((octets (make-array count :element-type '(unsigned-byte 8))))
-      (dotimes (index count octets)
-        (setf (aref octets index) (sb-alien:deref buffer index))))))
-
-(defmethod platform-unique-identifier ((platform win32-platform))
-  "Return a random version 4 UUID string from the system generator."
-  (let ((octets (win32--random-octets 16)))
-    (setf (aref octets 6) (logior #x40 (logand (aref octets 6) #x0F))
-          (aref octets 8) (logior #x80 (logand (aref octets 8) #x3F)))
-    (format nil "~(~{~2,'0X~}-~{~2,'0X~}-~{~2,'0X~}-~{~2,'0X~}-~{~2,'0X~}~)"
-            (coerce (subseq octets 0 4) 'list)
-            (coerce (subseq octets 4 6) 'list)
-            (coerce (subseq octets 6 8) 'list)
-            (coerce (subseq octets 8 10) 'list)
-            (coerce (subseq octets 10 16) 'list))))
-
 
 ;;;; -- Security --
 
@@ -856,7 +830,7 @@ Autolith publishes read-only lives below a private root anyway."
                           (lambda (octet)
                             (char "abcdefghijklmnopqrstuvwxyz0123456789"
                                   (mod octet 36)))
-                          (win32--random-octets 8))
+                          (random-data 8))
         for directory = (uiop:ensure-directory-pathname
                          (merge-pathnames (concatenate 'string prefix suffix) parent))
         do (cond
