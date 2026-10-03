@@ -36,34 +36,6 @@ callback, and =configuration-error=. The work queue itself is product-specific.
 - Terminal-backed Gray streams for provider authentication (=commands.lisp=
   1852-1985) minus the relay lock check.
 
-* Core, configuration and state
-
-** Multi-file transactional publish with rollback (sexp-store)
-=src/state/data-transfer-import.lisp= 230-310 and =data-transfer.lisp= 233-266.
-Stages a set of writes with backups, publishes each with a compare-and-swap
-against the expected old bytes, restores or deletes on failure, removes
-directories it created, and reports rollbacks that leave recovery copies. This
-is sexp-store's single-file transaction generalised to many files. Cut:
-=data-transfer--fail=, the path check through =platform-path-status=, the
-=platform-make-private= and =platform-publish-new-file= primitives,
-=make-identifier= for staging names, and a raw =sb-posix:rmdir= at line 299.
-
-** Hardened bounded reader for portable data (sexp-config)
-=src/state/data-transfer.lisp= 62-136 and 147-159. Reads one form with every
-=#= dispatch disabled except octet vectors, read-eval off, a depth limit and a
-byte limit, then rejects cyclic or shared structure; a matching canonical
-printer. Exactly sexp-config's job, which would need octet-vector syntax and a
-source byte limit. The portability walk overlaps sexp-store's
-=record-finite-p= but is stricter.
-
-** Identifier generation (idsmall or ironclad, both already imported)
-=make-identifier= (configuration.lisp 1173-1183), =platform-unique-identifier=
-(posix 128-142 reading =/proc/sys/kernel/random/uuid= or shelling out to
-=uuidgen=, win32 716-738 through BCryptGenRandom). The fallback when both fail
-is =get-universal-time= plus CL =random=, which is predictable, while
-=data-transfer--temporary= calls its staging names unpredictable. Build a
-UUIDv4 from =ironclad:random-data= or use idsmall, and both platform methods go.
-
 * Provider, conversation and inference
 
 Compared against the library versions Autolith pins through qlot, not the
