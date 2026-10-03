@@ -445,6 +445,7 @@
              (archive (data-transfer--collect source nil))
              (path (merge-pathnames "invalid.sexp" root)))
         (dolist (syntax (list "#.(error \"must not execute\")" "#S(configuration)" "#1000000000(0)"
+                              "(:archive COMMON-LISP:CAR)" "(:archive #(1 256))"
                               (concatenate 'string (make-string 140 :initial-element #\()
                                            "nil" (make-string 140 :initial-element #\)))))
           (with-open-file (stream path :direction ':output :if-exists ':supersede)

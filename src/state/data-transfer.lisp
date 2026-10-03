@@ -57,81 +57,51 @@
                                    (list :indicator key :required t))
                                  keys))))
 
-(-> data-transfer--portable-p (t) boolean)
-(defun data-transfer--portable-p (value)
-  "Accept finite portable data, rejecting reader-created executable objects."
-  (let ((pending (list value))
-        (seen (make-hash-table :test #'eq)))
-    (loop while pending
-          for object = (pop pending)
-          do (cond
-               ((or (null object) (eq object t) (keywordp object)
-                    (stringp object) (numberp object) (characterp object)))
-               ((gethash object seen)
-                (return-from data-transfer--portable-p nil))
-               ((consp object)
-                (setf (gethash object seen) t)
-                (push (first object) pending)
-                (push (rest object) pending))
-               ((and (vectorp object)
-                     (every (lambda (byte) (typep byte '(unsigned-byte 8))) object)))
-               (t
-                (return-from data-transfer--portable-p nil))))
-    t))
-
-(-> data-transfer--reject-reader (stream character t) nil)
-(defun data-transfer--reject-reader (stream character argument)
-  "Reject dispatch syntax that could construct or evaluate nonportable objects."
-  (declare (ignore stream argument))
-  (data-transfer--fail nil ':invalid
-                       (format nil "Reader dispatch #~A is not allowed." character)))
-
 (defparameter *data-transfer-maximum-archive-bytes* (* 1024 1024 1024)
   "The largest archive read into memory by one transfer.")
 
+(-> data-transfer--archive-atom-p (t) boolean)
+(defun data-transfer--archive-atom-p (value)
+  "Return true for an atom an archive may hold: NIL, T, keywords, strings, numbers or octets."
+  (or (null value) (eq value t) (keywordp value) (stringp value) (numberp value)
+      (typep value '(vector (unsigned-byte 8)))))
+
+(-> data-transfer--archive-grammar () source-grammar)
+(defun data-transfer--archive-grammar ()
+  "Return the sexp-config grammar of exactly what DATA-TRANSFER--FORMS-BYTES prints.
+
+The printer writes NIL and T as COMMON-LISP:NIL and COMMON-LISP:T and unmarked
+single floats, and every source node needs at least one octet."
+  (make-source-grammar :label                                     "The archive"
+                       :maximum-depth                             128
+                       :maximum-nodes                             *data-transfer-maximum-archive-bytes*
+                       :allowed-atom-predicate                    #'data-transfer--archive-atom-p
+                       :qualified-common-lisp-symbols-permitted-p t
+                       :octet-vectors-permitted-p                 t
+                       :read-default-float-format                 'single-float))
+
+(-> data-transfer--portable-p (t) boolean)
+(defun data-transfer--portable-p (value)
+  "Return true when VALUE is finite archive data the archive grammar reads back."
+  (handler-case
+      (progn
+        (validate-tree value (data-transfer--archive-grammar))
+        t)
+    (sexp-config-error ()
+      nil)))
+
 (-> data-transfer--read (pathname) list)
 (defun data-transfer--read (pathname)
-  "Read bounded portable syntax without constructors, evaluation, or reader labels."
-  (with-open-file (stream pathname :element-type '(unsigned-byte 8))
-    (when (> (file-length stream) *data-transfer-maximum-archive-bytes*)
-      (data-transfer--fail pathname ':invalid "The archive exceeds the transfer size limit.")))
-  (let* ((*read-eval* nil) (*readtable* (copy-readtable nil))
-         (*package* (find-package '#:keyword))
-         (depth 0) (list-reader (get-macro-character #\( *readtable*)))
-    (flet ((enter ()
-             (when (> (incf depth) 128)
-               (data-transfer--fail pathname ':invalid "Archive nesting exceeds 128 levels."))))
-      (loop for code from 33 below 127
-            for character = (code-char code)
-            unless (or (digit-char-p character) (find character "(\\")) do
-              (set-dispatch-macro-character #\# character #'data-transfer--reject-reader))
-      (set-macro-character
-       #\( (lambda (stream character)
-              (enter)
-              (unwind-protect (funcall list-reader stream character) (decf depth))))
-      (set-dispatch-macro-character
-       #\# #\( (lambda (stream character length)
-                  (declare (ignore character))
-                  (when length
-                    (data-transfer--fail pathname ':invalid "Length-prefixed vectors are not allowed."))
-                  (enter)
-                  (unwind-protect
-                       (let ((elements (read-delimited-list #\) stream t)))
-                         (unless (every (lambda (byte) (typep byte '(unsigned-byte 8))) elements)
-                           (data-transfer--fail pathname ':invalid "Archive vectors contain only octets."))
-                         (coerce elements '(vector (unsigned-byte 8))))
-                    (decf depth))))
-      (handler-case
-          (with-open-file (stream pathname :external-format ':utf-8)
-            (let* ((end (gensym "END")) (form (read stream nil end)))
-              (unless (and (not (eq form end)) (eq (read stream nil end) end)
-                           (data-transfer--portable-p form))
-                (data-transfer--fail pathname ':invalid "Expected one portable archive form."))
-              form))
-        (data-transfer-error (condition)
-          (error condition))
-        (error (condition)
-          (data-transfer--fail pathname ':invalid (princ-to-string condition)))))))
+  "Read one bounded portable archive form without constructors, evaluation, or reader labels."
+  (let ((form (handler-case
+                  (read-source-file pathname (data-transfer--archive-grammar)
+                                    :maximum-octets *data-transfer-maximum-archive-bytes*)
+                (sexp-config-error (condition)
+                  (data-transfer--fail pathname ':invalid
+                                       (sexp-config-error-message condition))))))
+    (unless (listp form)
+      (data-transfer--fail pathname ':invalid "Expected one portable archive form."))
+    form))
 
 (-> data-transfer--bytes (pathname) vector)
 (defun data-transfer--bytes (pathname)

@@ -684,6 +684,7 @@
   (:import-from #:sexp-config
                 #:make-source-grammar
                 #:read-source
+                #:read-source-file
                 #:sexp-config-error
                 #:sexp-config-error-kind
                 #:sexp-config-error-line
