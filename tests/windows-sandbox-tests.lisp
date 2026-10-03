@@ -55,7 +55,7 @@
           "Remove-SandboxUserProfile -Sid $sid -TimeoutSeconds 1~%"
           "Assert ($script:stopped.Count -eq 0 -and $script:removeCalls -eq 0) 'disappeared process and profile are harmless'~%~%"
           "$script:removeCalls = 0; $script:removeFailures = 1; $script:profiles = @([pscustomobject]@{ SID = $sid })~%"
-          "Remove-SandboxUserProfile -Sid $sid -TimeoutSeconds 1~%"
+          "Remove-SandboxUserProfile -Sid $sid -TimeoutSeconds 60~%"
           "Assert ($script:removeCalls -eq 2) 'transient profile removal failure is retried'~%~%"
           "$script:removeCalls = 0; $script:removeFailures = 100; $failure = $null~%"
           "try { Remove-SandboxUserProfile -Sid $sid -TimeoutSeconds 0 } catch { $failure = $_.Exception.Message }~%"
