@@ -10,10 +10,9 @@
   positions with autowrap off; column to character to click-region mapping; a
   Gray stream that tracks =?1049h/l= and OSC 10/11/110/111 across packet splits
   so a dropped relay client gets its screen restored.
-- clinedi already decodes =:click=, =:scroll= and the page keys but cannot
-  switch the alternate screen or SGR mouse mode on, so Autolith hard-codes those
-  sequences in five places (fullscreen.lisp 73, 100, 629; commands.lisp 2016,
-  2033).
+- DONE 2026-10-03: clinedi 324f136 switches the alternate screen and SGR mouse
+  reporting, and b803c6b's mode-tracking stream restores a dropped relay
+  client; Autolith 3cad5145 and f5146ee5 use them.
 - Stays in Autolith: the frame composer, legend, welcome panel, and the message
   header jump (which becomes a row predicate argument). The Win32 console mode
   call maps onto clinedi's posix/win32 transport split; theme enter/leave
