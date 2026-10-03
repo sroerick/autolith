@@ -14,6 +14,7 @@
       :agent-spinner :agent-name :child-name :agent-role :agent-tool
       :command-spinner :command-id :command-tool
       :status-plain :status-dim :status-accent
+      :legend-plain :legend-dim :legend-accent
       :status-model :status-effort :status-branch
       :compaction-label :compaction-track :compaction-head
       :syntax-comment :syntax-keyword :syntax-string :syntax-escape
@@ -85,6 +86,9 @@ background opt into indexed colors."
       (:command-spinner (:foreground :bright-green :bold t))
       (:command-id (:foreground :bright-cyan :bold t))
       (:command-tool (:foreground :bright-yellow))
+      (:legend-plain (:foreground :bright-white))
+      (:legend-dim (:foreground :white))
+      (:legend-accent (:foreground :bright-magenta :bold t))
       (:syntax-comment (:faint t))
       (:syntax-keyword (:foreground :magenta))
       (:syntax-string (:foreground :green))
@@ -188,6 +192,9 @@ secondary, and quiet text the soft blue."
         (:command-id (:foreground ,secondary :bold t))
         (:command-tool (:foreground ,accent))
         (:child-name (:foreground ,safe :bold t))
+        (:legend-plain (:foreground ,ink))
+        (:legend-dim (:foreground ,soft))
+        (:legend-accent (:foreground ,accent :bold t))
         (:syntax-comment (:foreground ,soft))
         (:syntax-keyword (:foreground ,accent))
         (:syntax-string (:foreground ,secondary))

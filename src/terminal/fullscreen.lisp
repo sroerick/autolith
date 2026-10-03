@@ -215,11 +215,12 @@ sequence, so it lands in the normal screen where it stays readable."
                             (:width integer))
     string)
 (defun terminal-ui-fullscreen--legend-row (ui &key top total space width)
-  "Render the status-bar legend separating the transcript from the composer.
+  "Render the legend separating the transcript from the composer.
 
-The position block wears the status accent, keys the plain status style, and
-their descriptions the dim status style, all over the status background that
-spans WIDTH cells, so the legend reads as a bar rather than as prompt advice."
+The position block wears the legend accent, keys the plain legend style, and
+their descriptions the dim legend style. These share the modeline's
+foregrounds without its background, so the legend stays distinct from the
+composer's dim placeholder without reading as a second modeline."
   (let* ((following-p (null (fullscreen-terminal-ui-top ui)))
          (position (if following-p
                        " LIVE "
@@ -227,22 +228,15 @@ spans WIDTH cells, so the legend reads as a bar rather than as prompt advice."
                                (1+ top) (min total (+ top space)) total)))
          (spans
            (append
-            (list (terminal-span ':status-accent position))
+            (list (terminal-span ':legend-accent position))
             (loop for (key description) in (terminal-ui-fullscreen--legend-items following-p)
                   for first-p = t then nil
-                  append (list (terminal-span ':status-dim (if first-p "  " " · "))
-                               (terminal-span ':status-plain key)
-                               (terminal-span ':status-dim
-                                              (format nil " ~A" description))))))
-         (clipped (terminal--clip-spans spans width))
-         (padding (- width (terminal--spans-width clipped))))
-    (terminal--render-spans
-     (terminal-ui-terminal ui)
-     (if (plusp padding)
-         (append clipped
-                 (list (terminal-span ':status-dim
-                                      (make-string padding :initial-element #\Space))))
-         clipped))))
+                  append (list (terminal-span ':legend-dim (if first-p "  " " · "))
+                               (terminal-span ':legend-plain key)
+                               (terminal-span ':legend-dim
+                                              (format nil " ~A" description)))))))
+    (terminal--render-spans (terminal-ui-terminal ui)
+                            (terminal--clip-spans spans width))))
 
 (-> terminal-ui-fullscreen--frame (fullscreen-terminal-ui (option real))
     (values list integer integer))
