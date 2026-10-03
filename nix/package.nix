@@ -364,7 +364,7 @@ let
     pname = "sophisticated-clipboard";
     version = qlotVersion "sophisticated-clipboard";
     src = qlotSource "sophisticated-clipboard";
-    lispLibs = with pkgs.sbclPackages; [ flexi-streams ];
+    lispLibs = with pkgs.sbclPackages; [ cl-base64 flexi-streams ];
   };
 
   sbclGenerations = pkgs.sbcl.buildASDFSystem {

@@ -17,38 +17,28 @@
                           *application-transcript-action-notice-seconds*)
   nil)
 
-(-> application--host-clipboard-copy (string) (values boolean (option string)))
-(defun application--host-clipboard-copy (text)
-  "Place TEXT on the host clipboard, returning success and any failure reason."
-  (handler-case
-      (progn
-        (setf (clipboard-text) text)
-        (values t nil))
-    (sophisticated-clipboard-error (condition)
-      (values nil (princ-to-string condition)))))
-
 (-> application-copy-text (application string) boolean)
 (defun application-copy-text (application text)
   "Copy TEXT for the user and report how, returning whether any route accepted it.
 
-The host clipboard is the certain route and is tried first. The terminal
-also receives an OSC 52 request, which is what reaches the user's own
-machine over SSH or a localgroup relay; a terminal that ignores it loses
-nothing. A notice names the route that worked, or the host failure."
+The host clipboard and the terminal's OSC 52 route both receive TEXT, since
+only the terminal reaches the user's own machine over SSH or a localgroup
+relay. A notice names the route that worked, or the host failure."
   (let ((lines (1+ (count #\Newline (string-right-trim '(#\Newline) text)))))
-    (multiple-value-bind (host-p reason)
-        (application--host-clipboard-copy text)
-      (let ((terminal-p (terminal-ui-copy-to-terminal (application-ui application) text)))
-        (application--transcript-action-notice
-         application
-         (cond
-           (host-p
-            (format nil "Copied ~D line~:P to the clipboard." lines))
-           (terminal-p
-            (format nil "Sent ~D line~:P to the terminal's clipboard; ~A" lines reason))
-           (t
-            (format nil "Nothing copied: ~A" reason))))
-        (or host-p terminal-p)))))
+    (multiple-value-bind (host-p terminal-p host-condition)
+        (clipboard-copy-text
+         text
+         :terminal-writer (terminal-ui-clipboard-writer (application-ui application)))
+      (application--transcript-action-notice
+       application
+       (cond
+         (host-p
+          (format nil "Copied ~D line~:P to the clipboard." lines))
+         (terminal-p
+          (format nil "Sent ~D line~:P to the terminal's clipboard; ~A" lines host-condition))
+         (t
+          (format nil "Nothing copied: ~A" host-condition))))
+      (or host-p terminal-p))))
 
 (-> application-open-url (application string) boolean)
 (defun application-open-url (application url)

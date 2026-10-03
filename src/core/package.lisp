@@ -16,8 +16,9 @@
                 #:backend-types
                 #:clipboard-backend
                 #:clipboard-backend-name
-                #:clipboard-text
-                #:sophisticated-clipboard-error)
+                #:clipboard-copy-text
+                #:sophisticated-clipboard-error
+                #:terminal-clipboard-sequence)
   (:import-from #:cl-colorist
                 #:color
                 #:effective-color-level

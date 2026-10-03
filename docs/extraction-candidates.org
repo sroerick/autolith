@@ -19,12 +19,11 @@
   call maps onto clinedi's posix/win32 transport split; theme enter/leave
   become caller-supplied prologue and epilogue strings.
 
-** OSC 52 clipboard route (sophisticated-clipboard)
-=src/terminal/clipboard.lisp= and the host-then-terminal strategy in
-=src/application/clipboard.lisp= 21-56. The library has command and Win32
-backends but no terminal route, and "host, else terminal" is the standard
-remote-session answer. Takes a writer function instead of the UI; notices stay
-in Autolith; base64 would come from cl-base64 directly.
+** DONE OSC 52 clipboard route (sophisticated-clipboard)
+sophisticated-clipboard 756b65f adds =terminal-backend=, which writes OSC 52
+through a writer function, and =clipboard-copy-text=, which copies to the host
+clipboard and the terminal together. Autolith keeps only the UI writer in
+=src/terminal/clipboard.lisp= and its notices.
 
 ** DONE Remaining xterm controls (clinedi ansi.lisp)
 clinedi 1b75c6b adds =window-title-sequence=, =default-color-sequence=,
