@@ -844,6 +844,7 @@
                 #:publish-file
                 #:publish-pathname)
   (:import-from #:ls-compat.posix
+                #:current-process-id
                 #:descendant-process-ids)
   (:import-from #:ls-flock
                 #:call-with-file-lock

@@ -296,7 +296,7 @@
       (unless complete-p
         (dolist (directory (sort (remove-duplicates created :test #'equal)
                                  #'> :key (lambda (path) (length (namestring path)))))
-          (ignore-errors (sb-posix:rmdir (uiop:native-namestring directory)))))
+          (ignore-errors (uiop:delete-empty-directory directory))))
       (when rollback-failures
         (error 'data-transfer-rollback-error :pathname nil :reason ':rollback
                :failures (reverse rollback-failures)

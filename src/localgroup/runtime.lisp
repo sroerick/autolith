@@ -225,7 +225,7 @@ conversation transaction can roll back before releasing either lease."
                    ':working)
                   (idle-p ':idle) (t ':starting))))
       (list :localgroup-status :version *daemon-protocol-version* :session-id
-            (conversation-identifier conversation) :pid (sb-posix:getpid)
+            (conversation-identifier conversation) :pid (current-process-id)
             :autolith-version *autolith-version* :state state :idle-p (not (null idle-p))
             :waiting-for-input-p (not (null waiting-for-input-p)) :paused-p
             (not (null paused-p)) :handoff-p (not (null handoff-p)) :cwd

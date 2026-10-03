@@ -206,7 +206,7 @@ exit \"$status\""
                 (image-daemon:daemon-runtime-identifier session) :token
                 (image-daemon:daemon-runtime-token session) :created-at
                 (image-daemon:daemon-runtime-created-at session) :mode mode :state
-                ':pending :fresh-conversation-p nil :old-pid (sb-posix:getpid)
+                ':pending :fresh-conversation-p nil :old-pid (current-process-id)
                 :replacement-pid nil :conversation-id
                 (conversation-identifier conversation) :draft draft)))
     (localgroup-handoff--write-record pathname record)
@@ -274,11 +274,11 @@ exit \"$status\""
     (setf (getf (rest record) :state) ':claimed
           (getf (rest record) :pending-pathname) pending-pathname
           (getf (rest record) :pathname) claimed-pathname
-          (getf (rest record) :replacement-pid) (sb-posix:getpid))
+          (getf (rest record) :replacement-pid) (current-process-id))
     (localgroup-handoff--write-record
      (localgroup-handoff--pid-pathname pending-pathname)
      (list :localgroup-handoff-pid
-           :pid (sb-posix:getpid)))
+           :pid (current-process-id)))
     (handler-case
         (funcall *localgroup-handoff-setsid-function*)
       (error (condition)
@@ -319,7 +319,7 @@ exit \"$status\""
                             (getf expected :token))
                    (eq (first pid-record) ':localgroup-handoff-pid)
                    (= (or (getf (rest pid-record) :pid) 0)
-                      (sb-posix:getpid)))
+                      (current-process-id)))
         (error 'localgroup-error
                :message "The localgroup handoff was cancelled during startup."
                :operation ':handoff
@@ -476,7 +476,7 @@ detach is immediate and never interrupts session work."
                    :fresh-conversation-p (and (null conversation-id)
                                               (not resume-command-p))
                    :resume-command-p (not (null resume-command-p))
-                   :old-pid (sb-posix:getpid)
+                   :old-pid (current-process-id)
                    :replacement-pid nil
                    :conversation-id conversation-id
                     :recovery-diagnosis recovery-diagnosis
@@ -497,7 +497,7 @@ detach is immediate and never interrupts session work."
                             immutable-p))
              (setf session-id
                    (funcall *localgroup-fresh-wait-function*
-                            configuration token (sb-posix:getpid)))
+                            configuration token (current-process-id)))
              (unless session-id
                (error 'localgroup-error
                       :message
@@ -809,7 +809,7 @@ replacement restores, so detaching changes nothing about the session."
       (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
     (list :ok :operation mode :scheduled-p t :session-id
-          (image-daemon:daemon-runtime-identifier session) :old-pid (sb-posix:getpid))))
+          (image-daemon:daemon-runtime-identifier session) :old-pid (current-process-id))))
 
 (-> application-localgroup-handoff-pending-p (application) boolean)
 
@@ -932,7 +932,7 @@ recalled draft lives only in this editor, not in the snapshot."
                                                                   (image-daemon:daemon-runtime-token
                                                                    session))
                                                                  (old-pid
-                                                                  (sb-posix:getpid))
+                                                                  (current-process-id))
                                                                  (handoff-pathname nil)
                                                                  (process nil)
                                                                  (lease-released-p nil)

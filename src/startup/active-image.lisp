@@ -342,7 +342,7 @@ against its own build record."
          (temporary
            (merge-pathnames
             (format nil ".~A.~D.core" (pathname-name core-pathname)
-                    (sb-posix:getpid))
+                    (current-process-id))
             directory))
          (manifest (merge-pathnames "manifest.sexp" directory))
          (identity-before (active-image-build-record-create source-root)))

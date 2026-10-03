@@ -389,7 +389,7 @@ structured type and message survive the round trip."
 (-> checkpoint--process-identifier () integer)
 (defun checkpoint--process-identifier ()
   "Return the current process identifier used to recognize a checkpoint child."
-  (sb-posix:getpid))
+  (current-process-id))
 
 (-> checkpoint--detach-worker (t) null)
 (defun checkpoint--detach-worker (worker)
