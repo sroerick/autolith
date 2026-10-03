@@ -63,10 +63,16 @@
 ;;;; -- Capabilities and Processes --
 
 (defmethod platform-supports-p ((platform posix-platform) capability)
-  "Report the capabilities every supported POSIX host provides."
-  (and (member capability '(:local-sockets :process-groups :detached-sessions
-                            :forked-image-saver))
-       t))
+  "Report POSIX facilities and the hosts supported by the image saver."
+  (case capability
+    (:forked-image-saver
+     (and (member :sbcl *features*)
+          (or (member :linux *features*)
+              (member :darwin *features*))
+          t))
+    (otherwise
+     (and (member capability '(:local-sockets :process-groups :detached-sessions))
+          t))))
 
 (defmethod platform-process-alive-p ((platform posix-platform) process-id)
   "Probe PROCESS-ID with signal zero through ls-compat."
