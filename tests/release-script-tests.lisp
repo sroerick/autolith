@@ -91,7 +91,7 @@ can assert on the exact failure message through the second return value."
             "/usr/bin/expect"
             "-c"
             "set timeout 30; spawn -noecho /bin/sh -c \"$env(AUTOLITH_TEST_PTY_COMMAND)\"; expect -exact {[Y/n]}; send -- \"$env(AUTOLITH_TEST_PTY_ANSWER)\\r\"; expect eof; catch wait result; exit [lindex $result 3]")
-      (list "script" "-q" "-e" "-c" command "/dev/null")))
+      (list "env" "SHELL=/bin/sh" "script" "-q" "-e" "-c" command "/dev/null")))
 
 (-> release-script-tests--chmod (string pathname) null)
 (defun release-script-tests--chmod (mode pathname)
@@ -647,6 +647,8 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
              (list (format nil "XDG_DATA_HOME=~A" (namestring data-home))
                    (format nil "XDG_STATE_HOME=~A" (namestring state-home))
                    (format nil "AUTOLITH_SBCL=~A" (namestring fake-sbcl))
+                   "AUTOLITH_ACTIVE_CORE="
+                   "AUTOLITH_RECOVERY_CORE="
                    (format nil "AUTOLITH_TEST_LOG=~A" (namestring log))))
            (source-output
              (release-script-tests--run
