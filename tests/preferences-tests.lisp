@@ -45,7 +45,9 @@
 
 (-> test-preferences () null)
 (defun test-preferences ()
-  "Test durable settings persist, merge, reject unsupported versions, and recover from damage."
+  "Test the preferences file persists, merges, rejects unsupported versions, and recovers.
+
+Source precedence, source recording, and value rejection belong to setinka."
   (preferences-tests--without-model-environment
    (lambda ()
      (with-test-configuration (configuration)
@@ -65,8 +67,6 @@
                             (format nil "a missing file leaves ~(~A~) at its default" name))))
            (test-assert (string= (config :model created) *default-model*)
                         "a missing file leaves the default model")
-           (test-assert (null (configuration-setting-source created :model))
-                        "a default value records no source")
            (test-assert (not (probe-file pathname))
                         "reading defaults does not create the file")
            (setf (config :reasoning-traces-p created) t)
@@ -74,8 +74,6 @@
                (preferences-tests--file-plist configuration)
              (test-assert (and version-8-p (eq (getf plist :reasoning-traces-p) t))
                           "a durable change writes a version 8 record"))
-           (test-assert (eq (configuration-setting-source created :reasoning-traces-p) ':session)
-                        "an interactive change records the session source")
            (setf (config :model created) "gpt-5.6-luna"
                  (config :reasoning-effort created) "high"
                  (config :permission-mode created) ':ask)
@@ -84,38 +82,21 @@
                                (string= (config :model reloaded) "gpt-5.6-luna")
                                (string= (config :reasoning-effort reloaded) "high")
                                (eq (config :permission-mode reloaded) ':ask))
-                          "durable values survive into a new configuration")
-             (test-assert (eq (configuration-setting-source reloaded :model) ':durable)
-                          "a value read from the file records the durable source"))
+                          "durable values survive into a new configuration"))
            (setf (config :permission-mode created) nil)
            (test-assert (null (config :permission-mode (preferences-tests--create configuration)))
                         "an optional choice can be unset durably")
            (test-assert
             (handler-case (progn (setf (config :permission-mode created) ':sandboxed) nil)
               (setting-invalid () t))
-            "session-only permission modes cannot be saved")
-           (test-assert
-            (handler-case (progn (setf (config :context-window created) 1) nil)
-              (setting-read-only () t))
-            "derived settings cannot be set"))
+            "session-only permission modes cannot be saved"))
          (with-test-environment (("AUTOLITH_MODEL" "gpt-5.6-terra")
                                  ("AUTOLITH_CODEX_FAST_MODE" "on"))
            (let ((created (preferences-tests--create configuration)))
              (test-assert (string= (config :model created) "gpt-5.6-terra")
-                          "the environment beats the durable model")
-             (test-assert (eq (configuration-setting-source created :model) ':environment)
-                          "an environment value records its source")
+                          "AUTOLITH_MODEL supplies the model")
              (test-assert (config :codex-fast-mode-p created)
-                          "the environment can enable Codex Fast mode"))
-           (test-assert
-            (not (config :codex-fast-mode-p
-                         (preferences-tests--create configuration :codex-fast-mode-p nil)))
-            "an explicit choice beats the environment"))
-         (with-test-environment (("AUTOLITH_CODEX_FAST_MODE" "invalid"))
-           (test-assert
-            (handler-case (progn (preferences-tests--create configuration) nil)
-              (setting-invalid () t))
-            "invalid Codex Fast mode environment values are rejected"))
+                          "AUTOLITH_CODEX_FAST_MODE supplies Codex Fast mode")))
          (snapshot-write pathname
                          '(:preferences :version 8
                            :model "gpt-5.6-typo" :reasoning-effort "bogus"
@@ -126,8 +107,6 @@
            (test-assert (string= (config :reasoning-effort created)
                                  *default-reasoning-effort*)
                         "an unsupported durable effort is dropped")
-           (test-assert (not (config :compact-view-p created))
-                        "valid durable values beside dropped ones still apply")
            (setf (config :turn-timestamps-p created) t)
            (let ((plist (preferences-tests--file-plist configuration)))
              (test-assert (and (= (getf plist :future-key) 7)
