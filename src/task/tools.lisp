@@ -286,6 +286,15 @@ The primary blocking field and legacy inverse async field are mutually exclusive
            :tool-name tool-name))
   value)
 
+(defparameter *task-parent-steering-preamble*
+  "Steering from the agent that assigned this job. It refines your current assignment and does not replace it: keep working toward the complete original assignment, and change objectives only if this message explicitly cancels, narrows, or replaces that assignment."
+  "The framing that keeps a parent's job.send message from becoming the child's whole task.")
+
+(-> task--parent-steering-message (string) string)
+(defun task--parent-steering-message (message)
+  "Return parent steering MESSAGE framed as a refinement of the child's assignment."
+  (format nil "~A~2%~A" *task-parent-steering-preamble* message))
+
 (-> task--artifact-group-root (configuration string) pathname)
 (defun task--artifact-group-root (configuration conversation-identifier)
   "Return the common artifact root for one primary conversation."
@@ -1056,7 +1065,7 @@ Only the current primary conversation's artifact root is searched."
                   :tool-name "job.send"
                   :task-id identifier))
          (multiple-value-bind (entry reason)
-             (task-job-enqueue-steering job message)
+             (task-job-enqueue-steering job (task--parent-steering-message message))
            (if entry
                (tool-success
                 (format nil

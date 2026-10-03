@@ -1905,13 +1905,15 @@
                                        "steer toward the edge case"))))
              (test-assert (tool-result-success-p result)
                           "job.send accepts steering for a running child"))
-           (test-assert
-            (equal (mapcar (lambda (entry)
-                             (user-message-input-text
-                              (agent-steering-input-content entry)))
-                           (task-job-take-steering job))
-                   '("steer toward the edge case"))
-            "sent steering reaches the child's mailbox in order")
+           (let ((texts (mapcar (lambda (entry)
+                                  (user-message-input-text
+                                   (agent-steering-input-content entry)))
+                                (task-job-take-steering job))))
+             (test-assert
+              (and (= (length texts) 1)
+                   (uiop:string-prefix-p *task-parent-steering-preamble* (first texts))
+                   (uiop:string-suffix-p (first texts) "steer toward the edge case"))
+              "sent steering reaches the child framed as a refinement of its assignment"))
            (test-assert
             (handler-case
                 (progn
