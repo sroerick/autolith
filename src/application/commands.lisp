@@ -547,16 +547,6 @@ notice preference is on, so enabling it mid-session takes effect immediately."
       (application--calendar-parts universal-time)
     (format nil "~A ~A" date time)))
 
-(-> application--abbreviated-directory ((option string)) (option string))
-(defun application--abbreviated-directory (namestring)
-  "Return NAMESTRING with the user home directory abbreviated to a tilde."
-  (when (non-empty-string-p namestring)
-    (let ((home (namestring (user-homedir-pathname))))
-      (if (and (uiop:string-prefix-p home namestring)
-               (> (length namestring) (length home)))
-          (concatenate 'string "~/" (subseq namestring (length home)))
-          namestring))))
-
 (defparameter *conversation-preview-width* 48
   "The cell width of the newest-message excerpt in pickers.")
 
