@@ -103,6 +103,21 @@
              :time 101
              :wire-json (make-string 10000 :initial-element #\x))))
      "opaque native compaction payloads are omitted from replay projection")
+    (let ((projected
+            (conversation-replay--project-record
+             (list ':native-compaction
+                   :seq 9
+                   :time 101
+                   :through-seq 8
+                   :family ':codex
+                   :wire-json (make-string 10000 :initial-element #\x)
+                   :summary "portable handoff"))))
+      (test-assert
+       (and (equal projected
+                   '(:summary :seq 9 :time 101 :through-seq 8
+                     :content "portable handoff"))
+            (< (length (prin1-to-string projected)) 200))
+       "native compaction replays as its portable summary without the opaque item"))
     (let* ((record
              (list ':turn-aborted
                    :seq 12

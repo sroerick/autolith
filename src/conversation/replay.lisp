@@ -111,7 +111,15 @@
            :time (getf (rest record) :time)
            :role ':user :automatic-p t
            :content (conversation-async-lisp--message record)))
-    ((:async-lisp-delivered :provider :native-compaction)
+    (:native-compaction
+     (let ((summary (getf (rest record) :summary)))
+       (and (stringp summary)
+            (list ':summary
+                  :seq (getf (rest record) :seq)
+                  :time (getf (rest record) :time)
+                  :through-seq (getf (rest record) :through-seq)
+                  :content summary))))
+    ((:async-lisp-delivered :provider)
      nil)
     (otherwise
      (copy-tree record))))
