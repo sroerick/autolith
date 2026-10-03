@@ -234,7 +234,7 @@
    "type" "function"
    "name" (tool-name tool)
    "description" (tool-description tool)
-   "strict" false
+   "strict" (json-false)
    "parameters" (tool-parameters tool)))
 
 

@@ -133,7 +133,7 @@ entry with supports_search_tool."
    "type" "function"
    "name" (json-get tool "name")
    "description" (json-get tool "description")
-   "strict" false
+   "strict" (json-false)
    "defer_loading" t
    "parameters" (json-get tool "parameters")))
 
