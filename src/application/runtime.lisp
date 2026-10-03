@@ -3289,9 +3289,6 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
             (application-render-records application)
             (let ((tool-name (or (getf details :tool) "")))
               (cond
-                ((string= tool-name "papercut.report")
-                 (application--present-transient-tool-result
-                  application details))
                 ((string= tool-name "skill.load")
                  (if (and (getf details :success-p)
                           (application-compact-view-p application)

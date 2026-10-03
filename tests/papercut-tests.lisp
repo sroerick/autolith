@@ -379,16 +379,32 @@
                   (observer (application-agent-observer application))
                   (send-status
                     (callback-agent-observer-status-callback observer)))
+             (conversation-append-provider-item
+              conversation
+              (json-object "type" "function_call"
+                           "call_id" "papercut-call"
+                           "namespace" "papercut"
+                           "name" "report"
+                           "arguments" (json-encode
+                                        (json-object "title" (papercut-title report)
+                                                     "content" (papercut-content report)))))
+             (conversation-append-tool-result conversation "papercut-call"
+                                              :tool-name "papercut.report"
+                                              :output    output
+                                              :success-p t)
              (funcall
               send-status
               ':tool-call-completed
               (list :tool "papercut.report"
                     :success-p t
                     :output output))
-             (test-assert
-              (search "! PAPERCUT RECORDED"
-                      (recording-terminal-output terminal))
-              "completed request-local papercuts are presented immediately"))
+             (let* ((presented (recording-terminal-output terminal))
+                    (first-card (search "! PAPERCUT RECORDED" presented)))
+               (test-assert
+                (and first-card
+                     (not (search "! PAPERCUT RECORDED" presented
+                                  :start2 (1+ first-card))))
+                "a completed papercut report is presented exactly once")))
            (recording-terminal-reset terminal)
            (test-assert (eq (application-command application "/papercuts") ':continue)
                         "/papercuts remains inside the interactive application")
