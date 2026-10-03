@@ -849,6 +849,7 @@
                 #:publish-pathname
                 #:read-file-text)
   (:import-from #:ls-compat.posix
+                #:canonical-pathname
                 #:current-process-id
                 #:descendant-process-ids
                 #:directory-names
@@ -868,6 +869,7 @@
                 #:link-target-exists
                 #:not-regular-file
                 #:not-regular-file-kind
+                #:pathname-within-p
                 #:process-alive-p
                 #:process-group-alive-p
                 #:resolve-pathname

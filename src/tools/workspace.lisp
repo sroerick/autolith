@@ -56,65 +56,27 @@ resources may extend or replace that boundary dynamically.")
 
 ;;;; -- Path Resolution --
 
+(-> workspace-tool--call-resolving (pathname function) t)
+(defun workspace-tool--call-resolving (path function)
+  "Call FUNCTION, reporting a failure to resolve PATH as a resource tool error."
+  (handler-case
+      (funcall function)
+    (file-operation-failed (condition)
+      (error 'tool-error
+             :message (format nil "Could not resolve workspace path ~A: ~A"
+                              path condition)
+             :tool-name "resource"))))
+
 (-> workspace-tool--canonical-path (pathname) pathname)
 (defun workspace-tool--canonical-path (path)
   "Resolve existing symlinks in PATH and its nearest existing ancestor.
 
 Signal when an existing path cannot be resolved instead of treating permission
 or filesystem failures as absence."
-  (labels ((resolve-existing (candidate)
-             "Return CANDIDATE's truename and whether it is absent."
-             (handler-case
-                 (values (platform-truename *platform* candidate) nil)
-               (platform-error (condition)
-                 (handler-case
-                     (if (platform-path-status *platform* candidate)
-                         (error 'tool-error
-                                :message (format nil "Could not resolve workspace path ~A: ~A"
-                                                 candidate condition)
-                                :tool-name "resource")
-                         (values nil t))
-                   (platform-error (inspection-condition)
-                     (error 'tool-error
-                            :message
-                            (format nil "Could not inspect workspace path ~A: ~A"
-                                    candidate inspection-condition)
-                            :tool-name "resource"))))))
-
-           (canonical-directory (directory)
-             "Return DIRECTORY with every existing ancestor resolved."
-             (multiple-value-bind (canonical missing-p)
-                 (resolve-existing directory)
-               (if (not missing-p)
-                   canonical
-                   (let* ((components (pathname-directory directory))
-                          (leaf (first (last components))))
-                     (unless (stringp leaf)
-                       (error 'tool-error
-                              :message (format nil "Could not resolve workspace path ~A."
-                                               path)
-                              :tool-name "resource"))
-                     (let ((parent
-                             (make-pathname
-                              :directory (butlast components)
-                              :name nil
-                              :type nil
-                              :version nil
-                              :defaults directory)))
-                       (merge-pathnames
-                        (make-pathname :directory (list ':relative leaf)
-                                       :name nil
-                                       :type nil)
-                        (canonical-directory parent))))))))
-    (multiple-value-bind (canonical missing-p)
-        (resolve-existing path)
-      (if (not missing-p)
-          canonical
-          (merge-pathnames
-           (make-pathname :name (pathname-name path)
-                          :type (pathname-type path)
-                          :version (pathname-version path))
-           (canonical-directory (uiop:pathname-directory-pathname path)))))))
+  (workspace-tool--call-resolving
+   path
+   (lambda ()
+     (canonical-pathname path))))
 
 (-> workspace-tool--relative-identifier (pathname pathname) string)
 (defun workspace-tool--relative-identifier (path root)
@@ -135,15 +97,13 @@ trailing slash, and the separator is a slash whatever the host writes natively."
 (-> workspace-tool--read-path-allowed-p (pathname list) boolean)
 (defun workspace-tool--read-path-allowed-p (path roots)
   "Return true when PATH resolves beneath one of the readable ROOTS."
-  (let ((candidate (workspace-tool--canonical-path path)))
-    (not
-     (null
-       (some (lambda (root)
-               (or (uiop:pathname-equal candidate
-                                        (workspace-tool--canonical-path root))
-                   (uiop:subpathp candidate
-                                  (workspace-tool--canonical-path root))))
-            roots)))))
+  (workspace-tool--call-resolving
+   path
+   (lambda ()
+     (and (some (lambda (root)
+                  (pathname-within-p path root))
+                roots)
+          t))))
 
 (-> workspace-tool-resolve-path (tool-context (option string)) pathname)
 (defun workspace-tool-resolve-path (context path)
