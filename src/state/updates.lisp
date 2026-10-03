@@ -44,13 +44,7 @@
       (error 'type-error
              :datum (list left right)
              :expected-type '(cons string (cons string null))))
-    (loop for left-part in left-version
-          for right-part in right-version
-          when (< left-part right-part)
-            return t
-          when (> left-part right-part)
-            return nil
-          finally (return nil))))
+    (version< (subseq left 1) (subseq right 1))))
 
 
 ;;;; -- Installation Provenance --
