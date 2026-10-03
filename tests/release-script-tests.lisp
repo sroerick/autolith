@@ -2122,8 +2122,9 @@ esac
                (release-script-tests--chmod "755" pathname)
                pathname))
            (run-adapter (runtime &key install-p
-                                      (sha256
-                                        (make-string 64 :initial-element #\1)))
+                                    inherited-source
+                                    (sha256
+                                      (make-string 64 :initial-element #\1)))
              (multiple-value-bind (output error-output status)
                  (release-script-tests--run
                   (list "/bin/sh" "-c"
@@ -2131,12 +2132,15 @@ esac
                                 (namestring adapter)
                                 install-p
                                 (namestring script)))
+                  :directory fixture-root
                   :environment
                   (list (format nil "PATH=~A:~A"
                                 (namestring tools-directory)
                                 (or (uiop:getenv "PATH") ""))
                         (format nil "XDG_DATA_HOME=~A" (namestring data-home))
                         (format nil "AUTOLITH_SBCL=~A" (namestring runtime))
+                        (format nil "AUTOLITH_SBCL_SOURCE_ROOT=~A"
+                                (or inherited-source ""))
                         (format nil "AUTOLITH_TEST_SHA256=~A" sha256))
                   :ignore-error-status t)
                (declare (ignore error-output))
@@ -2177,6 +2181,32 @@ esac
           (run-adapter (fake-runtime "2.10.0") :install-p t)
         (test-assert (and (zerop status) (search "ADAPTER-SCRIPT" output))
                      "an untracked newer runtime can bootstrap without managed source"))
+      (let* ((version "2.10.0-local")
+             (runtime (fake-runtime version))
+             (matching (merge-pathnames "inherited-source/" fixture-root))
+             (mismatched (merge-pathnames "mismatched-source/" fixture-root)))
+        (release-script-tests--write-file
+         (merge-pathnames "version.lisp-expr" matching)
+         (format nil "~S~%" version))
+        (release-script-tests--write-file
+         (merge-pathnames "version.lisp-expr" mismatched)
+         (format nil "~S~%" "2.6.6"))
+        (dolist (entry (list (list (namestring matching) t)
+                            (list (namestring mismatched) nil)
+                            (list "inherited-source/" nil)
+                            (list (namestring (merge-pathnames "missing-source/"
+                                                             fixture-root))
+                                  nil)))
+          (destructuring-bind (inherited accepted-p) entry
+            (multiple-value-bind (output status)
+                (run-adapter runtime :inherited-source inherited)
+              (test-assert
+               (and (zerop status)
+                    (search (format nil "version=~A source=~A " version
+                                    (if accepted-p inherited ""))
+                            output))
+               (format nil "inherited implementation source ~S is ~:[rejected~;preserved~]"
+                       inherited accepted-p))))))
       (let ((identity
               (merge-pathnames "autolith/runtimes/2.6.7/source.identity"
                                data-home)))

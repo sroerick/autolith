@@ -355,7 +355,12 @@ fi
 
 runtime_record "$sbcl_command"
 export AUTOLITH_SBCL=$sbcl_command
-if source_available; then
+if [[ ${AUTOLITH_SBCL_SOURCE_ROOT:-} == /* &&
+      -f "$AUTOLITH_SBCL_SOURCE_ROOT/version.lisp-expr" ]] &&
+   grep -Fxq "\"$selected_version\"" \
+     "$AUTOLITH_SBCL_SOURCE_ROOT/version.lisp-expr"; then
+  export AUTOLITH_SBCL_SOURCE_ROOT
+elif source_available; then
   export AUTOLITH_SBCL_SOURCE_ROOT=$managed_source
 else
   unset AUTOLITH_SBCL_SOURCE_ROOT
