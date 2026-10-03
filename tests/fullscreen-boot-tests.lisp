@@ -78,7 +78,7 @@
          ui :wait-function
          (lambda (duration)
            (incf seconds duration)
-           (push (copy-seq (fullscreen-terminal-ui-frame ui)) frames)
+           (push (fullscreen-test--frame ui) frames)
            (let* ((frame (first frames))
                   (tip-row (find-if (lambda (row) (search "operator advice" row)) frame)))
              (test-assert tip-row "each boot stage displays the tip")
@@ -86,7 +86,7 @@
                           "short tips are centered within the terminal")
              (terminal-ui-append-finalized ui (length frames) "deferred output")
              (terminal-ui--paint-live ui)
-             (test-assert (equalp frame (fullscreen-terminal-ui-frame ui))
+             (test-assert (equalp frame (fullscreen-test--frame ui))
                           "ordinary redraw cannot erase a boot stage"))))
         (test-assert (= (length *terminal-ui-boot-sequence-phases*) (length frames))
                      "boot displays each configured phase")
@@ -126,7 +126,7 @@
                      (incf seconds duration)
                      (when (> seconds 2.5)
                        ;; The last frame painted while still waiting.
-                       (setf waiting-frame (copy-seq (fullscreen-terminal-ui-frame ui)))
+                       (setf waiting-frame (fullscreen-test--frame ui))
                        (queued-recording-terminal-enqueue terminal '(:insert " ")))))))
            (test-assert (eq result ':start) "Space starts the session")
            (test-assert (= tips 3) "the tip rotates on the configured interval while waiting")
@@ -165,7 +165,7 @@
             ui :duration 0 :linger-p nil
                :wait-function (lambda (seconds)
                                 (declare (ignore seconds))
-                                (push (copy-seq (fullscreen-terminal-ui-frame ui)) frames)))
+                                (push (fullscreen-test--frame ui) frames)))
            (test-assert (notany (lambda (frame)
                                   (find-if (lambda (row) (search "PRESS SPACE" row)) frame))
                                 frames)

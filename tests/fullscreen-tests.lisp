@@ -10,6 +10,11 @@
   "Return how many output chunks UI's transcript holds."
   (clinedi:transcript-viewport-chunk-count (fullscreen-terminal-ui-viewport ui)))
 
+(-> fullscreen-test--frame (fullscreen-terminal-ui) (option vector))
+(defun fullscreen-test--frame (ui)
+  "Return the display rows UI last painted, or NIL when the next paint is complete."
+  (clinedi:frame-painter-frame (fullscreen-terminal-ui-painter ui)))
+
 (-> fullscreen-test--row-text (fullscreen-terminal-ui integer) string)
 (defun fullscreen-test--row-text (ui index)
   "Return the plain text of UI's committed transcript row INDEX."

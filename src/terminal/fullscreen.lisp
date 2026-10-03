@@ -10,10 +10,8 @@
              :documentation "Whether this UI has entered the alternate buffer.")
    (platform-token :initform nil :accessor fullscreen-terminal-ui-platform-token
                    :documentation "Native output mode to restore after leaving the buffer.")
-   (frame :initform nil :accessor fullscreen-terminal-ui-frame
-          :documentation "Last successfully painted display-row vector, or NIL for full repaint.")
-   (frame-width :initform 0 :accessor fullscreen-terminal-ui-frame-width
-                :documentation "Width of the last successfully painted frame.")
+   (painter :initform (clinedi:make-frame-painter) :reader fullscreen-terminal-ui-painter
+            :documentation "Paints frames by rewriting the rows that changed since the last one.")
    (cursor-visible-p :initform t :accessor fullscreen-terminal-ui-cursor-visible-p
                      :type boolean :documentation "Requested composer cursor visibility.")
    (welcome-tip :initform nil :accessor fullscreen-terminal-ui-welcome-tip
@@ -31,7 +29,7 @@
 (-> terminal-ui-fullscreen-invalidate (fullscreen-terminal-ui) null)
 (defun terminal-ui-fullscreen-invalidate (ui)
   "Invalidate UI's physical frame without discarding its transcript or scroll anchor."
-  (setf (fullscreen-terminal-ui-frame ui) nil)
+  (clinedi:frame-painter-invalidate (fullscreen-terminal-ui-painter ui))
   nil)
 
 (-> terminal-ui-fullscreen-leave (fullscreen-terminal-ui) null)
@@ -229,37 +227,18 @@ ROWS are already wrapped to the terminal width by their composers, so they are
 compared and written as they are; the frame disables autowrap, which clips any
 row that still overruns instead of scrolling."
   (when (fullscreen-terminal-ui-active-p ui)
-    (let* ((terminal (terminal-ui-terminal ui))
-           (height (max 1 (terminal-rows terminal)))
-           (width (max 1 (terminal-columns terminal)))
-           (frame (make-array height :initial-element ""))
-           (previous (fullscreen-terminal-ui-frame ui))
-           (complete-p (or (null previous) (/= height (length previous))
-                           (/= width (fullscreen-terminal-ui-frame-width ui)))))
-      (loop for row in rows for index from 0 below height
-            do (setf (aref frame index) row))
-      (handler-case
-          (progn
-            (terminal--write
-             terminal
-             (with-output-to-string (output)
-               (format output "~C[?25l~C[?7l" #\Escape #\Escape)
-               (loop for row across frame for index from 0
-                     when (or complete-p (not (string= row (aref previous index))))
-                       do (format output "~C[~D;1H~C[0m~C]8;;~C\\~C[2K~A~C]8;;~C\\~C[0m"
-                                  #\Escape (1+ index) #\Escape #\Escape #\Escape #\Escape row
-                                  #\Escape #\Escape #\Escape))
-               (format output "~C[~D;~DH~C[?7h~C[?25~A"
-                       #\Escape (1+ (max 0 (min cursor-row (1- height))))
-                       (1+ (max 0 (min cursor-column (1- width))))
-                       #\Escape #\Escape
-                       (if (fullscreen-terminal-ui-cursor-visible-p ui) "h" "l"))))
-            (terminal-flush terminal)
-            (setf (fullscreen-terminal-ui-frame ui) frame
-                  (fullscreen-terminal-ui-frame-width ui) width))
-        (error (condition)
-          (terminal-ui-fullscreen-invalidate ui)
-          (error condition)))))
+    (let ((terminal (terminal-ui-terminal ui)))
+      (clinedi:frame-painter-paint
+       (fullscreen-terminal-ui-painter ui)
+       rows
+       (lambda (controls)
+         (terminal--write terminal controls)
+         (terminal-flush terminal))
+       :height           (max 1 (terminal-rows terminal))
+       :width            (max 1 (terminal-columns terminal))
+       :cursor-row       cursor-row
+       :cursor-column    cursor-column
+       :cursor-visible-p (fullscreen-terminal-ui-cursor-visible-p ui))))
   nil)
 
 (-> terminal-ui-fullscreen-scroll (fullscreen-terminal-ui integer) null)
