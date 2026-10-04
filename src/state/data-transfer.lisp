@@ -229,8 +229,14 @@ Conflicts and incomplete rollbacks become typed transfer failures."
 (-> data-transfer--write-export (pathname list) pathname)
 (defun data-transfer--write-export (pathname archive)
   "Atomically publish a new private ARCHIVE at PATHNAME."
-  (data-transfer--publish-files
-   (list (list :path pathname :bytes (data-transfer--forms-bytes (list archive)) :old nil)))
+  (handler-case
+      (snapshot-write-octets
+       pathname
+       (data-transfer--forms-bytes (list archive))
+       :require-absent t)
+    (publication-conflict (condition)
+      (data-transfer--fail (store-error-pathname condition) ':conflict
+                           "The export destination already exists.")))
   pathname)
 
 (-> data-transfer--workspace-name (t) (option string))
