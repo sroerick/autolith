@@ -23,15 +23,6 @@ own bounded stream instead. Moving the stream into a
 library is still open. Cut: only =bounded-string= and =sanitize-text=, both
 already from clinedi.
 
-** Reader thread with pause and exclusive ownership (clinedi input pump)
-=src/terminal/responsive-input.lisp= 2741-2928. A polling reader thread,
-depth-counted pause that joins it, and =call-with-exclusive-input= that runs in
-place on the reader thread and otherwise pauses it. Any multi-threaded TUI with
-modal pickers needs this, and clinedi's selection session already takes
-=read-event= and =input-ready-p= callbacks. Cut: it shares the controller's lock
-and condition variable with the work queue, the interrupt hint, the resize
-callback, and =configuration-error=. The work queue itself is product-specific.
-
 ** Smaller items
 - Grouped multi-column picker rows (=ui.lisp= 696-820) are the natural renderer
   for clinedi's =selector-arrange=.
