@@ -100,6 +100,81 @@ AUTOLITH_FFF_LIBRARY names a library to use instead, as the Nix package does."
         query
         (format nil "~A ~A" filters query))))
 
+(-> search-tool--constraint-tokens (string) list)
+(defun search-tool--constraint-tokens (constraints)
+  "Return the whitespace-separated filter tokens of CONSTRAINTS."
+  (let ((tokens nil)
+        (start nil))
+    (loop for index from 0 to (length constraints)
+          for blank-p = (or (= index (length constraints))
+                            (member (char constraints index)
+                                    '(#\Space #\Tab #\Newline #\Return)))
+          do (cond
+               ((and blank-p start)
+                (push (subseq constraints start index) tokens)
+                (setf start nil))
+               ((and (not blank-p) (null start))
+                (setf start index))))
+    (nreverse tokens)))
+
+(-> search-tool--wildcard-p (string) boolean)
+(defun search-tool--wildcard-p (token)
+  "Return true when TOKEN contains a glob wildcard."
+  (and (find-if (lambda (character) (find character "*?[{")) token) t))
+
+(-> search-tool--directory-constraint-p (string) boolean)
+(defun search-tool--directory-constraint-p (token)
+  "Return true when TOKEN is a positive directory filter such as src/."
+  (and (> (length token) 1)
+       (char= (char token (1- (length token))) #\/)
+       (char/= (char token 0) #\!)
+       (not (search-tool--wildcard-p token))))
+
+(-> search-tool--file-path-constraint-p (string) boolean)
+(defun search-tool--file-path-constraint-p (token)
+  "Return true when fff reads TOKEN as a file path filter such as src/main.lisp.
+
+This follows fff's rule: no wildcard, no trailing slash or negation, and a final
+component whose extension starts with a letter and has at most ten letters or
+digits."
+  (let* ((name (subseq token (1+ (or (position #\/ token :from-end t) -1))))
+         (dot (position #\. name :from-end t))
+         (extension (and dot (subseq name (1+ dot)))))
+    (and (plusp (length token))
+         (char/= (char token 0) #\!)
+         (char/= (char token (1- (length token))) #\/)
+         (not (search-tool--wildcard-p token))
+         extension
+         (<= 1 (length extension) 10)
+         (alpha-char-p (char extension 0))
+         (every #'alphanumericp extension)
+         t)))
+
+(-> search-tool--check-constraints (search-tool configuration string) null)
+(defun search-tool--check-constraints (tool configuration constraints)
+  "Refuse CONSTRAINTS that fff would silently satisfy with no files or with every file.
+
+Filters combine with AND, so two positive directories select only files under
+both, and fff drops a file path filter matching no file and searches the whole
+workspace instead. Both read as successful searches, so they fail here."
+  (let* ((tokens (search-tool--constraint-tokens constraints))
+         (directories (remove-if-not #'search-tool--directory-constraint-p tokens)))
+    (when (rest directories)
+      (error 'tool-error
+             :message
+             (format nil "search.content constraints must all hold, so no file lies under ~{~A~^ and ~} at once. Search a common parent directory, or make one call per directory."
+                     directories)
+             :tool-name (tool-canonical-name tool)))
+    (dolist (token (remove-if-not #'search-tool--file-path-constraint-p tokens))
+      (when (zerop (search-worker-file-count (search-tool-engine tool) configuration
+                                             (format nil "**/~A" token)))
+        (error 'tool-error
+               :message
+               (format nil "No indexed file matches the constraint ~A; check the path, or search its directory instead."
+                       token)
+               :tool-name (tool-canonical-name tool)))))
+  nil)
+
 (-> search-tool--bounded-integer
     (json-object string
      &key (:fallback integer) (:minimum integer) (:maximum integer))

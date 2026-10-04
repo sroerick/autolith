@@ -61,6 +61,24 @@ was built from and may no longer exist."
                            (config :working-directory configuration))
              :cause (or (clifff-error-cause condition) condition)))))
 
+(-> search-worker-file-count (worker configuration string) (integer 0))
+(defun search-worker-file-count (worker configuration glob)
+  "Return how many files CONFIGURATION's workspace index holds that match GLOB."
+  (handler-case
+      (worker-file-count
+       worker glob
+       :library-path (search--validated-library-path configuration)
+       :base-path (config :working-directory configuration)
+       :cache-directory (search-worker--cache-directory configuration)
+       :log-pathname (search-worker--log-path configuration))
+    (clifff-error (condition)
+      (error 'search-error
+             :message (princ-to-string condition)
+             :operation (clifff-error-operation condition)
+             :pathname (or (clifff-error-pathname condition)
+                           (config :working-directory configuration))
+             :cause (or (clifff-error-cause condition) condition)))))
+
 (defmethod tool-runtime-identity ((tool search-tool))
   "Return the isolated clifff worker shared by this search tool family."
   (search-tool-engine tool))
@@ -163,6 +181,8 @@ was built from and may no longer exist."
               (error 'tool-error
                      :message "search.content patterns must be non-empty literal strings without newlines."
                      :tool-name "search.content"))
+            (search-tool--check-constraints tool (tool-context-configuration context)
+                                            constraints)
             (tool-success
              (search-worker-request
               (search-tool-engine tool)
@@ -186,6 +206,8 @@ was built from and may no longer exist."
                                  :message
                                  "search.content mode must be plain, regex, or fuzzy."
                                  :tool-name "search.content")))))
+            (search-tool--check-constraints tool (tool-context-configuration context)
+                                            constraints)
             (tool-success
              (search-worker-request
               (search-tool-engine tool)

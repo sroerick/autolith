@@ -51,6 +51,14 @@
           (string= (search-tool--query-with-constraints "symbol" "*.lisp src/")
                    "*.lisp src/ symbol"))
      "query constraints prepend as fff path filters")
+  (test-assert
+   (and (equal (search-tool--constraint-tokens "  *.lisp	src/ !tests/ ") '("*.lisp" "src/" "!tests/"))
+        (equal (mapcar #'search-tool--directory-constraint-p '("src/" "!tests/" "*/" "/"))
+               '(t nil nil nil))
+        (equal (mapcar #'search-tool--file-path-constraint-p
+                       '("src/main.lisp" "main.lisp" "*.lisp" "!main.lisp" "v2.0" "src/"))
+               '(t t nil nil nil nil)))
+   "search constraints classify directory and file path filters as fff does")
   (let* ((default-configuration
            (configuration-create
             :source-root (asdf:system-source-directory :autolith)
@@ -201,6 +209,29 @@
                                     (not (search "docs/search-guide.org"
                                                  (tool-result-content dropped))))
                                "search.content applies query constraints as path filters"))
+                (let ((existing (search-tests--call registry context
+                                                    "search" "content"
+                                                    "query" "AUTOLITH_FFF_PRIMARY"
+                                                    "constraints" "src/model-selection.lisp"))
+                      (missing (search-tests--call registry context
+                                                   "search" "content"
+                                                   "query" "AUTOLITH_FFF_PRIMARY"
+                                                   "constraints" "src/absent.lisp"))
+                      (two-directories (search-tests--call registry context
+                                                           "search" "content"
+                                                           "patterns" #("AUTOLITH_FFF_PRIMARY")
+                                                           "constraints" "src/ docs/")))
+                  (test-assert (and (tool-result-success-p existing)
+                                    (search "src/model-selection.lisp"
+                                            (tool-result-content existing)))
+                               "a file path constraint naming an indexed file narrows the search")
+                  (test-assert (and (not (tool-result-success-p missing))
+                                    (search "No indexed file matches the constraint src/absent.lisp"
+                                            (tool-result-content missing)))
+                               "a file path constraint naming no file fails instead of widening")
+                  (test-assert (and (not (tool-result-success-p two-directories))
+                                    (search "must all hold" (tool-result-content two-directories)))
+                               "two directory constraints fail instead of matching nothing"))
                 (dolist (case
                           (list
                            (list "missing selector" nil
