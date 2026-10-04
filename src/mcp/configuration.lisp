@@ -956,37 +956,18 @@ bound policy takes effect without reloading this file."
 
 (-> mcp-configuration--read-source (pathname) string)
 (defun mcp-configuration--read-source (pathname)
-  "Read one regular PATHNAME as bounded UTF-8 without blocking or racing."
+  "Read regular PATHNAME once as bounded UTF-8 without blocking or racing."
   (handler-case
-      (let ((stream nil))
-        (unwind-protect
-             (let ((buffer
-                     (make-array
-                      (1+ *mcp-configuration-maximum-bytes*)
-                      :element-type '(unsigned-byte 8))))
-               (handler-case
-                   (setf stream
-                         (platform-open-regular-file *platform* pathname
-                                                     :follow-links-p t))
-                 (platform-error (condition)
-                   (if (eq (platform-error-reason condition) ':not-regular)
-                       (mcp-configuration--error
-                        "The native MCP configuration must be a regular file."
-                        :pathname pathname)
-                       (error condition))))
-               (let ((count (read-sequence buffer stream)))
-                 (when (> count *mcp-configuration-maximum-bytes*)
-                   (mcp-configuration--error
-                    "The native MCP configuration exceeds its byte bound."
-                    :pathname pathname))
-                 (utf8-octets-to-string
-                  buffer
-                  :start 0
-                  :end count)))
-          (when stream
-            (close stream))))
-    (mcp-configuration-error (condition)
-      (error condition))
+      (read-file-text pathname :maximum-octets *mcp-configuration-maximum-bytes*
+                               :follow-links-p t)
+    (not-regular-file ()
+      (mcp-configuration--error
+       "The native MCP configuration must be a regular file."
+       :pathname pathname))
+    (file-too-large ()
+      (mcp-configuration--error
+       "The native MCP configuration exceeds its byte bound."
+       :pathname pathname))
     (serious-condition (cause)
       (mcp-configuration--error
        (format nil "Could not read native MCP configuration at ~A: ~A"
