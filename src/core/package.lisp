@@ -368,6 +368,10 @@
                 #:provider-responses-wire-effort
                 #:provider-result
                 #:provider-result-output-items
+                #:provider-result-tool-search-calls
+                #:provider-deferred-wire-tools
+                #:provider-tool-search-output
+                #:provider-tool-search-output-replay
                 #:provider-result-response-id
                 #:provider-result-tool-calls
                 #:provider-result-turn-completion

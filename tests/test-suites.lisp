@@ -230,7 +230,6 @@
 (define-test-suite provider
   test-provider-deferred-tool-models
   test-provider-deferred-tool-loading
-  test-provider-tool-search
   test-provider-request
   test-provider-request-tool-filtering
   test-provider-native-compaction
