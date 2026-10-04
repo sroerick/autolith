@@ -42,25 +42,6 @@ discarded or obsolete candidates.
 "
   "The initial human-readable AUTOLITH.org contents.")
 
-(-> project-adaptation--proper-plist-with-keys-p (t list) boolean)
-(defun project-adaptation--proper-plist-with-keys-p (value expected-keys)
-  "Return true when VALUE is a proper plist containing exactly EXPECTED-KEYS."
-  (handler-case
-      (let ((length (list-length value)))
-        (and (integerp length)
-             (evenp length)
-             (let ((keys (loop for tail on value by #'cddr
-                               collect (first tail))))
-               (and (= (length keys) (length expected-keys))
-                    (every #'keywordp keys)
-                    (= (length keys)
-                       (length (remove-duplicates keys :test #'eq)))
-                    (every (lambda (key)
-                             (member key expected-keys :test #'eq))
-                           keys)))))
-    (type-error ()
-      nil)))
-
 (-> project-adaptation--absolute-directory-string-p (t) boolean)
 (defun project-adaptation--absolute-directory-string-p (value)
   "Return true when VALUE is an absolute directory namestring."
@@ -75,131 +56,87 @@ discarded or obsolete candidates.
 (-> project-adaptation--offer-entry-p (t) boolean)
 (defun project-adaptation--offer-entry-p (entry)
   "Return true when ENTRY is one complete project offer decision."
-  (and (project-adaptation--proper-plist-with-keys-p
+  (and (sexp-store:record-check
         entry
-        '(:path :deferred-until :never-p))
-       (project-adaptation--absolute-directory-string-p
-        (getf entry :path))
-       (typep (getf entry :deferred-until) 'timestamp)
-       (typep (getf entry :never-p) 'boolean)))
+        :properties-p t
+        :allow-other-keys nil
+        :fields (list (list :indicator ':path
+                            :required t
+                            :validate #'project-adaptation--absolute-directory-string-p)
+                      (list :indicator ':deferred-until
+                            :required t
+                            :validate (lambda (value)
+                                        (typep value 'timestamp)))
+                      (list :indicator ':never-p
+                            :required t
+                            :validate (lambda (value)
+                                        (typep value 'boolean)))))
+       t))
 
 (-> project-adaptation--offer-state-p (t) boolean)
 (defun project-adaptation--offer-state-p (form)
   "Return true when FORM is one complete supported offer-state snapshot."
-  (handler-case
-      (and (consp form)
-           (eq (first form) ':project-adaptation-offers)
-           (let ((properties (rest form)))
-             (and
-              (project-adaptation--proper-plist-with-keys-p
-               properties
-               '(:version :entries))
-              (= (getf properties :version -1)
-                 *project-adaptation-offer-state-version*)
-              (let* ((entries (getf properties :entries))
-                     (length (list-length entries)))
-                (and (integerp length)
-                     (every #'project-adaptation--offer-entry-p entries)
-                     (= length
-                        (length
-                         (remove-duplicates
-                          entries
-                          :test #'string=
-                          :key (lambda (entry)
-                                 (getf entry :path))))))))))
-    (error ()
-      nil)))
+  (and (sexp-store:record-check
+        form
+        :tag ':project-adaptation-offers
+        :versions (list *project-adaptation-offer-state-version*)
+        :allow-other-keys nil
+        :fields (list (list :indicator ':entries
+                            :required t
+                            :validate
+                            (lambda (entries)
+                              (and (listp entries)
+                                   (integerp (list-length entries))
+                                   (every #'project-adaptation--offer-entry-p entries)
+                                   (= (length entries)
+                                      (length
+                                       (remove-duplicates
+                                        entries
+                                        :test #'string=
+                                        :key (lambda (entry)
+                                               (getf entry :path))))))))))
+       t))
+
+(-> project-adaptation--offer-store (configuration) sexp-store:snapshot-store)
+(defun project-adaptation--offer-store (configuration)
+  "Return the validated snapshot store for CONFIGURATION's offer state."
+  (let* ((pathname (configuration-project-adaptation-offers-path configuration))
+         (lock-pathname (merge-pathnames
+                         "project-adaptation-offers.lock"
+                         (uiop:pathname-directory-pathname pathname))))
+    (make-instance 'sexp-store:snapshot-store
+                   :pathname pathname
+                   :lock-pathname lock-pathname
+                   :initial-state (lambda () nil)
+                   :validator #'project-adaptation--offer-state-p
+                   :decoder (lambda (form)
+                              (copy-tree (getf (rest form) :entries)))
+                   :encoder (lambda (entries)
+                              (list ':project-adaptation-offers
+                                    ':version *project-adaptation-offer-state-version*
+                                    ':entries
+                                    (sort (copy-tree entries)
+                                          #'string<
+                                          :key (lambda (entry)
+                                                 (getf entry :path))))))))
 
 (-> project-adaptation--offer-state-read (configuration) list)
 (defun project-adaptation--offer-state-read (configuration)
   "Return validated per-project offer entries from CONFIGURATION."
-  (let ((pathname
-          (configuration-project-adaptation-offers-path configuration)))
-    (unless (probe-file pathname)
-      (return-from project-adaptation--offer-state-read nil))
+  (let ((pathname (configuration-project-adaptation-offers-path configuration)))
     (handler-case
-        (multiple-value-bind (form sole-form-p)
-            (snapshot-read pathname)
-          (unless (and sole-form-p
-                       (project-adaptation--offer-state-p form))
-            (error 'project-adaptation-error
-                   :message (format nil
-                                    "Project adaptation offer state at ~A is malformed or unsupported."
-                                    pathname)
-                   :pathname pathname
-                   :operation ':read
-                   :cause nil))
-          (copy-tree (getf (rest form) :entries)))
+        (sexp-store:store-read (project-adaptation--offer-store configuration))
       (project-adaptation-error (condition)
         (error condition))
       (error (cause)
         (error 'project-adaptation-error
                :message (format nil
                                 "Could not read project adaptation offer state at ~A: ~A"
-                                pathname
-                                cause)
+                                pathname cause)
                :pathname pathname
                :operation ':read
                :cause cause)))))
 
-(-> project-adaptation--offer-state-write (configuration list) null)
-(defun project-adaptation--offer-state-write (configuration entries)
-  "Atomically publish validated project offer ENTRIES for CONFIGURATION."
-  (let* ((pathname
-           (configuration-project-adaptation-offers-path configuration))
-         (form
-           (list :project-adaptation-offers
-                 :version *project-adaptation-offer-state-version*
-                 :entries
-                 (sort (copy-tree entries)
-                       #'string<
-                       :key (lambda (entry)
-                              (getf entry :path))))))
-    (unless (project-adaptation--offer-state-p form)
-      (error 'project-adaptation-error
-             :message "Cannot write invalid project adaptation offer state."
-             :pathname pathname
-             :operation ':write
-             :cause nil))
-    (handler-case
-        (snapshot-write pathname form)
-      (project-adaptation-error (condition)
-        (error condition))
-      (error (cause)
-        (error 'project-adaptation-error
-               :message (format nil
-                                "Could not persist project adaptation offer state at ~A: ~A"
-                                pathname
-                                cause)
-               :pathname pathname
-               :operation ':write
-               :cause cause))))
-  nil)
-
-(-> project-adaptation--call-with-offer-state-lock
-    (configuration function)
-    t)
-(defun project-adaptation--call-with-offer-state-lock (configuration function)
-  "Call FUNCTION while holding process-local and filesystem offer-state locks."
-  (let* ((state-pathname
-           (configuration-project-adaptation-offers-path configuration))
-         (lock-pathname
-           (merge-pathnames
-            "project-adaptation-offers.lock"
-            (uiop:pathname-directory-pathname state-pathname))))
-    (handler-case
-        (call-with-file-lock lock-pathname function)
-      (project-adaptation-error (condition)
-        (error condition))
-      (error (cause)
-        (error 'project-adaptation-error
-               :message (format nil
-                                "Could not lock project adaptation offer state at ~A: ~A"
-                                lock-pathname
-                                cause)
-               :pathname lock-pathname
-               :operation ':lock
-               :cause cause)))))
 
 (-> project-adaptation--project-key (pathname) string)
 (defun project-adaptation--project-key (working-directory)
@@ -237,22 +174,32 @@ discarded or obsolete candidates.
 (defun project-adaptation--record-offer-choice
     (configuration project-root &key deferred-until never-p)
   "Persist PROJECT-ROOT's offer deferral or permanent refusal."
-  (project-adaptation--call-with-offer-state-lock
-   configuration
-   (lambda ()
-     (let* ((path (project-adaptation--project-key project-root))
-            (entries (project-adaptation--offer-state-read configuration))
-            (replacement (list :path path
-                               :deferred-until deferred-until
-                               :never-p never-p)))
-       (project-adaptation--offer-state-write
-        configuration
-        (cons replacement
-              (remove path entries
-                      :test #'string=
-                      :key (lambda (entry)
-                             (getf entry :path))))))))
-  nil)
+  (let ((path (project-adaptation--project-key project-root))
+        (pathname (configuration-project-adaptation-offers-path configuration)))
+    (handler-case
+        (sexp-store:store-transact
+         (project-adaptation--offer-store configuration)
+         (lambda (entries)
+           (let ((replacement (list :path path
+                                    :deferred-until deferred-until
+                                    :never-p never-p)))
+             (values (cons replacement
+                           (remove path entries
+                                   :test #'string=
+                                   :key (lambda (entry)
+                                          (getf entry :path))))
+                     nil
+                     t))))
+      (project-adaptation-error (condition)
+        (error condition))
+      (error (cause)
+        (error 'project-adaptation-error
+               :message (format nil
+                                "Could not update project adaptation offer state at ~A: ~A"
+                                pathname cause)
+               :pathname pathname
+               :operation ':write
+               :cause cause)))))
 
 (-> project-adaptation-offer-defer
     (configuration pathname &optional timestamp)
@@ -285,22 +232,22 @@ discarded or obsolete candidates.
     (when (uiop:file-exists-p pathname)
       (return-from project-adaptation-notes-create pathname))
     (handler-case
-        (publish-file
-         pathname
-         *project-adaptation-notes-template*
-         :publish-function
-         (lambda (temporary target)
-           (handler-case
-               (platform-publish-new-file *platform* temporary target)
-             (platform-error (cause)
-               (unless (and (eq (platform-error-reason cause) ':exists)
-                            (uiop:file-exists-p target))
-                 (error cause))))))
+        (progn
+          (snapshot-write-text pathname
+                               *project-adaptation-notes-template*
+                               :require-absent t)
+          pathname)
+      (sexp-store:publication-conflict (cause)
+        (if (uiop:file-exists-p pathname)
+            pathname
+            (error 'project-adaptation-error
+                   :message (format nil "Could not create ~A: ~A" pathname cause)
+                   :pathname pathname
+                   :operation ':create
+                   :cause cause)))
       (error (cause)
         (error 'project-adaptation-error
-               :message (format nil "Could not create ~A: ~A"
-                                pathname
-                                cause)
+               :message (format nil "Could not create ~A: ~A" pathname cause)
                :pathname pathname
                :operation ':create
                :cause cause)))))

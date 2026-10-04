@@ -98,15 +98,19 @@
              (let* ((path (project-adaptation--project-key project-root))
                     (duplicate
                       (list :path path :deferred-until now :never-p nil)))
+               (snapshot-write
+                (configuration-project-adaptation-offers-path configuration)
+                (list ':project-adaptation-offers
+                      ':version *project-adaptation-offer-state-version*
+                      ':entries (list duplicate duplicate)))
                (test-assert
                 (handler-case
                     (progn
-                      (project-adaptation--offer-state-write
-                       configuration (list duplicate duplicate))
+                      (project-adaptation--offer-state-read configuration)
                       nil)
                   (project-adaptation-error ()
                     t))
-                "duplicate project keys cannot be published"))
+                "duplicate project keys are rejected when loading state"))
              (delete-file
               (configuration-project-adaptation-offers-path configuration))
              (let ((state-pathname
