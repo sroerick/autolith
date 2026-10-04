@@ -129,7 +129,7 @@ Autolith can decide if it wants to keep the same Lisp REPL alive or to create a 
 and can maintain multiple.
 
 #+BEGIN_SRC lisp
-(lisp.eval :form "(+ 20 22)" :repl "scratch")
+(lisp.eval :forms '("(+ 20 22)") :repl "scratch")
 (lisp.describe :designator "APPLICATION" :target "self")
 (self.status)
 #+END_SRC

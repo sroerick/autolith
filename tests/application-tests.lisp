@@ -2391,7 +2391,7 @@
                     "name" "eval"
                     "arguments" (json-encode
                                  (json-object
-                                  "form" source
+                                  "forms" (vector source)
                                   "restart" "CONTINUE")))))
            (text (test-terminal-row-text entry)))
       (test-assert
@@ -2399,7 +2399,7 @@
             (find (terminal-span :syntax-function "self.eval")
                   entry
                   :test #'equal)
-            (search "(self.eval :form" text)
+            (search "(self.eval :forms (vector" text)
             (not (search "equivalent Lisp" text)))
        "provider tool requests keep their names and syntax-highlighted Lisp forms")
       (test-assert (and (search "form-line-1" text)
@@ -2412,7 +2412,7 @@
                                                 (terminal-span-text span))))
                                  entry))
                    "self.eval presents restart selection in a separate area")
-      (test-assert (not (search "{\"form\"" text))
+      (test-assert (not (search "{\"forms\"" text))
                    "tool requests never expose raw argument JSON"))
     (let* ((entry (response-item-entry
                    application
@@ -2421,16 +2421,16 @@
                     "namespace" "lisp"
                     "name" "eval"
                     "arguments" (json-encode
-                                 (json-object "form" "(+ 1 2)")))))
+                                 (json-object "forms" (vector "(+ 1 2)"))))))
            (text (test-terminal-row-text entry)))
       (test-assert
        (and (equal (first entry) (terminal-span :tool "▸ lisp.eval"))
             (find (terminal-span :syntax-function "lisp.eval")
                   entry
                   :test #'equal)
-            (search "(lisp.eval :form \"(+ 1 2)\")" text)
+            (search "(lisp.eval :forms (vector \"(+ 1 2)\"))" text)
             (not (search "equivalent Lisp" text))
-            (not (search "{\"form\"" text)))
+            (not (search "{\"forms\"" text)))
        "lisp.eval calls show syntax-highlighted Lisp instead of JSON"))
     (let* ((entry (response-item-entry
                    application
@@ -3690,7 +3690,7 @@
                "call_id" "call-live"
                "namespace" "self"
                "name" "eval"
-               "arguments" (json-encode (json-object "form" "(+ 1 2)"))))
+               "arguments" (json-encode (json-object "forms" (vector "(+ 1 2)")))))
              (recording-terminal-reset terminal)
              (funcall send-status :provider-request-completed nil)
              (let ((output (recording-terminal-output terminal)))
@@ -3701,7 +3701,7 @@
                         1)
                        (search "<thought>" output)
                        (search "▸ self.eval" output)
-                       (search "(self.eval :form" output)
+                       (search "(self.eval :forms (vector" output)
                        (null (terminal-ui-preview-rows
                               (application-ui application))))
                 "tool-only provider steps finalize one trace before the tool call")))
@@ -5521,7 +5521,7 @@
                  closable-application application
                  worker (lisp-worker-pool-start pool "workspace" "pristine"))
            (lisp-worker-request
-            worker :eval '(:form "(defparameter *workspace-marker* 73)"))
+            worker :eval '(:forms ("(defparameter *workspace-marker* 73)")))
             (uiop:chdir old-workspace)
             (setf *default-pathname-defaults* old-workspace)
             (let ((selected (application-set-working-directory application workspace)))
@@ -5587,8 +5587,8 @@
                    (lisp-worker-request
                     worker
                     :eval
-                    '(:form
-                      "(list *workspace-marker* (namestring (uiop:getcwd)))"))))
+                    '(:forms
+                      ("(list *workspace-marker* (namestring (uiop:getcwd)))")))))
              (test-assert
               (and (search "73" (first (getf (rest worker-state) :values)))
                    (search (namestring workspace)

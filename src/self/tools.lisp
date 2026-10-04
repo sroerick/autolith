@@ -192,16 +192,32 @@ protocol."
                :choices       choices
                :restart-names (mapcar #'first choices))))))
 
+(-> self-evaluate-forms (list function) t)
+(defun self-evaluate-forms (sources position-function)
+  "Read and evaluate each of SOURCES in turn, returning the last form's values.
+
+Each form is read only after the previous one ran, so it may name packages an
+earlier form created. POSITION-FUNCTION receives each form's one-based index
+before that form is read."
+  (loop for source in sources
+        for index from 1
+        for result = (progn
+                       (funcall position-function index)
+                       (multiple-value-list (eval (self-read-form source))))
+        finally (return (values-list result))))
+
 (defmethod tool-execute ((tool self-eval-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Evaluate one exploratory form in CONTEXT's active image and journal it."
+  "Evaluate exploratory forms in order in CONTEXT's active image and journal them."
   (declare (ignore tool))
   (with-live-mutation
-    (let* ((source (tool-argument arguments "form" :required t))
+    (let* ((sources (tool-forms-argument arguments "self.eval"))
+           (source (format nil "~{~A~^~%~}" sources))
            (restart-name (tool-argument arguments "restart"))
            (restart-value-source (tool-argument arguments "restart-value"))
-           (configuration (tool-context-configuration context)))
+           (configuration (tool-context-configuration context))
+           (position 0))
       (mutation-journal-append
        configuration
        (list :mutation :kind :eval :proposed source :result ':pending))
@@ -211,7 +227,8 @@ protocol."
                (lambda ()
                  (self-call-with-restarts
                   (lambda ()
-                    (eval (self-read-form source)))
+                    (self-evaluate-forms sources
+                                         (lambda (index) (setf position index))))
                   :restart-name restart-name
                   :restart-value-source restart-value-source)))
             (mutation-journal-append
@@ -226,7 +243,30 @@ protocol."
                  :proposed source
                  :result ':failed
                  :condition (princ-to-string condition)))
-          (error condition))))))
+          (error (self--positioned-failure condition position (length sources))))))))
+
+(-> self--positioned-failure (error integer integer) error)
+(defun self--positioned-failure (condition position count)
+  "Return CONDITION naming form POSITION of COUNT when several forms ran.
+
+A correctable failure keeps its class and restart choices, so the restart menu
+still applies; any other failure becomes a TOOL-ERROR keeping its failure code."
+  (let ((prefix (format nil "Form ~D of ~D failed: " position count)))
+    (cond
+      ((= count 1)
+       condition)
+      ((typep condition 'self-correctable-error)
+       (make-condition 'self-correctable-error
+                       :message       (concatenate 'string prefix
+                                                   (autolith-error-message condition))
+                       :condition     (restart-choice-available-condition condition)
+                       :choices       (restart-choice-available-choices condition)
+                       :restart-names (self-correctable-error-restart-names condition)))
+      (t
+       (make-condition 'tool-error
+                       :message   (format nil "~A~A" prefix condition)
+                       :tool-name "self.eval"
+                       :code      (tool-failure-code condition))))))
 
 
 ;;;; -- Definition Installation --

@@ -54,7 +54,7 @@
       "name" "eval"
       "namespace" "lisp"
       "arguments" (json-encode
-                   (json-object "form" "(print \"python3 -c\")"))))
+                   (json-object "forms" (vector "(print \"python3 -c\")")))))
     (test-assert
      (null (interpreter-discipline-tests--contribution configuration conversation))
      "a non-shell tool call mentioning the fragment draws no rebuke")

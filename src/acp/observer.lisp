@@ -88,6 +88,13 @@
                  (subseq value 0 (min (length value) 192)))
                 ((hash-table-p value)
                  (format nil "{~D fields}" (hash-table-count value)))
+                ((and (vectorp value) (plusp (length value)) (every #'stringp value))
+                 (let ((joined (format nil "~{~A~^ ~}"
+                                       (map 'list
+                                            (lambda (item)
+                                              (subseq item 0 (min (length item) 192)))
+                                            (subseq value 0 (min 4 (length value)))))))
+                   (subseq joined 0 (min (length joined) 192))))
                 ((vectorp value)
                  (format nil "[~D items]" (length value)))
                 ((and (integerp value) (> (integer-length value) 64))
@@ -101,7 +108,7 @@
   "Return NAME with a bounded, single-line preview of its principal argument."
   (let* ((key (when (json-object-p arguments)
                 (or (find-if (lambda (key) (nth-value 1 (gethash key arguments)))
-                             '("form" "command" "uri" "query" "patterns" "path"
+                             '("forms" "form" "command" "uri" "query" "patterns" "path"
                                "url" "system" "name" "task" "text"))
                     (first (sort (loop for key being the hash-keys of arguments
                                       collect key)

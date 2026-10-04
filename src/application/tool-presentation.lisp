@@ -586,9 +586,13 @@ structural discriminator as a readable heading instead."
 (defun application--lisp-call-entry (application call argument-name)
   "Return a syntax-highlighted Lisp source preview for CALL's ARGUMENT-NAME."
   (let* ((arguments (application--function-call-arguments call))
+         (value (and arguments (json-get arguments argument-name)))
          (source
-           (application--presentation-value
-            (or (and arguments (json-get arguments argument-name)) ""))))
+           (if (and (vectorp value)
+                    (not (stringp value))
+                    (every #'stringp value))
+               (format nil "~{~A~^~%~}" (coerce value 'list))
+               (application--presentation-value (or value "")))))
     (application--tool-entry
      application
      :style ':tool
@@ -1584,16 +1588,16 @@ OPERATION's own declared target line so they stay numbered."
 
 (defmethod application-tool-call-entry
     ((tool lisp-eval-tool) (application application) (call hash-table))
-  "Present a lisp.eval form as bounded Lisp source."
+  "Present lisp.eval forms as bounded Lisp source, one form per line."
   (declare (ignore tool))
-  (application--lisp-call-entry application call "form"))
+  (application--lisp-call-entry application call "forms"))
 
 
 (defmethod application-tool-call-entry
     ((tool self-eval-tool) (application application) (call hash-table))
-  "Present a self.eval form and any selected restart separately."
+  "Present self.eval forms and any selected restart separately."
   (declare (ignore tool))
-  (application--lisp-call-entry application call "form"))
+  (application--lisp-call-entry application call "forms"))
 
 (defmethod application-tool-call-entry
     ((tool self-exercise-tool) (application application) (call hash-table))

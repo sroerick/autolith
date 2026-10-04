@@ -328,7 +328,7 @@
         (lambda (worker)
           (let ((result
                   (worker-response-tool-result
-                   (lisp-worker-request worker :eval (list :form form)))))
+                   (lisp-worker-request worker :eval (list :forms (list form))))))
             (if (tool-result-success-p result)
                 (tool-success
                  (format nil "Loaded scratchpad file ~A into Lisp REPL ~A.~%~A"

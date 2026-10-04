@@ -134,13 +134,13 @@
        (test-assert
         (handler-case
             (progn
-              (lisp-worker-request worker ':eval '(:form "(+ 40 2)"))
+              (lisp-worker-request worker ':eval '(:forms ("(+ 40 2)")))
               nil)
           (job-aborted ()
             t))
         "an interrupted worker request re-signals its cancellation")
        (test-assert
-        (equal (lisp-worker-request worker ':eval '(:form "(+ 40 2)"))
+        (equal (lisp-worker-request worker ':eval '(:forms ("(+ 40 2)")))
                '(:response :id 1 :status :ok :values ("42")))
         "a later worker request can complete normally")
        (handler-case
@@ -155,10 +155,10 @@
      "only cancellation inside the worker protocol request detaches the REPL"))
   (let ((success
           (worker-handle-request
-           '(:request :id 1 :operation :eval :arguments (:form "(+ 20 22)"))))
+           '(:request :id 1 :operation :eval :arguments (:forms ("(+ 20 22)")))))
         (failure
           (worker-handle-request
-           '(:request :id 2 :operation :eval :arguments (:form "(/ 1 0)")))))
+           '(:request :id 2 :operation :eval :arguments (:forms ("(/ 1 0)"))))))
     (test-assert (eq (getf (rest success) :status) :ok)
                  "the worker evaluates a valid request")
     (test-assert (equal (getf (rest success) :values) '("42"))
@@ -198,7 +198,7 @@
          (worker (lisp-worker-create configuration)))
     (unwind-protect
          (let ((evaluation
-                 (lisp-worker-request worker :eval '(:form "(+ 40 2)")))
+                 (lisp-worker-request worker :eval '(:forms ("(+ 40 2)"))))
                (source
                  (lisp-worker-request
                   worker
@@ -294,11 +294,11 @@
     (unwind-protect
          (let* ((alpha (lisp-worker-pool-start pool "alpha" "pristine"))
                 (beta (lisp-worker-pool-start pool "beta" "pristine")))
-           (lisp-worker-request alpha :eval '(:form "(defparameter *pool-value* 41)"))
+           (lisp-worker-request alpha :eval '(:forms ("(defparameter *pool-value* 41)")))
            (let ((alpha-result
-                   (lisp-worker-request alpha :eval '(:form "(1+ *pool-value*)")))
+                   (lisp-worker-request alpha :eval '(:forms ("(1+ *pool-value*)"))))
                  (beta-result
-                   (lisp-worker-request beta :eval '(:form "(boundp '*pool-value*)"))))
+                   (lisp-worker-request beta :eval '(:forms ("(boundp '*pool-value*)")))))
              (test-assert (equal (getf (rest alpha-result) :values) '("42"))
                           "one named REPL retains its own heap state")
              (test-assert (equal (getf (rest beta-result) :values) '("NIL"))
@@ -314,11 +314,38 @@
                     (tool-execute
                      (tool-registry-find registry "lisp" "eval")
                      context
-                     (json-object "form" "(1+ *pool-value*)"
+                     (json-object "forms" (vector "(1+ *pool-value*)")
                                   "repl" "alpha"))))
              (test-assert (and (tool-result-success-p result)
                                (search "42" (tool-result-content result)))
-                          "lisp.eval routes requests to the named REPL"))
+                          "lisp.eval routes requests to the named REPL")
+             (flet ((evaluate (forms)
+                      "Run lisp.eval with FORMS in the alpha REPL."
+                      (tool-execute (tool-registry-find registry "lisp" "eval")
+                                    context
+                                    (json-object "forms" forms "repl" "alpha"))))
+               (let ((late (evaluate
+                            (vector "(defpackage #:lisp-eval-late (:use #:cl) (:export #:answer))"
+                                    "(defun lisp-eval-late:answer () 42)"
+                                    "(lisp-eval-late:answer)"))))
+                 (test-assert (and (tool-result-success-p late)
+                                   (search "42" (tool-result-content late)))
+                              "a later form uses a package an earlier form created"))
+               (let ((failed (evaluate (vector "(defparameter *sequence-marker* 1)"
+                                               "(error \"second form failed\")"
+                                               "(defparameter *sequence-marker* 3)"))))
+                 (test-assert (and (not (tool-result-success-p failed))
+                                   (search "Form 2 of 3 failed: second form failed"
+                                           (tool-result-content failed))
+                                   (equal (getf (rest (lisp-worker-request
+                                                       alpha :eval '(:forms ("*sequence-marker*"))))
+                                                :values)
+                                          '("1")))
+                              "a failing form is named and later forms do not run"))
+               (test-assert (handler-case (progn (evaluate "(+ 1 2)") nil)
+                              (tool-error ()
+                                t))
+                            "forms must be an array rather than one string")))
            (test-assert (search "alpha  running  image pristine"
                                 (lisp-worker-pool-render pool))
                         "the worker pool lists each active REPL and image")
@@ -330,14 +357,14 @@
              (lisp-worker-pool-change-working-directory pool moved-configuration)
              (let ((marker
                      (lisp-worker-request alpha :eval
-                                          '(:form "(1+ *pool-value*)")))
+                                          '(:forms ("(1+ *pool-value*)"))))
                    (worker-directory
                      (lisp-worker-request
-                      alpha :eval '(:form "(namestring (uiop:getcwd))")))
+                      alpha :eval '(:forms ("(namestring (uiop:getcwd))"))))
                    (default-directory
                      (lisp-worker-request
                       alpha :eval
-                      '(:form "(namestring *default-pathname-defaults*)"))))
+                      '(:forms ("(namestring *default-pathname-defaults*)")))))
                (test-assert (equal (getf (rest marker) :values) '("42"))
                             "moving a REPL preserves its heap state")
                (test-assert
@@ -351,7 +378,7 @@
              (let* ((gamma (lisp-worker-pool-start pool "gamma" "pristine"))
                     (gamma-directory
                       (lisp-worker-request
-                       gamma :eval '(:form "(namestring (uiop:getcwd))"))))
+                       gamma :eval '(:forms ("(namestring (uiop:getcwd))")))))
                (test-assert
                 (search (namestring workspace)
                         (first (getf (rest gamma-directory) :values)))
@@ -375,7 +402,7 @@
               "a failed REPL workspace change retains the pool configuration")
              (let ((marker
                      (lisp-worker-request alpha :eval
-                                          '(:form "(1+ *pool-value*)"))))
+                                          '(:forms ("(1+ *pool-value*)")))))
                (test-assert (equal (getf (rest marker) :values) '("42"))
                             "a failed REPL workspace change preserves heap state")))
            (handler-case
@@ -391,7 +418,7 @@
                    (lisp-worker-request
                     (lisp-worker-pool-worker pool "alpha")
                     :eval
-                    '(:form "(boundp '*pool-value*)"))))
+                    '(:forms ("(boundp '*pool-value*)")))))
              (test-assert (equal (getf (rest result) :values) '("NIL"))
                           "reset replaces only the selected REPL heap"))
            (lisp-worker-pool-stop pool "beta")
@@ -466,7 +493,7 @@
                "Evaluate FORM directly in WORKER and return rendered values."
                (getf
                 (rest
-                 (lisp-worker-request worker :eval (list :form form)))
+                 (lisp-worker-request worker :eval (list :forms (list form))))
                 :values))
 
              (async-schema-p (name)
@@ -520,7 +547,7 @@
              (let* ((*tool-execution-blocking-grace-seconds* 5)
                     (result
                       (run-lisp "eval"
-                                "form" "(+ 20 22)"
+                                "forms" (vector "(+ 20 22)")
                                 "repl" "alpha")))
                (test-assert
                 (and (tool-result-success-p result)
@@ -531,8 +558,8 @@
                     (result
                       (run-lisp
                        "eval"
-                       "form"
-                       "(progn (defparameter *async-once* (1+ (if (boundp '*async-once*) *async-once* 0))) (sleep 1) *async-once*)"
+                       "forms"
+                       (vector "(progn (defparameter *async-once* (1+ (if (boundp '*async-once*) *async-once* 0))) (sleep 1) *async-once*)")
                        "repl" "alpha"))
                     (details (tool-result-details result))
                     (job (handoff-job result))
@@ -557,7 +584,7 @@
               (let* ((result
                        (run-lisp
                         "eval"
-                        "form" "(progn (sleep 1) (+ 2 3))"
+                        "forms" (vector "(progn (sleep 1) (+ 2 3))")
                         "compile" t
                         "repl" "beta"
                         "async" t))
@@ -581,7 +608,7 @@
                               (prin1-to-string cancel-marker)))
                     (result
                       (run-lisp "eval"
-                                "form" form
+                                "forms" (vector form)
                                 "repl" "cancel"
                                 "async" t))
                     (job (handoff-job result))
@@ -612,7 +639,7 @@
              (let* ((*tool-execution-blocking-grace-seconds* 20)
                     (result
                        (run-completed-lisp "eval"
-                                "form" "(+ 40 2)"
+                                "forms" (vector "(+ 40 2)")
                                 "repl" "cancel")))
                (test-assert
                 (and (tool-result-success-p result)
@@ -784,7 +811,7 @@
                                 (prin1-to-string marker)))
                       (result
                         (run-lisp "eval"
-                                  "form" form
+                                  "forms" (vector form)
                                   "repl" name
                                   "async" t))
                       (job (execution-job result "lisp.eval")))
@@ -867,7 +894,7 @@
                   (let* ((*tool-execution-blocking-grace-seconds* 0.01)
                          (result
                            (run-lisp "eval"
-                                     "form" "(+ 20 22)"
+                                     "forms" (vector "(+ 20 22)")
                                      "repl" "busy"))
                          (details (tool-result-details result))
                          (job (execution-job result "lisp.eval")))
@@ -1042,7 +1069,7 @@
                      (lisp-worker-request
                       (lisp-worker-pool-worker pool "scratch")
                       :eval
-                      '(:form "*scratchpad-value*"))))
+                      '(:forms ("*scratchpad-value*")))))
                (test-assert
                 (equal (getf (rest result) :values) '("43"))
                 "scratchpad execution retains definitions in the selected REPL"))
@@ -1167,7 +1194,7 @@
            (lisp-worker-request
             source
             :eval
-            '(:form "(defparameter *saved-worker-marker* 9001)"))
+            '(:forms ("(defparameter *saved-worker-marker* 9001)")))
            (let ((image
                    (lisp-worker-save-image
                     configuration
@@ -1187,14 +1214,14 @@
                       (lisp-worker-request
                        clone
                        :eval
-                       '(:form "*saved-worker-marker*")))
+                       '(:forms ("*saved-worker-marker*"))))
                     (pristine
                       (lisp-worker-pool-start pool "control" "pristine"))
                     (pristine-result
                       (lisp-worker-request
                        pristine
                        :eval
-                       '(:form "(boundp '*saved-worker-marker*)"))))
+                       '(:forms ("(boundp '*saved-worker-marker*)")))))
                (test-assert
                 (equal (getf (rest clone-result) :values) '("9001"))
                 "a REPL started from the saved image inherits its modified heap")

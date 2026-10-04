@@ -138,7 +138,7 @@
 (-> test-acp-observer-tool-title-previews () null)
 (defun test-acp-observer-tool-title-previews ()
   "Preview principal arguments without control characters or unbounded titles."
-  (dolist (case (list (list "lisp.eval" (json-object "compile" t "form" "(+ 1 2)") "(+ 1 2)")
+  (dolist (case (list (list "lisp.eval" (json-object "compile" t "forms" #("(load-it)" "(+ 1 2)")) "(load-it) (+ 1 2)")
                      (list "shell.run" (json-object "async" t "command" "git status") "git status")
                      (list "resource.read" (json-object "uri" "conversation:current") "conversation:current")
                      (list "custom" (json-object "z" 9 "a" #(1 2)) "2 items")
@@ -170,7 +170,8 @@
                                text)))
    (lambda ()
      (acp-tool-title "lisp.eval" (json-object "form" (make-string 1000000 :initial-element #\x)))
-     (acp-tool-title "custom" (json-object "items" (make-array 100000 :initial-element "large")))))
+     (acp-tool-title "custom" (json-object "items" (make-array 100000 :initial-element "large")))
+     (acp-tool-title "lisp.eval" (json-object "forms" (make-array 4 :initial-element (make-string 1000000 :initial-element #\x))))))
   nil)
 
 

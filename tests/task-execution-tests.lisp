@@ -557,7 +557,7 @@
                   (tool-execute
                    (tool-registry-find child-registry "lisp" "eval")
                    context
-                   (json-object "form" form
+                   (json-object "forms" (vector form)
                                 "repl" "child-cleanup"
                                 "async" t)))
                 (details (tool-result-details result))

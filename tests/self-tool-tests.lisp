@@ -835,8 +835,8 @@
                                                         arguments)))
                        context)))
              (declare (ignorable eval-tool))
-             (let ((result (run "form"
-                                "(cerror \"Keep going anyway.\" \"Deliberate stop.\")")))
+             (let ((result (run "forms"
+                                (vector "(cerror \"Keep going anyway.\" \"Deliberate stop.\")"))))
                (test-assert (not (tool-result-success-p result))
                             "correctable conditions fail without a restart")
                (test-assert (search "Available restarts"
@@ -848,22 +848,36 @@
                                          (tool-result-content result)))
                             "the abort restart is never offered"))
              (test-assert (tool-result-success-p
-                           (run "form"
-                                "(cerror \"Keep going anyway.\" \"Deliberate stop.\")"
+                           (run "forms"
+                                (vector "(cerror \"Keep going anyway.\" \"Deliberate stop.\")")
                                 "restart" "CONTINUE"))
                           "selecting continue completes the operation")
-             (let ((result (run "form"
-                                "(restart-case (error \"Needs a value.\") (use-value (value) value))"
+             (let ((result (run "forms"
+                                (vector "(restart-case (error \"Needs a value.\") (use-value (value) value))")
                                 "restart" "USE-VALUE"
                                 "restart-value" "(* 6 7)")))
                (test-assert (and (tool-result-success-p result)
                                  (search "42" (tool-result-content result)))
                             "value restarts receive the evaluated value"))
              (test-assert (not (tool-result-success-p
-                                (run "form"
-                                     "(cerror \"Keep going.\" \"Stop.\")"
+                                (run "forms"
+                                     (vector "(cerror \"Keep going.\" \"Stop.\")")
                                      "restart" "NO-SUCH-RESTART")))
-                          "unknown restart names still fail with the menu")))
+                          "unknown restart names still fail with the menu")
+             (let ((late (run "forms"
+                              (vector "(defpackage #:self-eval-late (:use #:cl) (:export #:answer))"
+                                      "(defun self-eval-late:answer () 42)"
+                                      "(self-eval-late:answer)"))))
+               (test-assert (and (tool-result-success-p late)
+                                 (search "42" (tool-result-content late)))
+                            "a later form uses a package an earlier form created"))
+             (let ((failed (run "forms" (vector "1" "(error \"second form failed\")" "3"))))
+               (test-assert (and (not (tool-result-success-p failed))
+                                 (search "Form 2 of 3 failed: second form failed"
+                                         (tool-result-content failed)))
+                            "a failing form of several is named by its position"))
+             (test-assert (not (tool-result-success-p (run "forms" "(+ 1 2)")))
+                          "forms must be an array rather than one string")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 

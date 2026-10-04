@@ -356,7 +356,8 @@
          (output (getf properties :output))
          (result-values (getf properties :values))
          (message (getf properties :message))
-         (backtrace (getf properties :backtrace)))
+         (backtrace (getf properties :backtrace))
+         (form-count (getf properties :form-count)))
     (if (eq status :ok)
         (tool-success
          (with-output-to-string (stream)
@@ -365,6 +366,8 @@
            (format stream "Values:~%~{~A~%~}" result-values)))
         (tool-failure
          (with-output-to-string (stream)
+           (when (and form-count (> form-count 1))
+             (format stream "Form ~D of ~D failed: " (getf properties :form-index) form-count))
            (format stream "~A" (or message "Worker operation failed."))
            ;; Compiler diagnostics and test reports are printed before the
            ;; error, so they explain a failed load or test run.
@@ -446,21 +449,21 @@ that worker, while cancellation after a completed request leaves the REPL intact
 (defmethod tool-execute ((tool lisp-eval-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Evaluate or compile and execute the required form through CONTEXT's worker."
+  "Evaluate or compile and execute the required forms in order through CONTEXT's worker."
   (declare (ignore tool))
-  (let ((form (tool-argument arguments "form" :required t))
+  (let ((forms (tool-forms-argument arguments "lisp.eval"))
         (compile-p
           (tool-boolean-argument arguments "compile" :tool-name "lisp.eval")))
     (lisp-tool-invoke-execution
      context arguments
      :tool-name "lisp.eval"
-     :summary form
+     :summary (format nil "~{~A~^ ~}" forms)
      :operation-function
      (lambda (worker)
        (worker-response-tool-result
         (lisp-worker-request worker
                              (if compile-p ':compile ':eval)
-                             (list :form form)))))))
+                             (list :forms forms)))))))
 
 (defmethod tool-execute ((tool lisp-load-system-tool)
                          (context tool-context)
@@ -676,7 +679,7 @@ that worker, while cancellation after a completed request leaves the REPL intact
   (sbcl-worker-runtime-configure
    :evaluation-package "AUTOLITH"
    :protocol-tag ':autolith-worker
-   :protocol-version 2
+   :protocol-version *lisp-worker-protocol-version*
    :source-root-environment-variable "AUTOLITH_SBCL_SOURCE_ROOT")
   (lisp-worker--call
    (lambda ()
@@ -688,7 +691,7 @@ that worker, while cancellation after a completed request leaves the REPL intact
   (sbcl-worker-runtime-configure
    :evaluation-package "AUTOLITH"
    :protocol-tag ':autolith-worker
-   :protocol-version 2
+   :protocol-version *lisp-worker-protocol-version*
    :source-root-environment-variable "AUTOLITH_SBCL_SOURCE_ROOT")
   (sbcl-worker-handle-request request))
 
@@ -698,5 +701,5 @@ that worker, while cancellation after a completed request leaves the REPL intact
   (sbcl-worker-main
    :evaluation-package "AUTOLITH"
    :protocol-tag ':autolith-worker
-   :protocol-version 2
+   :protocol-version *lisp-worker-protocol-version*
    :source-root-environment-variable "AUTOLITH_SBCL_SOURCE_ROOT"))

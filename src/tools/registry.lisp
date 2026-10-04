@@ -59,7 +59,7 @@
 
 (defclass lisp-eval-tool (lisp-tool)
   ()
-  (:documentation "Evaluate one Common Lisp form in the worker."))
+  (:documentation "Evaluate a sequence of Common Lisp forms in the worker."))
 
 
 (defclass lisp-load-system-tool (lisp-tool)
@@ -690,6 +690,27 @@ spilling is unavailable, in which case the tail is discarded as before.")
        (error 'tool-error
               :message (format nil "Tool argument ~S must be a boolean." name)
               :tool-name (or tool-name name))))))
+
+(-> tool-forms-argument (json-object string) list)
+(defun tool-forms-argument (arguments tool-name)
+  "Return the required non-empty FORMS source list from ARGUMENTS for TOOL-NAME."
+  (let ((forms (tool-argument arguments "forms" :required t)))
+    (unless (and (vectorp forms)
+                 (not (stringp forms))
+                 (plusp (length forms))
+                 (every #'stringp forms))
+      (error 'tool-error
+             :message "Tool argument \"forms\" must be a non-empty array of strings, each holding one Common Lisp form."
+             :tool-name tool-name))
+    (coerce forms 'list)))
+
+(-> tool-forms-property (string) json-object)
+(defun tool-forms-property (description)
+  "Return the schema of a non-empty array of single-form source strings."
+  (json-object "type" "array"
+               "minItems" 1
+               "description" description
+               "items" (tool-string-property "Exactly one readable Common Lisp form.")))
 
 
 ;;;; -- Resource Tool Dispatch --

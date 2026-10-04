@@ -690,7 +690,7 @@
                        ("(shell.run :command \"true\")" :hold)
                        ("(test-operation.echo :text \"hello\")" :hold)
                        ("(self.status)" :execute)
-                       ("(self.eval :form \"(+ 1 2)\")" :hold)
+                       ("(self.eval :forms (vector \"(+ 1 2)\"))" :hold)
                        ("(resource.read :uri (progn (setf *print-base* 8) \"workspace:.\"))"
                         :hold)
                        ("(eval-now (setf *print-base* 8))" :execute)))

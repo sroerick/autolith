@@ -765,10 +765,10 @@
                 "eval-now explicitly forces arbitrary local evaluation immediately"))
              (recording-terminal-reset terminal)
              (application-input-controller--handle-submission
-              controller "(self.eval :form \"(+ 1 2)\")")
+              controller "(self.eval :forms (vector \"(+ 1 2)\"))")
              (test-assert
               (and (equal (application-input-controller--state controller :work-items)
-                          '((:lisp "(self.eval :form \"(+ 1 2)\")")))
+                          '((:lisp "(self.eval :forms (vector \"(+ 1 2)\"))")))
                    (search "local evaluation scheduled"
                            (recording-terminal-output terminal)
                            :test #'char-equal))

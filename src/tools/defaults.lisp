@@ -21,17 +21,17 @@
 
 (-> default-tools--required-form-schema (string) json-object)
 (defun default-tools--required-form-schema (description)
-  "Return a closed schema containing FORM, compilation mode, REPL, and async policy."
+  "Return a closed schema containing FORMS, compilation mode, REPL, and async policy."
   (let ((properties
           (json-object
-           "form" (tool-string-property description)
+           "forms" (tool-forms-property description)
            "compile" (tool-boolean-property
                       "Compile before executing; defaults to false.")
            "repl" (tool-string-property
                    "The persistent REPL name; defaults to default.")
            "async" (tool-boolean-property
                     "Run as an inspectable background job; defaults to false."))))
-    (tool-object-schema properties '("form"))))
+    (tool-object-schema properties '("forms"))))
 
 (-> default-tools--lisp-repl-control-schema
     (&key (:include-image boolean))
@@ -546,9 +546,9 @@
           (list
            'lisp-eval-tool
            "lisp" "eval"
-           "Evaluate or compile and execute one Common Lisp form in a named persistent REPL, optionally as an inspectable job."
+           "Evaluate, or compile and execute, Common Lisp forms in order in a named persistent REPL, optionally as an inspectable job. Each form is read only after the one before it ran, so a later form may use a package an earlier form loaded. The result shows the last form's values; a failure stops the sequence and names the failing form."
            (default-tools--required-form-schema
-            "One readable Common Lisp form."))
+            "The forms to run in order, each string holding exactly one form."))
           (list
            'lisp-scratchpad-run-tool
            "lisp" "scratchpad-run"
@@ -708,13 +708,14 @@
           (list
            'self-eval-tool
            "self" "eval"
-           "Evaluate one exploratory Common Lisp form in the active image."
+           "Evaluate exploratory Common Lisp forms in order in the active image. Each form is read only after the one before it ran, so a later form may use a package an earlier form created. The result shows the last form's values; a failure stops the sequence and names the failing form. A restart reruns the whole sequence."
            (tool-object-schema
             (json-object
-             "form" (tool-string-property "One readable Common Lisp form.")
+             "forms" (tool-forms-property
+                      "The forms to run in order, each string holding exactly one form.")
              "restart" (tool-restart-property)
              "restart-value" (tool-restart-value-property))
-            '("form")))
+            '("forms")))
           (list
            'self-redefine-tool
            "self" "redefine"

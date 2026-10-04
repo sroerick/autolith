@@ -2,6 +2,13 @@
 
 ;;;; -- Saved Lisp Worker Image Adapters --
 
+(defparameter *lisp-worker-protocol-version* 3
+  "The worker protocol version Autolith workers announce and require.
+
+Version 3 sends evaluation requests as a :FORMS list. Saved worker images keep
+the protocol runtime they were saved with, so an older image fails its
+handshake instead of misreading requests.")
+
 (-> pristine-lisp-image-identifier () string)
 (defun pristine-lisp-image-identifier ()
   "Return the immutable virtual base identifier for fresh Lisp workers."
@@ -49,7 +56,7 @@ only while that core still matches the source."
    :image-root (configuration-lisp-image-root configuration)
    :evaluation-package "AUTOLITH"
    :protocol-tag ':autolith-worker
-   :protocol-version 2
+   :protocol-version *lisp-worker-protocol-version*
    :source-root-environment-variable "AUTOLITH_SBCL_SOURCE_ROOT"
    :source-revision-function (lambda ()
                                (lisp-worker--source-commit configuration))

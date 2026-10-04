@@ -198,7 +198,7 @@ The listing is advisory prompt content, so failures return NIL instead
 of failing the run."
   (handler-case
       (let* ((response (lisp-worker-request worker ':eval
-                                            (list :form "(environment-names)")))
+                                            (list :forms (list "(environment-names)"))))
              (fields (rest response))
              (printed (first (getf fields ':values))))
         (when (and (eq (getf fields ':status) ':ok)
@@ -293,8 +293,8 @@ provider request on a closing remark."
       (worker-response-tool-result
        (lisp-worker-request (rlm-environment-tool--worker tool)
                             ':eval
-                            (list :form (tool-argument arguments "form"
-                                                       :required t))))
+                            (list :forms (list (tool-argument arguments "form"
+                                                              :required t)))))
     (error (condition)
       (tool-failure (format nil "~A" condition)))))
 
@@ -414,7 +414,7 @@ configuration before per-call model routing, so routing copies share its pool."
                         (dolist (form forms)
                           (let ((response
                                   (lisp-worker-request worker ':eval
-                                                       (list :form form))))
+                                                       (list :forms (list form)))))
                             (unless (eq (getf (rest response) ':status) ':ok)
                               (error 'rlm-inference-error
                                      :task task

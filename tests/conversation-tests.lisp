@@ -1406,7 +1406,7 @@ The worker stays alive until the caller stops it; this returns it as the
 second value so callers can keep state such as a lease in its process."
   (let ((worker (lisp-worker-create configuration :name "conversation-child")))
     (handler-case
-        (let ((response (lisp-worker-request worker ':eval (list :form form))))
+        (let ((response (lisp-worker-request worker ':eval (list :forms (list form)))))
           (unless (eq (getf (rest response) :status) ':ok)
             (error "The conversation child failed: ~A"
                    (or (getf (rest response) :message) response)))
