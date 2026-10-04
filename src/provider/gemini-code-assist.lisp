@@ -522,19 +522,11 @@ and adds the session to it. Return the request and its context delivery."
   (gemini-code-assist-ensure-setup provider credentials)
   (setf (gethash "project" request)
         (gemini-code-assist-provider-project provider))
-  (provider-call-with-response-deadline
-   300
-   (lambda ()
-     (dexador:post
-      (format nil "~A?alt=sse"
-              (gemini-code-assist--method-url provider "streamGenerateContent"))
-      :headers (gemini-code-assist--headers credentials "text/event-stream")
-      :content (json-encode-utf8 request)
-      :want-stream t
-      :force-string t
-      :keep-alive nil
-      :connect-timeout 30
-      :read-timeout 300))))
+  (provider-post-event-stream
+   (format nil "~A?alt=sse"
+           (gemini-code-assist--method-url provider "streamGenerateContent"))
+   (json-encode-utf8 request)
+   :headers (gemini-code-assist--headers credentials "text/event-stream")))
 
 (defmethod provider-gemini-stream-response
     ((provider gemini-code-assist-provider) event)

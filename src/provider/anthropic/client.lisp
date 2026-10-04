@@ -110,15 +110,7 @@ Return the encoded request and its unconsumed context delivery."
   "Open a direct authenticated SSE request to the Anthropic Messages API."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
-  (provider-call-with-response-deadline
-   300
-   (lambda ()
-     (dexador:post
-      (config :provider-endpoint (provider-configuration provider))
-      :headers (anthropic--request-headers credentials)
-      :content (json-encode-utf8 request)
-      :want-stream t
-      :force-string t
-      :keep-alive nil
-      :connect-timeout 30
-      :read-timeout 300))))
+  (provider-post-event-stream
+   (config :provider-endpoint (provider-configuration provider))
+   (json-encode-utf8 request)
+   :headers (anthropic--request-headers credentials)))

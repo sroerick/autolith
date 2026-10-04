@@ -413,15 +413,7 @@ ask for a final usage chunk."
   "Open one authenticated streaming Chat Completions request."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
-  (provider-call-with-response-deadline
-   300
-   (lambda ()
-     (dexador:post
-      (config :provider-endpoint (provider-configuration provider))
-      :headers (openai-compatible--request-headers provider credentials conversation)
-      :content (json-encode-utf8 request)
-      :want-stream t
-      :force-string t
-      :keep-alive nil
-      :connect-timeout 30
-      :read-timeout 300))))
+  (provider-post-event-stream
+   (config :provider-endpoint (provider-configuration provider))
+   (json-encode-utf8 request)
+   :headers (openai-compatible--request-headers provider credentials conversation)))

@@ -418,6 +418,7 @@
                 #:sse-read-line-characters
                 #:subscription-provider
                 #:gemini-generate-content-provider
+                #:provider-post-event-stream
                 #:provider-gemini-stream-response
                 #:turn-completion
                 #:provider--call-with-transport-normalization

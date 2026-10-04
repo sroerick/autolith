@@ -529,20 +529,12 @@ the requests of a turn for the same reason, at commit 6f51c65958."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
   (let ((configuration (provider-configuration provider)))
-    (provider-call-with-response-deadline
-     300
-     (lambda ()
-       (dexador:post
-        (config :provider-endpoint configuration)
-        :headers (provider--codex-request-headers
-                  provider credentials conversation :accept "text/event-stream")
-        :content (json-encode-utf8 request)
-        :want-stream t
-        :force-string t
-        :keep-alive t
-        :use-connection-pool t
-        :connect-timeout 30
-        :read-timeout 300)))))
+    (provider-post-event-stream
+     (config :provider-endpoint configuration)
+     (json-encode-utf8 request)
+     :headers (provider--codex-request-headers
+               provider credentials conversation :accept "text/event-stream")
+     :keep-alive-p t)))
 
 (defmethod provider-open-native-compaction
     ((provider codex-subscription-provider)
