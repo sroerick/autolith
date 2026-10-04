@@ -63,22 +63,6 @@ Cut: =image-input-error=, platform permission and truename calls,
 parameters. Pasted-path unquoting and =file://= handling (559-600) could go to
 clinedi.
 
-** Structured answers from model text and JSON Schema import (cl-llm-provider-api/contracts)
-=src/inference/frame.lisp= 192-239 (tolerant JSON extraction from prose or
-fences, validation, repair reason) and 295-308 (billable tokens with cached
-input discounted, next to the budget settlement); =inference/tools.lisp=
-408-474 (JSON Schema to native output schema, the reverse of the library's
-existing direction). Cut: the task output-schema wrappers and
-=rlm-inference-error=.
-
-** Static API-key credentials (cl-rfc8628 for the source and manager types, clinedi for the hidden prompt)
-=src/provider/api-key.lisp= 375-468 (environment source and static manager),
-3-172 (multi-provider private key file, can stay), 175-291 (hidden terminal
-input with echo off and bracketed paste stripped). The five near-identical
-=authentication.lisp= files for anthropic, fireworks, opencode, openrouter and
-mistral (about 75 lines each, differing only in data) should collapse into one
-data-driven definition regardless of extraction.
-
 * Tools, resources, workers, tasks and the rest
 
 Checked against the pinned versions in =.qlot/dists=, not the older checkouts.
