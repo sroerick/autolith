@@ -394,39 +394,7 @@
 
 (-> test-openai-compatible-provider-discovery () null)
 (defun test-openai-compatible-provider-discovery ()
-  "Test OpenAI-compatible model discovery, metadata overrides, failures, and interrupts."
-  (let* ((declared (provider--normalize-models
-                    '((:name "overlay/model" :description "Declared"))))
-         (discovered (provider--normalize-models
-                      '((:name "overlay/model" :context-window 64000)
-                        (:name "overlay/extra" :context-window 32000))))
-         (merged (provider--merge-models declared discovered))
-         (overlay (find "overlay/model" merged
-                        :key #'provider-model-name :test #'string=))
-         (extra (find "overlay/extra" merged
-                      :key #'provider-model-name :test #'string=))
-         (custom (first (provider--merge-models
-                         (provider--normalize-models
-                          '((:name "overlay/model" :context-window 456789)))
-                         (provider--normalize-models
-                          '((:name "overlay/model" :context-window 64000)))))))
-    (test-assert
-     (and overlay
-          (string= (provider-model-description overlay) "Declared")
-          (= (provider-model-context-window overlay) 64000)
-          extra
-          (= (provider-model-context-window extra) 32000))
-     "discovered context windows overlay declared models that omit :context-window")
-    (test-assert
-     (= (provider-model-context-window custom) 456789)
-     "declared :context-window wins over discovered context windows"))
-  (let* ((declared (make-instance 'provider-model :name "instance/model"
-                                  :context-window 256000))
-         (discovered (provider-model-create
-                      '(:name "instance/model" :context-window 64000)))
-         (merged (first (provider--merge-models (list declared) (list discovered)))))
-    (test-assert (= (provider-model-context-window merged) 256000)
-                 "model instances retain their explicitly declared window"))
+  "Test OpenAI-compatible model discovery, failures, and interrupts."
   (let* ((registry-snapshot (provider--registry-snapshot))
          (configuration (test-configuration))
          (root (test-configuration-root configuration))

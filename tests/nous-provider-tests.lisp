@@ -129,7 +129,10 @@
                 (and (test-object-contains-string-p condition "credentials")
                      (not (test-object-contains-string-p condition "API key")))))
             "OAuth model-discovery failures describe credentials rather than an API key")
-           (provider--refresh-registration-models registration configuration)
+           (test-assert (null (provider-refresh-models
+                               configuration
+                               :provider-name (provider-registration-name registration)))
+                        "the Nous registration discovers its models")
            (let* ((chat-configuration
                     (configuration-copy configuration :model "open-model"))
                   (messages-configuration
@@ -208,7 +211,10 @@
                        (json-object "id" "anthropic/claude-test"))))
                     200
                     nil)))
-           (provider--refresh-registration-models registration configuration)
+           (test-assert (null (provider-refresh-models
+                               configuration
+                               :provider-name (provider-registration-name registration)))
+                        "the Nous registration discovers its models")
            (let* ((chat-configuration
                     (configuration-copy configuration :model "open-model"))
                   (messages-configuration

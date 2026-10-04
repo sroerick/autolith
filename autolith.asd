@@ -19,6 +19,7 @@
                #:cl-llm-provider-api
                #:cl-llm-provider-api/dexador
                #:cl-llm-provider-api/context
+               #:cl-llm-provider-api/registry
                #:cl-llm-provider-api/contracts
                #:cl-skills
                #:cl-termdown

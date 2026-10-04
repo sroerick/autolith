@@ -270,6 +270,48 @@
                 #:browser-authentication-request
                 #:browser-authentication-token-document)
   (:import-from #:cl-llm-provider-api
+                #:*provider-registry-error-class*
+                #:model-list-decode
+                #:model-spec-name
+                #:model-spec-rename
+                #:provider-model
+                #:provider-model-context-window
+                #:provider-model-context-window-specified-p
+                #:provider-model-description
+                #:provider-model-list-error
+                #:provider-model-name
+                #:provider-model-reasoning-efforts
+                #:provider-name-family
+                #:provider-registration
+                #:provider-registration-authenticator
+                #:provider-registration-declared-models
+                #:provider-registration-description
+                #:provider-registration-discovered-models
+                #:provider-registration-endpoint
+                #:provider-registration-factory
+                #:provider-registration-family
+                #:provider-registration-model-discovery
+                #:provider-registration-model-discovery-endpoint
+                #:provider-registration-model-discovery-endpoint-resolver
+                #:provider-registration-models
+                #:provider-registration-name
+                #:provider-registration-protocol
+                #:provider-registration-sequence
+                #:provider-registration-source
+                #:provider-registry-create
+                #:provider-registry-error
+                #:provider-registry-find
+                #:provider-registry-for-model
+                #:provider-registry-load-model-cache
+                #:provider-registry-model
+                #:provider-registry-model-identifiers
+                #:provider-registry-refresh-models
+                #:provider-registry-register
+                #:provider-registry-registrations
+                #:provider-registry-remove-source
+                #:provider-registry-restore
+                #:provider-registry-snapshot
+                #:provider-registry-unregister
                 #:*bounded-retry-delays*
                 #:*bounded-retry-sleep-function*
                 #:*character-read-sequence-window*

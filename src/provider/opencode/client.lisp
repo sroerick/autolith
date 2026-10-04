@@ -36,10 +36,10 @@
 (defun opencode--fetch-models (configuration)
   "Discover OpenCode models and namespace their user-visible identifiers."
   (mapcar (lambda (spec)
-            (openai-compatible--rename-model-spec
+            (model-spec-rename
              spec
              (opencode--model-name
-              (openai-compatible--model-spec-name spec))))
+              (model-spec-name spec))))
           (openai-compatible--fetch-models
            configuration
            :provider-name "opencode"

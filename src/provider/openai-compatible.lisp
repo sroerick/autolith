@@ -166,55 +166,6 @@
         (member (string-downcase (first header)) reserved :test #'string=))
       (copy-tree custom)))))
 
-(defparameter *openai-compatible-context-window-fields*
-  '("context_length" "contextLength" "max_model_len"
-    "max_context_length" "context_window" "n_ctx")
-  "JSON field names that may carry a model context window.")
-
-(-> openai-compatible--positive-token-count (t) (option integer))
-(defun openai-compatible--positive-token-count (value)
-  "Return VALUE as a positive integer token count, or NIL."
-  (cond
-    ((and (integerp value) (plusp value))
-     value)
-    ((and (realp value) (plusp value) (= value (truncate value)))
-     (truncate value))
-    ((stringp value)
-     (let ((parsed (ignore-errors (parse-integer value :junk-allowed nil))))
-       (and parsed (plusp parsed) parsed)))
-    (t
-     nil)))
-
-(-> openai-compatible--context-window-from-entry (json-object) (option integer))
-(defun openai-compatible--context-window-from-entry (entry)
-  "Return the context window advertised by model ENTRY, or NIL."
-  (or (loop for field in *openai-compatible-context-window-fields*
-            for window = (openai-compatible--positive-token-count
-                          (json-get entry field))
-            when window
-              return window)
-      (let ((top-provider (json-get entry "top_provider")))
-        (and (json-object-p top-provider)
-             (openai-compatible--positive-token-count
-              (json-get top-provider "context_length"))))))
-
-(-> openai-compatible--model-spec-name (t) (option string))
-(defun openai-compatible--model-spec-name (spec)
-  "Return the model identifier encoded by SPEC."
-  (etypecase spec
-    (string spec)
-    (cons (getf spec ':name))))
-
-(-> openai-compatible--rename-model-spec (t non-empty-string) t)
-(defun openai-compatible--rename-model-spec (spec new-name)
-  "Return SPEC with its model identifier replaced by NEW-NAME."
-  (etypecase spec
-    (string new-name)
-    (cons
-     (let ((copy (copy-list spec)))
-       (setf (getf copy ':name) new-name)
-       copy))))
-
 (-> openai-compatible--decode-model-list
     (string &key (:entry-predicate (option function)))
     list)
@@ -223,33 +174,10 @@
 
 Each kept entry becomes a property list with :NAME and, when the catalog
 advertises one, :CONTEXT-WINDOW."
-  (let* ((decoded
-           (handler-case
-               (json-decode body)
-             (error ()
-               (error 'configuration-error
-                      :message "The model discovery response was not valid JSON."))))
-         (data (and (json-object-p decoded)
-                    (json-get decoded "data"))))
-    (unless (vectorp data)
+  (handler-case (model-list-decode body :entry-predicate entry-predicate)
+    (provider-model-list-error (condition)
       (error 'configuration-error
-             :message "The model discovery response did not contain a data array."))
-    (let ((models nil))
-      (loop for entry across data
-            for identifier = (and (json-object-p entry)
-                                  (json-get entry "id"))
-            do (unless (non-empty-string-p identifier)
-                 (error 'configuration-error
-                        :message
-                        "The model discovery response contained an invalid model entry."))
-               (when (or (null entry-predicate)
-                         (funcall entry-predicate entry))
-                 (let ((window (openai-compatible--context-window-from-entry entry)))
-                   (push (if window
-                             (list :name identifier :context-window window)
-                             (list :name identifier))
-                         models))))
-      (nreverse models))))
+             :message (cl-llm-provider-api:provider-api-error-message condition)))))
 
 (-> openai-compatible--signal-model-discovery-status
     (non-empty-string credential-manager integer)
@@ -384,7 +312,7 @@ ask for a final usage chunk."
              (format nil
                      "Provider ~A has an invalid additional HTTP header ~S."
                      name header))))
-  (let* ((effective-family (or family (provider--family-keyword name)))
+  (let* ((effective-family (or family (provider-name-family name)))
          (model-discovery
            (and models-endpoint
                 (lambda (configuration)

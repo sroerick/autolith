@@ -67,10 +67,10 @@
 (defun openrouter--fetch-models (configuration)
   "Discover and namespace OpenRouter text models with tools and reasoning."
   (mapcar (lambda (spec)
-            (openai-compatible--rename-model-spec
+            (model-spec-rename
              spec
              (openrouter--model-name
-              (openai-compatible--model-spec-name spec))))
+              (model-spec-name spec))))
           (openai-compatible--fetch-models
            configuration
            :provider-name "OpenRouter"

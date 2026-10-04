@@ -463,15 +463,14 @@
                    (search "opencode / opencode/grok-4.5" description))
               "/models exposes dynamic-only OpenCode models under their namespace"))
            (let* ((entries
-                    (provider--read-model-cache
-                     (configuration-provider-model-cache-path configuration)))
+                    (getf (rest (provider--read-model-cache configuration)) :providers))
                   (entry
                     (find "opencode" entries
                           :key (lambda (candidate)
                                  (getf candidate :provider-name))
                           :test #'string=))
                   (models
-                    (mapcar #'provider-model-name (getf entry :models))))
+                    (mapcar (lambda (model) (getf model :name)) (getf entry :models))))
              (test-assert
               (and entry
                    (every
@@ -580,77 +579,6 @@
       (provider--registry-restore registry-snapshot)
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
-
-(-> opencode-provider-test--legacy-registry-snapshot () null)
-(defun opencode-provider-test--legacy-registry-snapshot ()
-  "Test legacy registry snapshots recover dynamic models across re-registration."
-  (let* ((registry-snapshot (provider--registry-snapshot))
-         (configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (provider-name "opencode-legacy-snapshot-test")
-         (static-model "opencode/legacy-static")
-         (dynamic-model "opencode/legacy-dynamic"))
-    (labels ((register ()
-               "Register the legacy-snapshot test provider."
-               (register-provider
-                provider-name
-                :family ':opencode
-                :models (list static-model)
-                :factory #'provider--opencode-registration-factory
-                :model-discovery
-                (lambda (selected-configuration)
-                  (declare (ignore selected-configuration))
-                  (list dynamic-model))
-                :model-discovery-endpoint
-                "https://legacy-snapshot.invalid/v1/models"
-                :source ':runtime)))
-      (unwind-protect
-           (progn
-             (register)
-             (test-assert
-              (null (provider-refresh-models
-                     configuration :provider-name provider-name))
-              "the legacy-snapshot provider discovers its dynamic model")
-             (let* ((registration
-                      (provider-registration-find provider-name))
-                    (current-snapshot (provider--registry-snapshot))
-                    (legacy-snapshot
-                      (list
-                       :registrations
-                       (copy-list (getf current-snapshot ':registrations))
-                       :models
-                       (loop for model-snapshot
-                               in (getf current-snapshot ':models)
-                             collect
-                             (list (first model-snapshot)
-                                   (copy-list (second model-snapshot))))
-                       :sequence (getf current-snapshot ':sequence))))
-               (with-recursive-lock-held (*provider-registry-lock*)
-                 (setf (slot-value registration 'discovered-models) nil
-                       (slot-value registration 'models)
-                       (copy-list
-                        (provider-registration-declared-models registration)))
-                 (provider--refresh-model-settings))
-               (provider--registry-restore legacy-snapshot)
-               (test-assert
-                (equal
-                 (mapcar #'provider-model-name
-                         (provider-registration-discovered-models registration))
-                 (list dynamic-model))
-                "legacy registry restoration recovers exposed dynamic models")
-               (register)
-               (test-assert
-                (equal
-                 (mapcar
-                  #'provider-model-name
-                  (provider-registration-models
-                   (provider-registration-find provider-name)))
-                 (list static-model dynamic-model))
-                "re-registration retains legacy-restored dynamic models")))
-        (provider--registry-restore registry-snapshot)
-        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
-  nil)
-
 
 (-> opencode-provider-test--builtin-registration () null)
 (defun opencode-provider-test--builtin-registration ()

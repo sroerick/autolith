@@ -304,7 +304,6 @@
   opencode-provider-test--request-model
   opencode-provider-test--session-header
   opencode-provider-test--discovery
-  opencode-provider-test--legacy-registry-snapshot
   opencode-provider-test--builtin-registration)
 
 (define-test-suite openrouter-provider

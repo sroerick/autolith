@@ -22,7 +22,7 @@ git cl-jobpond https://github.com/luciusmagn/cl-jobpond.git :ref ee2e2eb0bd5080c
 git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 08acbc1caaab2beaa0ea824507d722a117ec70b0
 git cl-rfc8252 https://github.com/lambda-symbolics/cl-rfc8252.git :ref b9affbd04c12e2adac4a2403f60a3a2802f9ac45
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref dea112d1bf2750a52c52f33344157af7b9f4f6f8
-git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref 2e782571bbd81bac2a37a0ad45aa95b0c3e9ea5e
+git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref 55b990573197a89de0f2e4b71ac6fd75803b8ecd
 git cl-lsp https://github.com/lambda-symbolics/cl-lsp.git :ref 9f459b8d3d41e6eeb82cae06159879cf7258701a
 git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref 935e10dacfb37b5140bd23ea72144b9a336c1282
 git cl-termdown https://github.com/lambda-symbolics/cl-termdown.git :ref 681f4bcf636b15761119f5dc57691b1cdf1eb376

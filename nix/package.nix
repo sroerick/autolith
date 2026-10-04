@@ -89,6 +89,7 @@ let
       "cl-llm-provider-api/dexador"
       "cl-llm-provider-api/context"
       "cl-llm-provider-api/contracts"
+      "cl-llm-provider-api/registry"
     ];
     src = qlotSource "cl-llm-provider-api";
     lispLibs = with pkgs.sbclPackages; [

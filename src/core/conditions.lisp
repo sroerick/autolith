@@ -169,6 +169,11 @@
     :documentation "A bounded, non-secret OAuth error response."))
   (:documentation "Refreshing a ChatGPT OAuth access token failed."))
 
+(define-condition provider-registry-configuration-error
+    (configuration-error provider-registry-error)
+  ()
+  (:documentation "An invalid provider registration or registry lookup."))
+
 (define-condition provider-model-discovery-error (configuration-error)
   ((provider-name
     :initarg :provider-name
