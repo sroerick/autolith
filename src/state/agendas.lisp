@@ -108,8 +108,7 @@
              (and (= (length properties)
                      (if (= version *agenda-legacy-version*) 10 12))
                   (every (lambda (property)
-                           (readable-state-property-present-p properties
-                                                              property))
+                           (record-property-present-p form property))
                          '(:id :text :status :created-at :updated-at))
                   (non-empty-string-p (getf properties :id))
                   (let ((text (getf properties :text)))
@@ -119,8 +118,7 @@
                   (typep (getf properties :created-at) 'timestamp)
                   (typep (getf properties :updated-at) 'timestamp)
                   (or (= version *agenda-legacy-version*)
-                      (and (readable-state-property-present-p
-                            properties :memory-ids)
+                      (and (record-property-present-p form :memory-ids)
                            (agenda--memory-identifiers-p
                             (getf properties :memory-ids)))))))
     (error ()
@@ -135,8 +133,8 @@
            (let* ((properties (rest form))
                   (items (getf properties :items)))
              (and (= (length properties) 4)
-                  (readable-state-property-present-p properties :directory)
-                  (readable-state-property-present-p properties :items)
+                  (record-property-present-p form :directory)
+                  (record-property-present-p form :items)
                   (non-empty-string-p (getf properties :directory))
                   (listp items)
                   (every (lambda (item)

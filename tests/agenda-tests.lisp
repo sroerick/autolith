@@ -227,10 +227,8 @@
         (test-assert
          (and sole-form-p
               (= (third form) *agenda-version*)
-              (readable-state-property-present-p
-               (rest
-                (first
-                 (getf (rest (first (fifth form))) :items)))
+              (record-property-present-p
+               (first (getf (rest (first (fifth form))) :items))
                :memory-ids))
          "the next agenda write upgrades legacy state to version two"))))
   nil)
