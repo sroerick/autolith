@@ -620,7 +620,7 @@
                           "applications install a dynamic operation completion provider")
              (test-assert (member "/help" entry-names :test #'string=)
                           "slash compatibility completion retains canonical commands")
-             (test-assert (member "(help)" entry-names :test #'string=)
+             (test-assert (member "(conversations)" entry-names :test #'string=)
                           "completion offers a canonical no-argument Lisp command")
               (test-assert
                (and (member "/ste on" entry-names :test #'string=)
@@ -640,7 +640,7 @@
                  (and (equal (primary-of "/ste on") "/ste")
                       (equal (primary-of "(ste \"off\")") "(ste")
                       (null (primary-of "/ste"))
-                      (null (primary-of "(help)")))
+                      (null (primary-of "(conversations)")))
                  "finite option entries stay behind their canonical command rows")
                 (test-assert
                  (and (equal (primary-of "/exit") "/quit")
@@ -811,18 +811,16 @@
            (recording-terminal-reset terminal)
            (let* ((evaluation
                     (application-lisp-evaluate
-                     "(progn (help) :finished)"
+                     "(progn (help :all) :finished)"
                      :application application))
                   (output (recording-terminal-output terminal)))
              (test-assert
               (and (eq (application-lisp-evaluation-status evaluation) ':ok)
                    (equal (application-lisp-evaluation-values evaluation)
                           '(":FINISHED"))
-                   (search "(help)" output)
-                   (search "(resource.read" output)
-                   (search "Slash commands remain compatibility spellings."
-                           output))
-              "nested help shows canonical command and tool operations"))
+                   (search "(help" output)
+                   (search "(resource.read" output))
+              "nested help can present the full registered operation reference"))
            (recording-terminal-reset terminal)
            (test-assert (eq (application--run-command-input application "/help")
                             ':continue)

@@ -720,6 +720,12 @@
   test-fix-skipped-definitions-operation
   test-compact-operation-failures)
 
+(define-test-suite help
+  test-help-selection-and-bounds
+  test-help-dynamic-discovery-and-completion
+  test-help-public-invocation
+  test-help-markdown-rendering)
+
 (define-test-suite recovery-input-vault
   test-recovery-input-vault-import
   test-recovery-input-vault-legacy-isolation

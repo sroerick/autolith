@@ -333,21 +333,28 @@ Start a message with =(= to evaluate it as Common Lisp in the active image:
 (eval-now (setf *print-pretty* nil))
 #+END_SRC
 
-Parenthetical commands are canonical. Slash-command syntax is syntactic sugar
-for the same Lisp calls: arguments are whitespace-delimited strings, with
-double quotes around strings containing whitespace. For example,
-=/cwd "/tmp/work tree"= is equivalent to =(cwd "/tmp/work tree")=. Commands
-with finite static options appear in the completion menu as one bracketed row,
-such as =/compact [on|off]=. Type the command name and a space to list the
-individual options in either syntax. Aliases such as =/exit= for =/quit= stay
-out of the menu until the typed text no longer matches the canonical name.
+Use =(help)= for a short overview. Choose a topic or look up one command:
+
+#+BEGIN_SRC lisp
+(help :conversations)
+(help :workspace)
+(help 'resume)
+(help "lisp.eval")
+#+END_SRC
+
+Keyword topics open sections. Quoted symbols and strings open command or tool
+help, including usage and parameter descriptions. Browse tools by namespace with
+=(help :lisp)=, list all commands with =(help :commands)=, or request the full
+reference with =(help :all)=. Help uses the terminal Markdown renderer and Lisp
+syntax highlighting.
+
+Press =Tab= after =(help = to browse topics and registered operations. Command
+options also appear after a command name and a space, for example =(ste =.
 
 Type =@= in prose or inside a Lisp string to fuzzy-search workspace files
 through fff. Accepting a match inserts the path and drops the =@=.
 Directories keep a trailing slash so you can keep completing. A completed
 file stays in the draft.
-
-Use =//= to send a message beginning with a literal slash.
 
 The clanker sees both your source input and its evaluated result apart
 from any other effects it may have.
@@ -416,7 +423,7 @@ Direct vault reads and top-level =setf= forms containing only =vault-contents=
 places execute during an active turn. Returned lists are detached snapshots;
 publish edits with =setf=. Use =(setf (vault-contents) nil)= to clear parked input.
 Run =(vault)= for a summary or =(vault-restore)= to prepend parked work to the
-live queue. Slash syntax such as =/vault-store= invokes the same command.
+live queue.
 
 ** Managed resources
 
@@ -1044,10 +1051,9 @@ independently.
   error immediately instead of being scheduled.
 - Terminal behavior is =:shared=, =:exclusive=, or
   =:exclusive-without-arguments=. It declares which invocations open a modal
-  picker so active work keeps them off the immediate reader path. The picker
-  itself takes sole ownership of terminal input when it opens, so slash and
-  parenthesized invocations behave identically and the responsive reader keeps
-  animating until a modal actually appears.
+  picker so active work keeps them off the immediate reader path. A modal
+  picker requires exclusive terminal input when open. The responsive reader
+  continues animating until then.
 - =:static-options= replaces =:argument= for one finite positional parameter.
   It derives the help hint and both slash and parenthesized completions.
 

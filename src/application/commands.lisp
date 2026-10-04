@@ -2538,14 +2538,16 @@ the settings page and the slash commands behave identically."
 
 (define-application-command application--builtin-help-command
     (:name "/help"
-     :argument nil
-     :description "show this reference"
-     :tip "shows every registered command and tool operation."
-     :busy-behavior :inspect
+     :argument "[TOPIC]"
+     :description "browse help or look up a command"
+     :tip "Use (help :workspace) for a section or (help 'resume) for a command."
+     :busy-behavior :execute
      :terminal-behavior :shared
      :callable t)
-    (application)
-  (application-present application (application-operation-help application))
+    (application &optional topic)
+  (application-present
+   application
+   (application--markdown-body application (application-operation-help application topic)))
   ':continue)
 
 (define-application-command application--builtin-new-command

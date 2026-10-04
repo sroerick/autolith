@@ -509,7 +509,7 @@
    "every built-in command uses ordinary Common Lisp call semantics")
   (dolist
       (case
-       '(("/help" ())
+       '(("/help" (&optional topic))
          ("/resume" (&optional (identifier nil identifier-supplied-p)))
          ("/cwd" (&optional (pathname "")))
          ("/trace" (&optional mode))
@@ -627,11 +627,11 @@
     (test-assert
      (handler-case
          (progn
-           (application--builtin-help-command application :extra)
+           (application--builtin-help-command application :extra :more)
            nil)
        (program-error ()
          t))
-     "an argument-free built-in rejects extra Lisp arguments")
+     "a built-in rejects arguments beyond its optional Lisp parameter")
     (setf (application-project-adaptation-offer-p application) t)
     (let ((*application-command-interactive-p* t))
       (test-assert

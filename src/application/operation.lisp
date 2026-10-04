@@ -566,45 +566,14 @@ options appear only after the typed text passes the function name."
 
 (-> application-operation-completion-entries (application) list)
 (defun application-operation-completion-entries (application)
-  "Return slash, alias, Lisp, and finite-option completions for APPLICATION."
+  "Return command, Lisp, option, and help-subject completions for APPLICATION."
   (append (application-command-completion-entries)
           (application-command-alias-completion-entries)
           (application-command-option-completion-entries)
           (mapcar #'application-operation-completion-entry
                   (application-operation-list application))
-          (application-operation--command-option-completion-entries)))
-
-(-> application-operation--help-group (string list) string)
-(defun application-operation--help-group (title operations)
-  "Return one aligned TITLE section for ordered OPERATIONS."
-  (let* ((entries (mapcar #'application-operation-completion-entry operations))
-         (label-width
-           (loop for entry in entries
-                 maximize (length (terminal-completion-label entry)))))
-    (format nil
-            "~A~%~{~A~^~%~}"
-            title
-            (loop for entry in entries
-                  collect
-                  (format nil "~vA  ~A"
-                          label-width
-                          (terminal-completion-label entry)
-                          (getf entry :description))))))
-
-(-> application-operation-help (application) string)
-(defun application-operation-help (application)
-  "Return APPLICATION's canonical local, command, and tool operation reference."
-  (let ((operations (application-operation-list application)))
-    (flet ((group (title class)
-             (application-operation--help-group
-              title
-              (remove-if-not (lambda (operation) (typep operation class))
-                             operations))))
-      (format nil
-              "Registered operations~%~%~A~%~%~A~%~%~A~%~%Slash commands remain compatibility spellings."
-              (group "Commands" 'application-command-operation)
-              (group "Local evaluation" 'application-local-operation)
-              (group "Tools" 'application-tool-operation)))))
+          (application-operation--command-option-completion-entries)
+          (application-help-completion-entries application)))
 
 (-> application-path--file-result-paths (string) list)
 (defun application-path--file-result-paths (text)
