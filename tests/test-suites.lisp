@@ -32,6 +32,7 @@
 (define-test-suite fullscreen
   test-terminal-fullscreen-viewport
   test-terminal-fullscreen-small-windows
+  test-terminal-fullscreen-flush-wrap-cursor
   test-terminal-fullscreen-failure-and-lifecycle
   test-fullscreen-boot-geometry
   test-fullscreen-boot-sequence

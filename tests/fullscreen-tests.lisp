@@ -86,6 +86,26 @@
                          "wide and combining glyphs do not overrun a row"))))))
   nil)
 
+(-> test-terminal-fullscreen-flush-wrap-cursor () null)
+(defun test-terminal-fullscreen-flush-wrap-cursor ()
+  "Keep the composer cursor on its character when a word ends flush at the edge."
+  (let* ((draft "aaaa bbbb of the string")
+         (prompted (concatenate 'string "> " draft))
+         (terminal (make-instance 'recording-terminal :columns 14 :rows 12)))
+    (with-terminal-ui (ui (fullscreen-test--ui terminal))
+      (terminal-ui-set-input ui draft)
+      (loop for cursor downfrom (length draft) to 0
+            do (multiple-value-bind (frame row column) (terminal-ui-fullscreen--frame ui nil)
+                 (let ((line (clinedi:ansi-strip (nth row frame)))
+                       (expected (if (< cursor (length draft))
+                                     (char prompted (+ 2 cursor))
+                                     #\Space)))
+                   (test-assert (char= expected
+                                       (if (< column (length line)) (char line column) #\Space))
+                                (format nil "cursor ~D sits on its character" cursor))))
+               (terminal-ui-process-event ui ':left))))
+  nil)
+
 (-> test-terminal-fullscreen-failure-and-lifecycle () null)
 (defun test-terminal-fullscreen-failure-and-lifecycle ()
   "Roll back failed transcript paints and release an owned alternate screen exactly once."
