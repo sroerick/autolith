@@ -180,8 +180,8 @@
   :version "git-3c0869958a9fb926fe3468a6c9db94d80d4546c1"))
 ("surgeon" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/surgeon.git" :ref "4c3a5456049879ac79baccaf12c67969394aef88")
-  :version "git-4c3a5456049879ac79baccaf12c67969394aef88"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/surgeon.git" :ref "347e3a48f931c6ba178d0582fb8a79bd22a4ea6f")
+  :version "git-347e3a48f931c6ba178d0582fb8a79bd22a4ea6f"))
 ("structlisp" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/structlisp.git" :ref "66bbfbe947b69f3105f71f5e4293637decc91746")
