@@ -274,9 +274,10 @@ and keyword arguments in multi-line calls.
   command/tool name inventories. Retain aggregate test runners only when scripts
   or documented entry points still call them.
 - Test expected failures as well as successful paths.
-- Run focused checks while developing, then every repository-wide check that
-  exists after every change, including documentation and configuration
-  changes, and before committing.
+- Run focused checks (selected suites or cases, a library's own tests) while
+  developing and before each commit. Run the complete repository check once
+  when a batch of related commits is finished, including after documentation
+  and configuration changes, and before pushing.
 - Do not invent a test command. When the project gains test and lint entry
   points, document the exact commands here and keep them current.
 - Never commit with known failing relevant checks. If an environmental failure
@@ -378,9 +379,9 @@ For a fast delimiter check before loading edited Lisp, use the built-in
 - Do not bundle unrelated cleanup, refactoring, or formatting with a behavior
   change.
 - Rebase instead of merging and avoid merge commits.
-- Run the relevant checks before each commit.
-- Commit each completed change after its checks pass, and push after each
-  commit.
+- Run focused checks for each change before committing it.
+- Commit each completed change on its own; push once the complete repository
+  check passes on the finished batch.
 - Do not rewrite, discard, or include unrelated user changes. Inspect the
   worktree and index before committing, and stage only the intended change.
 
