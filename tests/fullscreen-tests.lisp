@@ -88,20 +88,25 @@
 
 (-> test-terminal-fullscreen-flush-wrap-cursor () null)
 (defun test-terminal-fullscreen-flush-wrap-cursor ()
-  "Keep the composer cursor on its character when a word ends flush at the edge."
+  "Hide the space at a flush wrap and keep the composer cursor on its character."
   (let* ((draft "aaaa bbbb of the string")
-         (prompted (concatenate 'string "> " draft))
+         (hanging (position #\Space draft :start 10))
          (terminal (make-instance 'recording-terminal :columns 14 :rows 12)))
     (with-terminal-ui (ui (fullscreen-test--ui terminal))
       (terminal-ui-set-input ui draft)
       (loop for cursor downfrom (length draft) to 0
             do (multiple-value-bind (frame row column) (terminal-ui-fullscreen--frame ui nil)
-                 (let ((line (clinedi:ansi-strip (nth row frame)))
-                       (expected (if (< cursor (length draft))
-                                     (char prompted (+ 2 cursor))
-                                     #\Space)))
-                   (test-assert (char= expected
-                                       (if (< column (length line)) (char line column) #\Space))
+                 (let* ((line (clinedi:ansi-strip (nth row frame)))
+                        (shown (if (< column (length line)) (char line column) #\Space))
+                        (expected (cond ((= cursor (length draft)) #\Space)
+                                        ((= cursor hanging) (char draft (1+ cursor)))
+                                        (t (char draft cursor)))))
+                   (when (= cursor (length draft))
+                     (test-assert (search "aaaa bbbb of" (clinedi:ansi-strip (nth (1- row) frame)))
+                                  "the flush row keeps its last word")
+                     (test-assert (eql 0 (search "the string" line))
+                                  "the continuation row hides the hanging space"))
+                   (test-assert (char= expected shown)
                                 (format nil "cursor ~D sits on its character" cursor))))
                (terminal-ui-process-event ui ':left))))
   nil)
