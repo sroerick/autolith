@@ -796,17 +796,16 @@
                 "approval-requiring tools wait instead of joining the reader"))
              (deque-clear work-items)
              (recording-terminal-reset terminal)
-             (let ((previous-reader
-                     (application-input-controller-reader-thread controller)))
-               (unwind-protect
-                    (progn
-                      (setf (application-input-controller-reader-thread controller)
-                            (current-thread))
-                      (application-input-controller--handle-submission
-                       controller
-                       "(eval-now (shell.run :command \"true\"))"))
-                 (setf (application-input-controller-reader-thread controller)
-                       previous-reader)))
+             ;; Submissions run on the reader thread in a live session.
+             (test-call-with-function-replacements
+              (list (list 'application-input-controller-reader-thread-p
+                          (lambda (controller)
+                            (declare (ignore controller))
+                            t)))
+              (lambda ()
+                (application-input-controller--handle-submission
+                 controller
+                 "(eval-now (shell.run :command \"true\"))")))
              (let ((output
                      (clinedi:ansi-strip
                       (recording-terminal-output terminal))))
@@ -912,8 +911,7 @@
                       1)
                    (< (search prompt-start reader-output)
                       (search input-start reader-output))
-                   (null
-                    (application-input-controller-reader-thread controller)))
+                   (not (application-input-controller-reader-live-p controller)))
                "initial work still emits A/B before starting its reader"))
         (when controller
           (ignore-errors (application-input-controller-stop controller)))

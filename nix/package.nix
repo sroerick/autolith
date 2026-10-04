@@ -236,7 +236,7 @@ let
     version = qlotVersion "clinedi";
     src = qlotSource "clinedi";
     systems = [ "clinedi" "clinedi/posix" ];
-    lispLibs = [ clColorist ] ++ (with pkgs.sbclPackages; [ trivial-gray-streams ]);
+    lispLibs = [ clColorist ] ++ (with pkgs.sbclPackages; [ bordeaux-threads trivial-gray-streams ]);
   };
 
   mcparen = pkgs.sbcl.buildASDFSystem {

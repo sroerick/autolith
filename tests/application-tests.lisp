@@ -1095,8 +1095,7 @@
                      (application-input-controller-create application)))
              (application-input-controller--request-exit controller reason)
              (test-assert
-              (thread-alive-p
-               (application-input-controller-reader-thread controller))
+              (application-input-controller-reader-live-p controller)
               "graceful shutdown preserves its interrupt-only reader")
              (test-assert
               (null (application-input-controller-interrupt-deadline controller))
@@ -4258,25 +4257,17 @@
                 "startup adaptation work enters the interruptible active path")
                (application-input-controller--finish-work controller))
              (test-assert
-              (thread-alive-p
-               (application-input-controller-reader-thread controller))
+              (application-input-controller-reader-live-p controller)
               "the responsive terminal reader starts independently")
-             (let* ((reader
-                      (application-input-controller-reader-thread controller))
-                    (reader-paused-p
-                      (application-input-controller-call-with-reader-paused
-                       controller
-                       (lambda ()
-                         (and (not (thread-alive-p reader))
-                              (null
-                               (application-input-controller-reader-thread
-                                controller)))))))
-               (test-assert
-                reader-paused-p
-                "pausing input removes and joins the competing terminal reader"))
              (test-assert
-              (thread-alive-p
-               (application-input-controller-reader-thread controller))
+              (application-input-controller-call-with-reader-paused
+               controller
+               (lambda ()
+                 (and (not (application-input-controller-reader-live-p controller))
+                      (application-input-controller-reader-paused-p controller))))
+              "pausing input joins the competing terminal reader")
+             (test-assert
+              (application-input-controller-reader-live-p controller)
               "the terminal reader restarts after single-threaded work"))
         (application-input-controller-stop controller))))
   (test-assert

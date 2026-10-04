@@ -76,8 +76,8 @@
   :version "git-a70749493fbdbe79d6766f254a664119042102b9"))
 ("clinedi" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/clinedi.git" :ref "1d4aec88d7df6a45b5d0bee058d6995eec585d7b")
-  :version "git-1d4aec88d7df6a45b5d0bee058d6995eec585d7b"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/clinedi.git" :ref "87a7f44d384e1fa6890c1461a3c481e288287ee2")
+  :version "git-87a7f44d384e1fa6890c1461a3c481e288287ee2"))
 ("cl-jobpond" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/cl-jobpond.git" :ref "ee2e2eb0bd5080c52db55036f853c00671962178")

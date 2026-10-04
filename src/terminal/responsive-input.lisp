@@ -234,21 +234,10 @@
     :accessor application-input-controller-exit-reason
     :type (option keyword)
     :documentation "The user-facing reason input processing stopped.")
-   (reader-thread
-    :initform nil
-    :accessor application-input-controller-reader-thread
-    :type t
-    :documentation "The restartable terminal reader thread.")
-   (reader-paused-p
-    :initform nil
-    :accessor application-input-controller-reader-paused-p
-    :type boolean
-    :documentation "Whether the reader must remain stopped for main-thread input.")
-   (pause-depth
-    :initform 0
-    :accessor application-input-controller-pause-depth
-    :type (integer 0)
-    :documentation "Nested main-thread requests keeping the reader stopped.")
+   (input-pump
+    :reader application-input-controller-input-pump
+    :type input-pump
+    :documentation "The restartable terminal reader thread and its pauses.")
    (main-thread
     :initarg :main-thread
     :reader application-input-controller-main-thread
@@ -295,12 +284,34 @@
   (:documentation
    "Ephemeral terminal input and FIFO submission state for one application run."))
 
+(defmethod initialize-instance :after
+    ((controller application-input-controller) &key)
+  "Give CONTROLLER its stopped terminal input pump."
+  (setf (slot-value controller 'input-pump)
+        (make-input-pump
+         :name "Autolith terminal input"
+         :ready-function (lambda ()
+                           (application-input-controller--input-ready-p controller))
+         :step-function (lambda ()
+                          (application-input-controller--reader-step controller))
+         :tick-function (lambda ()
+                          (application-input-controller--refresh-interrupt-hint
+                           controller))
+         :startable-p-function (lambda ()
+                                 (not (application-input-controller-exit-requested-p
+                                       controller)))
+         :failure-function (lambda (condition backtrace)
+                             (application-input-controller--record-failure
+                              controller condition backtrace))
+         :backtrace-function #'application-safe-backtrace)))
+
 (defmethod application-input-controller-wake
     ((controller application-input-controller))
   "Wake CONTROLLER's terminal reader for pending presentation work."
   (with-lock-held ((application-input-controller-lock controller))
     (sb-thread:condition-broadcast
      (application-input-controller-condition-variable controller)))
+  (input-pump-wake (application-input-controller-input-pump controller))
   nil)
 
 (-> application--resume-command (application) string)
@@ -2739,92 +2750,50 @@ may execute immediately; other Lisp waits for the idle boundary."
     (application-input-controller)
     boolean)
 (defun application-input-controller--input-ready-p (controller)
-  "Apply pending resizes and report whether CONTROLLER's terminal has input."
-  (let* ((ui (application-ui
-              (application-input-controller-application controller)))
-         (terminal (terminal-ui-terminal ui)))
-    (terminal-ui-refresh-size ui #'application-pending-terminal-size)
+  "Apply pending resizes and report whether CONTROLLER's terminal has input.
+
+A stopping controller no longer follows resizes; its reader only watches for a
+forced exit."
+  (let ((ui (application-ui
+             (application-input-controller-application controller))))
+    (unless (application-input-controller-exit-requested-p controller)
+      (terminal-ui-refresh-size ui #'application-pending-terminal-size))
     (terminal-ui-refresh-status ui)
-    (if (terminal-input-ready-p terminal)
-        t
+    (terminal-input-ready-p (terminal-ui-terminal ui))))
+
+(-> application-input-controller--reader-step
+    (application-input-controller)
+    (option keyword))
+(defun application-input-controller--reader-step (controller)
+  "Read and handle one terminal event, returning :STOP when the reader should end.
+
+While the controller is stopping, the reader only forces exit on a further
+interrupt and ends when its input does."
+  (let ((ui (application-ui
+             (application-input-controller-application controller))))
+    (if (application-input-controller-exit-requested-p controller)
+        (case (terminal-read-event (terminal-ui-terminal ui))
+          (:interrupt
+           (application-input-controller--force-interrupt-exit controller)
+           nil)
+          ((:end-of-input :stream-end)
+           ':stop)
+          (otherwise
+           nil))
         (progn
-          (with-lock-held ((application-input-controller-lock controller))
-            (unless (or (application-input-controller-stopping-p controller)
-                        (application-input-controller-reader-paused-p controller))
-              (condition-wait
-               (application-input-controller-condition-variable controller)
-               (application-input-controller-lock controller)
-               :timeout 0.02)))
+          (application-input-controller--process-event
+           controller (application-read-terminal-event ui))
           nil))))
 
-(-> application-input-controller--reader-loop
-    (application-input-controller)
-    null)
-(defun application-input-controller--reader-loop (controller)
-  "Read events until pause, failure, or a completed interrupt escalation."
-  (let ((signal-backtrace nil))
-    (handler-bind
-        ((serious-condition
-           (lambda (condition)
-             (declare (ignore condition))
-             (setf signal-backtrace (application-safe-backtrace)))))
-      (handler-case
-          (loop
-            (application-input-controller--refresh-interrupt-hint controller)
-            (multiple-value-bind (stopping-p reader-paused-p)
-                (with-lock-held
-                    ((application-input-controller-lock controller))
-                  (values
-                   (application-input-controller-stopping-p controller)
-                   (application-input-controller-reader-paused-p controller)))
-              (cond
-                (reader-paused-p
-                 (return))
-                (stopping-p
-                 (let* ((application
-                          (application-input-controller-application controller))
-                        (ui (application-ui application))
-                        (terminal (terminal-ui-terminal ui)))
-                   (terminal-ui-refresh-status ui)
-                   (if (terminal-input-ready-p terminal)
-                       (case (terminal-read-event terminal)
-                         (:interrupt
-                          (application-input-controller--force-interrupt-exit
-                           controller))
-                         (:escape
-                          nil)
-                         ((:end-of-input :stream-end)
-                          (return)))
-                       (with-lock-held
-                           ((application-input-controller-lock controller))
-                         (unless
-                             (application-input-controller-reader-paused-p
-                              controller)
-                           (condition-wait
-                            (application-input-controller-condition-variable
-                             controller)
-                            (application-input-controller-lock controller)
-                            :timeout 0.02))))))
-                ((application-input-controller--input-ready-p controller)
-                 (application-input-controller--process-event
-                  controller
-                  (application-read-terminal-event
-                   (application-ui
-                    (application-input-controller-application controller))))))))
-        (serious-condition (condition)
-          (application-input-controller--record-failure
-           controller condition signal-backtrace)))))
-  nil)
-
-(-> application-input-controller--start-reader
-    (application-input-controller)
-    null)
 (-> application-input-controller-reader-live-p (application-input-controller) boolean)
 (defun application-input-controller-reader-live-p (controller)
   "Return true while CONTROLLER's reader thread is running."
-  (with-lock-held ((application-input-controller-lock controller))
-    (let ((thread (application-input-controller-reader-thread controller)))
-      (and thread (thread-alive-p thread) t))))
+  (input-pump-live-p (application-input-controller-input-pump controller)))
+
+(-> application-input-controller-reader-paused-p (application-input-controller) boolean)
+(defun application-input-controller-reader-paused-p (controller)
+  "Return true while CONTROLLER's reader is held stopped for main-thread input."
+  (input-pump-paused-p (application-input-controller-input-pump controller)))
 
 (-> application-input-controller-exit-requested-p (application-input-controller) boolean)
 (defun application-input-controller-exit-requested-p (controller)
@@ -2832,38 +2801,12 @@ may execute immediately; other Lisp waits for the idle boundary."
   (with-lock-held ((application-input-controller-lock controller))
     (not (null (application-input-controller-stopping-p controller)))))
 
-(defun application-input-controller--start-reader (controller)
-  "Start CONTROLLER's reader unless it is paused, stopping, or already live."
-  (with-lock-held ((application-input-controller-lock controller))
-    (unless (or (application-input-controller-stopping-p controller)
-                (application-input-controller-reader-paused-p controller)
-                (let ((thread
-                        (application-input-controller-reader-thread controller)))
-                  (and thread (thread-alive-p thread))))
-      (setf (application-input-controller-reader-thread controller)
-            (make-thread
-             (lambda ()
-               (application-input-controller--reader-loop controller))
-             :name "Autolith terminal input"))))
-  nil)
-
-(-> application-input-controller--pause-reader
+(-> application-input-controller--start-reader
     (application-input-controller)
     null)
-(defun application-input-controller--pause-reader (controller)
-  "Stop and join CONTROLLER's reader without ending the application."
-  (let ((thread nil))
-    (with-lock-held ((application-input-controller-lock controller))
-      (setf (application-input-controller-reader-paused-p controller) t
-            thread (application-input-controller-reader-thread controller))
-      (sb-thread:condition-broadcast
-       (application-input-controller-condition-variable controller)))
-    (when thread
-      (join-thread thread)
-      (with-lock-held ((application-input-controller-lock controller))
-        (when (eq thread
-                  (application-input-controller-reader-thread controller))
-          (setf (application-input-controller-reader-thread controller) nil)))))
+(defun application-input-controller--start-reader (controller)
+  "Start CONTROLLER's reader unless it is paused, stopping, or already live."
+  (input-pump-start (application-input-controller-input-pump controller))
   nil)
 
 (-> application-input-controller-reader-thread-p
@@ -2871,9 +2814,7 @@ may execute immediately; other Lisp waits for the idle boundary."
     boolean)
 (defun application-input-controller-reader-thread-p (controller)
   "Return true when the current thread is CONTROLLER's terminal reader."
-  (with-lock-held ((application-input-controller-lock controller))
-    (eq (current-thread)
-        (application-input-controller-reader-thread controller))))
+  (input-pump-reader-thread-p (application-input-controller-input-pump controller)))
 
 (-> application-input-controller-call-with-exclusive-input
     (application-input-controller function)
@@ -2885,10 +2826,8 @@ may execute immediately; other Lisp waits for the idle boundary."
 Work already running on the reader thread is that reader, so it proceeds in
 place; every other thread pauses the reader for the call's dynamic extent.
 This is the owner installed as the terminal UI's exclusive-input function."
-  (if (application-input-controller-reader-thread-p controller)
-      (funcall function)
-      (application-input-controller-call-with-reader-paused
-       controller function)))
+  (input-pump-call-with-exclusive-input
+   (application-input-controller-input-pump controller) function))
 
 (-> application-input-controller-call-with-reader-paused
     (application-input-controller function)
@@ -2896,33 +2835,12 @@ This is the owner installed as the terminal UI's exclusive-input function."
 (defun application-input-controller-call-with-reader-paused
     (controller function)
   "Call FUNCTION while CONTROLLER has no competing terminal reader."
-  (let ((outermost-p nil)
-        (reader-thread-p nil))
-    (with-lock-held ((application-input-controller-lock controller))
-      (setf reader-thread-p
-            (eq (current-thread)
-                (application-input-controller-reader-thread controller)))
-      (unless reader-thread-p
-        (setf outermost-p
-              (zerop (application-input-controller-pause-depth controller)))
-        (incf (application-input-controller-pause-depth controller))))
-    (when reader-thread-p
-      (error 'configuration-error
-             :message
-             "Terminal-owning work cannot pause the current input reader. Submit it without EVAL-NOW so it can run after the active turn."))
-    (when outermost-p
-      (application-input-controller--pause-reader controller))
-    (unwind-protect
-         (funcall function)
-      (let ((restart-p nil))
-        (with-lock-held ((application-input-controller-lock controller))
-          (decf (application-input-controller-pause-depth controller))
-          (when (zerop (application-input-controller-pause-depth controller))
-            (setf (application-input-controller-reader-paused-p controller) nil
-                  restart-p
-                  (not (application-input-controller-stopping-p controller)))))
-        (when restart-p
-          (application-input-controller--start-reader controller))))))
+  (when (application-input-controller-reader-thread-p controller)
+    (error 'configuration-error
+           :message
+           "Terminal-owning work cannot pause the current input reader. Submit it without EVAL-NOW so it can run after the active turn."))
+  (input-pump-call-with-input-paused
+   (application-input-controller-input-pump controller) function))
 
 (-> application--command-authorization-items
     (string pathname &key (:sandbox-available-p boolean))
@@ -3523,47 +3441,39 @@ sandbox grant is revalidated at this final authorization boundary."
 (-> application-input-controller-stop (application-input-controller) null)
 (defun application-input-controller-stop (controller)
   "Retire CONTROLLER after shutdown work is complete and join its reader."
-  (let ((thread nil))
-    (with-lock-held ((application-input-controller-lock controller))
-      (mapc #'deque-clear
-            (application-input-controller--queues controller))
-      (setf (application-input-controller-stopping-p controller) t
-            (application-input-controller-reader-paused-p controller) t
-            (application-input-controller-active-p controller) nil
-            (application-input-controller-active-work-kind controller) nil
-            (application-input-controller-active-work controller) nil
-            (application-input-controller-active-work-identifier controller) nil
-            (application-input-controller-active-work-interactive-p controller) nil
-            (application-input-controller-prompt-marker-work-p controller) nil
-            (application-input-controller-prompt-marker-status controller) 0
-            (application-input-controller-prompt-marker-reopen-p controller) nil
-            (application-input-controller-pending-snapshot-identifier controller) nil
-            (application-input-controller-vault-capture-identifiers controller) nil
-            (application-input-controller-steering-promotion-prefix-count controller) 0
-            (application-input-controller-queued-work-paused-p controller) nil
-            (application-input-controller-follow-up-edit-index controller) nil
-            (application-input-controller-follow-up-edit-work controller) nil
-            (application-input-controller-turn-cancellation-p controller) nil
-            (application-input-controller-turn-cancellation-delivery-pending-p
-             controller)
-            nil
-            (application-input-controller-interrupt-deadline controller) nil
-            (application-input-controller-interrupt-hint-time controller) nil
-            thread (application-input-controller-reader-thread controller))
-      (sb-thread:condition-broadcast
-       (application-input-controller-condition-variable controller)))
-    (when thread
-      (join-thread thread)
-      (with-lock-held ((application-input-controller-lock controller))
-        (when (eq thread
-                  (application-input-controller-reader-thread controller))
-          (setf (application-input-controller-reader-thread controller) nil))))
-    (let ((application (application-input-controller-application controller)))
-      (when (eq controller (application-input-controller application))
-        (setf (application-input-controller application) nil)
-        (when (slot-boundp application 'ui)
-          (setf (terminal-ui-exclusive-input-function (application-ui application))
-                #'funcall)))))
+  (with-lock-held ((application-input-controller-lock controller))
+    (mapc #'deque-clear
+          (application-input-controller--queues controller))
+    (setf (application-input-controller-stopping-p controller) t
+          (application-input-controller-active-p controller) nil
+          (application-input-controller-active-work-kind controller) nil
+          (application-input-controller-active-work controller) nil
+          (application-input-controller-active-work-identifier controller) nil
+          (application-input-controller-active-work-interactive-p controller) nil
+          (application-input-controller-prompt-marker-work-p controller) nil
+          (application-input-controller-prompt-marker-status controller) 0
+          (application-input-controller-prompt-marker-reopen-p controller) nil
+          (application-input-controller-pending-snapshot-identifier controller) nil
+          (application-input-controller-vault-capture-identifiers controller) nil
+          (application-input-controller-steering-promotion-prefix-count controller) 0
+          (application-input-controller-queued-work-paused-p controller) nil
+          (application-input-controller-follow-up-edit-index controller) nil
+          (application-input-controller-follow-up-edit-work controller) nil
+          (application-input-controller-turn-cancellation-p controller) nil
+          (application-input-controller-turn-cancellation-delivery-pending-p
+           controller)
+          nil
+          (application-input-controller-interrupt-deadline controller) nil
+          (application-input-controller-interrupt-hint-time controller) nil)
+    (sb-thread:condition-broadcast
+     (application-input-controller-condition-variable controller)))
+  (input-pump-stop (application-input-controller-input-pump controller))
+  (let ((application (application-input-controller-application controller)))
+    (when (eq controller (application-input-controller application))
+      (setf (application-input-controller application) nil)
+      (when (slot-boundp application 'ui)
+        (setf (terminal-ui-exclusive-input-function (application-ui application))
+              #'funcall))))
   nil)
 
 (-> application-input-controller-call-with-shutdown-escape

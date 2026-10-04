@@ -675,42 +675,44 @@
            (setf application new-application
                  controller new-controller
                  session (localgroup-start new-application)))
-         (setf (application-input-controller-pause-depth controller) 1
-               (application-input-controller-reader-paused-p controller) t)
-         (application-localgroup-request-handoff application ':detach)
-         (let ((work (application-input-controller--next-work controller)))
-           (test-assert
-            (handler-case
-             (let ((*localgroup-handoff-launch-function*
-                    (lambda (ignored-application pathname)
-                      (declare (ignore ignored-application pathname))
-                      ':fake-process))
-                   (*localgroup-handoff-wait-function*
-                    (lambda (configuration session-id token old-pid)
-                      (declare (ignore configuration session-id token old-pid))
-                      nil))
-                   (*localgroup-handoff-stop-function*
-                    (lambda (process pathname)
-                      (declare (ignore process pathname))
-                      (setf stopped-p t))))
-               (application-localgroup-run-handoff application (second work) controller)
-               nil)
-             (localgroup-error nil t))
-            "failed replacement reports a structured localgroup error"))
-         (test-assert
-          (and stopped-p (application-conversation-lease application)
-               (not (application-input-controller-stopping-p controller))
-               (not (application-input-controller-localgroup-handoff-p controller))
-               (not (localgroup-session-handoff-running-p session))
-               (null
-                (uiop/filesystem:directory-files
-                 (localgroup-handoff-directory configuration) "*.sexp")))
-          "failed replacement is stopped and the old leased session remains usable"))
+         ;; An outer pause keeps the reader stopped across the handoff's own
+         ;; pause, as a pausing caller would.
+         (application-input-controller-call-with-reader-paused
+          controller
+          (lambda ()
+            (application-localgroup-request-handoff application ':detach)
+            (let ((work (application-input-controller--next-work controller)))
+              (test-assert
+               (handler-case
+                (let ((*localgroup-handoff-launch-function*
+                       (lambda (ignored-application pathname)
+                         (declare (ignore ignored-application pathname))
+                         ':fake-process))
+                      (*localgroup-handoff-wait-function*
+                       (lambda (configuration session-id token old-pid)
+                         (declare (ignore configuration session-id token old-pid))
+                         nil))
+                      (*localgroup-handoff-stop-function*
+                       (lambda (process pathname)
+                         (declare (ignore process pathname))
+                         (setf stopped-p t))))
+                  (application-localgroup-run-handoff application (second work) controller)
+                  nil)
+                (localgroup-error nil t))
+               "failed replacement reports a structured localgroup error"))
+            (test-assert
+             (and stopped-p (application-conversation-lease application)
+                  (not (application-input-controller-stopping-p controller))
+                  (not (application-input-controller-localgroup-handoff-p controller))
+                  (not (localgroup-session-handoff-running-p session))
+                  (null
+                   (uiop/filesystem:directory-files
+                    (localgroup-handoff-directory configuration) "*.sexp")))
+             "failed replacement is stopped and the old leased session remains usable"))))
       (when application
         (localgroup-stop application)
         (application-release-conversation-lease application))
       (when controller
-        (setf (application-input-controller-pause-depth controller) 0)
         (application-input-controller-stop controller))
       (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
                                              ':ignore)))

@@ -555,6 +555,16 @@
                 #:worker-process
                 #:worker-request)
   (:import-from #:clinedi
+                #:input-pump
+                #:input-pump-call-with-exclusive-input
+                #:input-pump-call-with-input-paused
+                #:input-pump-live-p
+                #:input-pump-paused-p
+                #:input-pump-reader-thread-p
+                #:input-pump-start
+                #:input-pump-stop
+                #:input-pump-wake
+                #:make-input-pump
                 #:terminal-rows
                 #:terminal-columns
                 #:terminal-interactive-p
