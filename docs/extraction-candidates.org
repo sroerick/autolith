@@ -198,16 +198,6 @@ related ground. Cut: the AUTOLITH defaults, the context-contributor and
 application-command undo branches (make an extensible generic), the mutation
 conditions, journal, image-commit fallbacks and the replay engine.
 
-** Active-image build, probe and install (sbcl-generations)
-=startup/active-image.lisp= 15-414. Source identity from =git hash-object= plus
-runtime identity, core saving through fork or a fresh saver, probe boot with an
-exact handshake, atomic install with a read-only manifest. The compatibility
-check (130-137) duplicates =sbcl-worker-image-compatible-p= and
-=generation-compatible-p=; the probe boot (297-329) duplicates the generations
-probe runner. Cut: the hard-coded input list, the Autolith specials reset in
-the saver child (including an internal sbcl-generations symbol),
-=AUTOLITH_SBCL=, and the entry point.
-
 ** LSP glue (cl-lsp)
 =lsp/configuration.lisp= 1-218 builds =cl-lsp:lsp-server-configuration= from
 =lsp.sexp=, so cl-lsp should own a declarative reader; 235-259 implements the
@@ -220,19 +210,6 @@ methods on capabilities, 60-92 fan out by extension. Cut: =config-root=,
   =lsp-project-root= and =*lsp-maximum-root-depth*= (literal marker names,
   canonical inputs); Autolith 51b05a25 dropped its copy. The declarative
   =lsp.sexp= reader, the position inverse and the capability gates remain.
-
-** Localgroup detached-process handoff (image-daemon) and process-tree reaping (ls-compat.posix)
-=localgroup/handoff.lisp= 14-49, 86-186, 355-383, 521-586, 683-716 (supervisor
-behind a FIFO gate, state-file family, authenticated readiness polling,
-rename-based cancel) belong next to image-daemon's registry and =daemon-call=.
-Cut: the application, terminal draft, permission strings, launcher arguments
-and conversation-id validation.
-- DONE descendant discovery: ls-compat 089be111 exports
-  =ls-compat.posix:descendant-process-ids= (deepest first, best-effort =ps=
-  snapshot, NIL without =ps=) and the handoff's stop loop calls it. The
-  TERM-then-KILL escalation stays in Autolith because it interleaves the
-  handoff's launcher and replacement pid records with the platform process
-  object.
 
 ** MCP pieces (mcparen, cl-llm-provider-api)
 =mcp/tools.lisp= 555-681 (provider-safe tool identifiers: sanitize, FNV-1a
