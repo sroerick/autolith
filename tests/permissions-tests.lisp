@@ -20,6 +20,19 @@
            (test-assert
             (not (permissions-allowed-p state "git status" root))
             "unknown commands are denied by persistent permission lookup")
+            (let ((stale-a (permissions-load configuration))
+                  (stale-b (permissions-load configuration)))
+              (permissions-allow :configuration configuration
+                                 :state         stale-a
+                                 :command       "git diff"
+                                 :directory     root)
+              (permissions-allow :configuration configuration
+                                 :state         stale-b
+                                 :command       "git show"
+                                 :directory     root)
+              (test-assert (and (permissions-allowed-p stale-b "git diff" root)
+                                (permissions-allowed-p stale-b "git show" root))
+                           "stale approval callers merge fresh persisted permissions"))
            (permissions-allow :configuration configuration
                               :state         state
                               :command       "git status"
@@ -46,32 +59,67 @@
 
 (-> test-command-permission-corruption () null)
 (defun test-command-permission-corruption ()
-  "Test malformed permission files warn and fail closed without reader evaluation."
+  "Test corrupt permissions fail closed and explicit writes recover them."
+  (with-test-configuration (configuration root)
+    (let ((pathname (configuration-permissions-path configuration)))
+      (dolist (source '("#.(error \"must not evaluate\")"
+                        "(:permissions :version"
+                        "(:permissions :version 99 :rules nil)"
+                        "(:permissions :version 1 :rules nil :rules nil)"
+                        "(:permissions :version 1 :rules ((:command \"\" :directory \"/\")))"
+                        "(:permissions :version 1 :rules ((:command \"anything\" :directory \"/\" :command \"other\")))"))
+        (snapshot-write-text pathname source)
+        (let ((warned-p nil)
+              (state nil))
+          (handler-bind
+              ((permissions-load-warning
+                 (lambda (condition)
+                   (declare (ignore condition))
+                   (setf warned-p t)
+                   (muffle-warning))))
+            (setf state (permissions-load configuration)))
+          (test-assert warned-p "corrupt command permissions emit a warning")
+          (test-assert (not (permissions-allowed-p state "anything" root))
+                       "corrupt command permissions fail closed")
+          (test-assert (string= source (uiop:read-file-string pathname))
+                       "loading corrupt permissions preserves their bytes")
+          (permissions-allow :configuration configuration :state state
+                             :command "git status" :directory root)
+          (test-assert (permissions-allowed-p (permissions-load configuration)
+                                              "git status" root)
+                       "an explicit approval replaces corrupt permission state")))
+      (snapshot-write pathname
+                      (list ':permissions ':version *permissions-version*
+                            ':rules (list (list ':directory
+                                                (permissions--directory-name root)
+                                                ':command "git diff"))))
+      (test-assert (permissions-allowed-p (permissions-load configuration)
+                                          "git diff" root)
+                   "permission records decode properties independently of key order")))
+  nil)
+
+(-> test-command-permission-write-failure () null)
+(defun test-command-permission-write-failure ()
+  "Test that a failed approval publication does not mutate its caller state."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
-         (pathname (configuration-permissions-path configuration)))
+         (state (permissions-load configuration)))
     (unwind-protect
          (progn
-           (ensure-directories-exist pathname)
-           (with-open-file (stream pathname
-                                   :direction ':output
-                                   :if-exists ':supersede
-                                   :if-does-not-exist ':create)
-             (write-string "#.(error \"must not evaluate\")" stream))
-           (let ((warned-p nil)
-                 (state nil))
-             (handler-bind
-                 ((permissions-load-warning
-                    (lambda (condition)
-                      (declare (ignore condition))
-                      (setf warned-p t)
-                      (muffle-warning))))
-               (setf state (permissions-load configuration)))
-             (test-assert warned-p
-                          "malformed command permissions emit a warning")
-             (test-assert
-              (not (permissions-allowed-p state "anything" root))
-              "malformed command permissions fail closed")))
+           (ensure-directories-exist
+            (merge-pathnames "permissions.sexp/"
+                             (config :state-root configuration)))
+           (test-assert
+            (handler-case
+                (progn
+                  (permissions-allow :configuration configuration
+                                     :state state
+                                     :command "git status"
+                                     :directory root)
+                  nil)
+              (permissions-error () t))
+            "a permission publication failure is reported")
+           (test-assert (null (permission-state-rules state))
+                        "a failed approval does not mutate caller state"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-    nil)
-
+  nil)

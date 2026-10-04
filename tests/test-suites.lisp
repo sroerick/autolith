@@ -88,8 +88,9 @@
   test-cache-misses-command)
 
 (define-test-suite permissions
-  test-command-permission-persistence
-  test-command-permission-corruption)
+    test-command-permission-persistence
+    test-command-permission-corruption
+    test-command-permission-write-failure)
 
 (define-test-suite context
   test-session-state-context-contributor
