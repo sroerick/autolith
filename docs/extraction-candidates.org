@@ -52,17 +52,6 @@ cross-process refresh lock that reloads under the lock and adopts a newer
 rotation (nous 19-41, 281-376) applies to any rotating refresh token and
 belongs in =managed-credential-manager= as a lock hook.
 
-** Image preparation for prompts (new small library)
-=src/conversation/image-input.lisp= 123-302 (magic bytes and PNG, GIF, JPEG,
-WebP dimensions), 304-369 (prefix-only inspection), 371-509 (resize to
-provider limits through opticl with atomic publication), 699-718 (data URL
-and =input_image= item). Every multimodal client needs this; the detection
-part has no dependencies and the item constructor fits clinker-transcript.
-Cut: =image-input-error=, platform permission and truename calls,
-=make-identifier=, artifact-root and durable-record policy, Codex limits as
-parameters. Pasted-path unquoting and =file://= handling (559-600) could go to
-clinedi.
-
 * Tools, resources, workers, tasks and the rest
 
 Checked against the pinned versions in =.qlot/dists=, not the older checkouts.
