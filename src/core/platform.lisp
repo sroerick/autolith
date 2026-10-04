@@ -329,10 +329,6 @@ beneath PARENT and return it as a directory pathname.
 
 Signal PLATFORM-ERROR with operation :CREATE when no directory could be made."))
 
-(defgeneric platform-shared-library-file-name (platform base-name)
-  (:documentation
-   "Return the host file name of shared library BASE-NAME, such as libfff_c.so."))
-
 (defgeneric platform-delete-directory-tree (platform pathname
                                             &key validate if-does-not-exist)
   (:documentation

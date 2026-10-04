@@ -47,71 +47,28 @@
   "Exempt indexed workspace discovery from the mutating-call storm guard."
   t)
 
-(defparameter *fff-library-file-name*
-  (platform-shared-library-file-name *platform* "fff_c")
-  "The platform file name of the private fff search library.")
-
-(-> search--library-path (configuration) (values pathname boolean))
-(defun search--library-path (configuration)
-  "Return the fff library path and whether it is an explicit override."
-  (let ((override (uiop:getenv "AUTOLITH_FFF_LIBRARY")))
-    (if (non-empty-string-p override)
-        (values (pathname override) t)
-        (values (merge-pathnames (format nil "native/fff/~A"
-                                         *fff-library-file-name*)
-                                 (config :data-root configuration))
-                nil))))
-
-(-> search--installed-manifest-valid-p (pathname) boolean)
-(defun search--installed-manifest-valid-p (library)
-  "Return true when LIBRARY's private manifest matches the pinned fff source."
-  (let ((manifest (merge-pathnames
-                   "manifest.sexp"
-                   (uiop:pathname-directory-pathname library))))
-    (and (probe-file manifest)
-         (handler-case
-             (with-open-file (stream manifest
-                                     :direction ':input
-                                     :external-format ':utf-8)
-               (let ((*read-eval* nil)
-                     (expected (list :fff-library
-                                     :version 1
-                                     :commit *fff-source-commit*)))
-                 (equal (read stream nil nil) expected)))
-           (error ()
-             nil)))))
-
 (-> search--validated-library-path (configuration) pathname)
 (defun search--validated-library-path (configuration)
-  "Return CONFIGURATION's existing private fff library after identity checks."
-  (multiple-value-bind (library override-p)
-      (search--library-path configuration)
-    (let ((library (or (probe-file library) library)))
-      (unless (probe-file library)
+  "Return CONFIGURATION's private fff library once clifff confirms its pinned revision.
+
+AUTOLITH_FFF_LIBRARY names a library to use instead, as the Nix package does."
+  (let ((override (uiop:getenv "AUTOLITH_FFF_LIBRARY")))
+    (handler-case
+        (platform-truename
+         *platform*
+         (fff-library-locate (merge-pathnames "native/fff/" (config :data-root configuration))
+                             *fff-source-commit*
+                             :override (and (non-empty-string-p override)
+                                            (pathname override))))
+      (clifff-error (condition)
         (error 'search-error
-               :message
-               (format nil "The private fff library is missing at ~A; run ~A."
-                       library
-                       (merge-pathnames "script/bootstrap"
-                                        (config :source-root
-                                         configuration)))
+               :message (format nil "~A Run ~A."
+                                condition
+                                (merge-pathnames "script/bootstrap"
+                                                 (config :source-root configuration)))
                :operation ':load
-               :pathname library
-               :cause nil))
-      (unless (or override-p (search--installed-manifest-valid-p library))
-        (error 'search-error
-               :message
-               (format nil
-                       "The private fff library at ~A does not match revision ~A; run ~A."
-                       library
-                       *fff-source-commit*
-                       (merge-pathnames "script/bootstrap"
-                                        (config :source-root
-                                         configuration)))
-               :operation ':load
-               :pathname library
-               :cause nil))
-      (platform-truename *platform* library))))
+               :pathname (clifff-error-pathname condition)
+               :cause nil)))))
 
 
 ;;;; -- Tool Arguments --

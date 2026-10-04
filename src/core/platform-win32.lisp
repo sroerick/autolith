@@ -813,11 +813,6 @@ Autolith publishes read-only lives below a private root anyway."
                        :pathname parent
                        :reason ':exists)))
 
-(defmethod platform-shared-library-file-name ((platform win32-platform)
-                                              base-name)
-  "Add the Windows dynamic library extension to BASE-NAME."
-  (format nil "~A.dll" base-name))
-
 (-> win32--directory-entry-pathname (win32-platform pathname string) pathname)
 (defun win32--directory-entry-pathname (platform directory name)
   "Return native child NAME below DIRECTORY without portable pathname reinterpretation."

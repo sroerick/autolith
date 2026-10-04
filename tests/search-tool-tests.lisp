@@ -60,7 +60,7 @@
            (if (non-empty-string-p configured-library)
                (pathname configured-library)
                (merge-pathnames (format nil "native/fff/~A"
-                                        *fff-library-file-name*)
+                                        (fff-library-file-name))
                                 (config :data-root
                                  default-configuration))))
          (previous-library (uiop:getenv "AUTOLITH_FFF_LIBRARY"))
@@ -82,7 +82,7 @@
              "bootstrap and runtime use one pinned fff source revision")
             (unless configured-library
               (test-assert
-               (search--installed-manifest-valid-p library)
+               (fff-library-current-p library *fff-source-commit*)
                "bootstrap installs a manifest matching the pinned fff source"))
            (platform-setenv "AUTOLITH_FFF_LIBRARY" (namestring library))
            (ensure-directories-exist workspace-root)

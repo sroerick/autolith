@@ -87,6 +87,9 @@
                                :output ':interactive
                                :error-output ':interactive))
 
+           ;; This script runs standalone, before any library is loaded, so it
+           ;; writes the manifest itself; the form must stay the one clifff's
+           ;; FFF-LIBRARY-MANIFEST describes, which the runtime checks.
            (manifest-current-p ()
              "Return true when the installed private library matches COMMIT."
              (and (probe-file library)

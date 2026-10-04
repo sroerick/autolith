@@ -557,6 +557,9 @@
                 #:clifff-error-cause
                 #:clifff-error-operation
                 #:clifff-error-pathname
+                #:fff-library-current-p
+                #:fff-library-file-name
+                #:fff-library-locate
                 #:make-worker
                 #:worker
                 #:worker-close

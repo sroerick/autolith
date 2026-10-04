@@ -226,11 +226,6 @@
                     (merge-pathnames (concatenate 'string prefix "XXXXXX")
                                      parent)))))))
 
-(defmethod platform-shared-library-file-name ((platform posix-platform)
-                                              base-name)
-  "Prefix BASE-NAME with lib and add the host shared-library extension."
-  (format nil #+darwin "lib~A.dylib" #-darwin "lib~A.so" base-name))
-
 (defmethod platform-delete-directory-tree ((platform posix-platform) pathname
                                            &rest arguments
                                            &key validate if-does-not-exist)
