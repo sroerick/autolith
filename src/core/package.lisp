@@ -118,7 +118,6 @@
                 #:lsp-server-configuration-arguments
                 #:lsp-server-configuration-extensions
                 #:lsp-server-configuration-root-markers
-                #:lsp-project-root
                 #:lsp-server-configuration-initialization-options
                 #:lsp-server-configuration-timeout-seconds
                 #:lsp-server-configuration-disabled-p
@@ -134,13 +133,16 @@
                 #:lsp-client-root
                 #:lsp-client-transport
                 #:lsp-client-capabilities
-                #:lsp-client-sync
-                #:lsp-client-resync
                 #:lsp-client-diagnostics
                 #:lsp-document
                 #:lsp-document-path
                 #:lsp-document-text
-                #:lsp-path-uri
+                #:lsp-read-configurations
+                #:lsp-text-position
+                #:lsp-client-query
+                #:*lsp-query-operations*
+                #:lsp-configurations-for-path
+                #:lsp-manager-map-file
                 #:lsp-transport
                 #:lsp-transport-live-p
                 #:lsp-transport-next-id

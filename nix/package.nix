@@ -108,7 +108,7 @@ let
     pname = "cl-lsp";
     version = qlotVersion "cl-lsp";
     src = qlotSource "cl-lsp";
-    lispLibs = [ argo ] ++ (with pkgs.sbclPackages; [
+    lispLibs = [ argo sexpConfig ] ++ (with pkgs.sbclPackages; [
       bordeaux-threads
       quri
       serapeum

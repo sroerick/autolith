@@ -2,19 +2,6 @@
 
 ;;;; -- Native LSP Configuration --
 
-(defparameter *lsp-configuration-version* 1
-  "The native LSP configuration version accepted by Autolith.")
-(defparameter *lsp-configuration-maximum-bytes* (* 256 1024)
-  "The maximum byte length of lsp.sexp.")
-(defparameter *lsp-configuration-maximum-servers* 32
-  "The maximum number of configured LSP servers.")
-(defparameter *lsp-configuration-maximum-timeout-seconds* 120
-  "The maximum LSP server startup/request timeout.")
-(defparameter *lsp-configuration-maximum-string-characters* 8192
-  "The maximum length of one LSP configuration string.")
-(defparameter *lsp-configuration-maximum-list-elements* 128
-  "The maximum number of entries in one LSP list field.")
-
 (define-condition lsp-configuration-error (configuration-error)
   ((pathname :initarg :pathname :initform nil :reader lsp-configuration-error-pathname
              :documentation "The user configuration file involved.")
@@ -31,185 +18,20 @@
   "Return CONFIGURATION's user-controlled native LSP configuration pathname."
   (merge-pathnames "lsp.sexp" (config :config-root configuration)))
 
-(-> lsp-configuration--error (string &key (:pathname t) (:server-name t) (:field t) (:cause t)) nil)
-(defun lsp-configuration--error (message &key pathname server-name field cause)
-  "Signal a structured configuration error with its source context."
-  (error 'lsp-configuration-error :message message :pathname pathname
-         :server-name server-name :field field :cause cause))
-
-(-> lsp-configuration--bounded-string-p (t &key (:empty-p boolean)) boolean)
-(defun lsp-configuration--bounded-string-p (value &key empty-p)
-  "Return true for bounded strings without embedded NUL bytes."
-  (and (stringp value) (not (find #\Null value))
-       (<= (length value) *lsp-configuration-maximum-string-characters*)
-       (or empty-p (plusp (length value)))))
-
-(-> lsp-configuration--list-p (t function) boolean)
-(defun lsp-configuration--list-p (value predicate)
-  "Return true for a bounded proper list whose elements satisfy PREDICATE."
-  (and (proper-list-p value)
-       (<= (length value) *lsp-configuration-maximum-list-elements*)
-       (every predicate value)))
-
-(-> lsp-configuration--plist (t list pathname &key (:server-name t)) list)
-(defun lsp-configuration--plist (form allowed pathname &key server-name)
-  "Validate unique allowed keys in an even proper property list."
-  (multiple-value-bind (problem key)
-      (plist-schema-problem form :allowed-keys allowed :keyword-keys-p nil)
-    (case problem
-      ((:improper :odd)
-       (lsp-configuration--error "LSP configuration requires an even proper property list."
-                                 :pathname pathname :server-name server-name))
-      (:unknown
-       (lsp-configuration--error (format nil "Unknown LSP configuration key ~S." key)
-                                 :pathname pathname :server-name server-name :field key))
-      (:duplicate
-       (lsp-configuration--error (format nil "Duplicate LSP configuration key ~S." key)
-                                 :pathname pathname :server-name server-name :field key))))
-  form)
-
-(-> lsp-configuration--property (list keyword &key (:required-p boolean) (:pathname t) (:server-name t)) t)
-(defun lsp-configuration--property (form key &key required-p pathname server-name)
-  "Return a validated property or report a missing required field."
-  (let* ((missing (gensym)) (value (getf form key missing)))
-    (if (eq value missing)
-        (when required-p
-          (lsp-configuration--error (format nil "Missing required LSP key ~S." key)
-                                    :pathname pathname :server-name server-name :field key))
-        value)))
-
-(-> lsp-configuration--read-source (pathname) string)
-(defun lsp-configuration--read-source (pathname)
-  "Read a byte-bounded UTF-8 regular configuration file."
-  (handler-case
-      (let ((stream (platform-open-regular-file *platform* pathname :follow-links-p t))
-            (buffer (make-array (1+ *lsp-configuration-maximum-bytes*)
-                                :element-type '(unsigned-byte 8))))
-        (unwind-protect
-             (let ((count (read-sequence buffer stream)))
-               (when (> count *lsp-configuration-maximum-bytes*)
-                 (lsp-configuration--error "The native LSP configuration exceeds its byte bound."
-                                           :pathname pathname))
-               (utf8-octets-to-string buffer :end count))
-          (close stream)))
-    (sb-sys:deadline-timeout (condition) (error condition))
-    (lsp-configuration-error (condition) (error condition))
-    (serious-condition (cause)
-      (lsp-configuration--error (format nil "Could not read native LSP configuration: ~A" cause)
-                                :pathname pathname :cause cause))))
-
-(-> lsp-configuration--read-form (pathname) list)
-(defun lsp-configuration--read-form (pathname)
-  "Parse one declarative form with a closed atom grammar and no reader evaluation."
-  (handler-case
-      (read-source (lsp-configuration--read-source pathname)
-                   (make-source-grammar
-                    :label "Native LSP configuration"
-                    :keywords '(:version :servers :name :command :arguments :extensions
-                                :language-id :root-markers :initialization-options :settings
-                                :timeout-seconds :disabled-p)
-                    :maximum-depth 32 :maximum-nodes 16384
-                    :improper-lists-permitted-p nil
-                    :allowed-atom-predicate
-                    (lambda (value)
-                      (or (null value) (eq value t) (stringp value) (integerp value) (keywordp value)))))
-    (sexp-config-error (cause)
-      (lsp-configuration--error (sexp-config-error-message cause)
-                                :pathname pathname :cause cause))))
-
-(-> lsp-configuration--json-object-p (t) boolean)
-(defun lsp-configuration--json-object-p (value)
-  "Return true when VALUE is valid JSON whose top-level value is an object."
-  (and (lsp-configuration--bounded-string-p value)
-       (json-object-source-p value)))
-
-(-> lsp-configuration--server (list pathname) lsp-server-configuration)
-(defun lsp-configuration--server (form pathname)
-  "Validate and construct one server definition with decoded JSON options."
-  (lsp-configuration--plist form
-                            '(:name :command :arguments :extensions :language-id
-                              :root-markers :initialization-options :settings
-                              :timeout-seconds :disabled-p)
-                            pathname)
-  (let* ((name (lsp-configuration--property form :name :required-p t :pathname pathname))
-         (command (lsp-configuration--property form :command :required-p t :pathname pathname))
-         (arguments (or (lsp-configuration--property form :arguments) nil))
-         (extensions (or (lsp-configuration--property form :extensions) nil))
-         (language-id (lsp-configuration--property form :language-id :required-p t :pathname pathname))
-         (root-markers (or (lsp-configuration--property form :root-markers) nil))
-         (initialization-options (lsp-configuration--property form :initialization-options))
-         (settings (lsp-configuration--property form :settings))
-         (timeout (if (member :timeout-seconds form) (lsp-configuration--property form :timeout-seconds) 30))
-         (disabled-p (or (lsp-configuration--property form :disabled-p) nil)))
-    (labels ((string-field (value field &key empty-p)
-               (unless (lsp-configuration--bounded-string-p value :empty-p empty-p)
-                 (lsp-configuration--error (format nil "LSP ~S must be a bounded string." field)
-                                           :pathname pathname :server-name name :field field)))
-             (string-list (value field &key empty-p)
-               (unless (lsp-configuration--list-p value
-                                                   (lambda (item)
-                                                     (lsp-configuration--bounded-string-p item :empty-p empty-p)))
-                 (lsp-configuration--error (format nil "LSP ~S must be a bounded list of strings." field)
-                                           :pathname pathname :server-name name :field field))))
-      (string-field name :name)
-      (string-field command :command)
-      (string-field language-id :language-id)
-      (string-list arguments :arguments :empty-p t)
-      (string-list extensions :extensions)
-      (string-list root-markers :root-markers)
-      (unless (and extensions
-                   (every (lambda (marker)
-                            (and (not (member marker '("." "..") :test #'string=))
-                                 (not (find-if (lambda (character) (find character "/\\:*?[]")) marker))))
-                          root-markers))
-        (lsp-configuration--error "LSP requires nonempty extensions and literal root marker filenames."
-                                  :pathname pathname :server-name name))
-      (when initialization-options
-        (unless (lsp-configuration--json-object-p initialization-options)
-          (lsp-configuration--error "LSP :INITIALIZATION-OPTIONS must be a JSON object string."
-                                    :pathname pathname :server-name name :field :initialization-options)))
-      (when settings
-        (unless (lsp-configuration--json-object-p settings)
-          (lsp-configuration--error "LSP :SETTINGS must be a JSON object string."
-                                    :pathname pathname :server-name name :field :settings)))
-      (unless (and (integerp timeout) (<= 1 timeout *lsp-configuration-maximum-timeout-seconds*))
-        (lsp-configuration--error "LSP :TIMEOUT-SECONDS must be an integer from 1 through 120."
-                                  :pathname pathname :server-name name :field :timeout-seconds))
-      (unless (or (null disabled-p) (eq disabled-p t))
-        (lsp-configuration--error "LSP :DISABLED-P must be exactly T or NIL."
-                                  :pathname pathname :server-name name :field :disabled-p))
-      (make-instance 'lsp-server-configuration :name (copy-seq name) :command (copy-seq command)
-                     :arguments (mapcar #'copy-seq arguments) :extensions (mapcar #'copy-seq extensions)
-                     :language-id (copy-seq language-id) :root-markers (mapcar #'copy-seq root-markers)
-                     :initialization-options (and initialization-options (json-decode initialization-options))
-                     :settings (if settings (json-decode settings) (json-object)) :timeout-seconds timeout
-                     :disabled-p (and disabled-p t)))))
-
 (-> lsp-load-configurations (configuration) list)
 (defun lsp-load-configurations (configuration)
   "Read CONFIGURATION's user-owned lsp.sexp, or return NIL when absent."
   (let ((pathname (lsp-configuration-path configuration)))
-    (unless (probe-file pathname)
-      (return-from lsp-load-configurations nil))
-    (let ((form (lsp-configuration--read-form pathname)))
-      (lsp-configuration--plist form '(:version :servers) pathname)
-      (unless (eql (lsp-configuration--property form :version :required-p t :pathname pathname)
-                   *lsp-configuration-version*)
-        (lsp-configuration--error "LSP configuration must use version 1." :pathname pathname :field :version))
-      (let ((servers (lsp-configuration--property form :servers :required-p t :pathname pathname)))
-        (unless (and (proper-list-p servers)
-                     (<= (length servers) *lsp-configuration-maximum-servers*))
-          (lsp-configuration--error "LSP :SERVERS must be a list of at most 32 entries."
-                                    :pathname pathname :field :servers))
-        (let ((result (mapcar (lambda (server) (lsp-configuration--server server pathname)) servers))
-              (seen (make-hash-table :test #'equal)))
-          (dolist (server result)
-            (let ((name (lsp-server-configuration-name server)))
-              (when (gethash name seen)
-                (lsp-configuration--error "Duplicate LSP server name."
-                                          :pathname pathname :server-name name :field :name))
-              (setf (gethash name seen) t)))
-          result)))))
+    (when (probe-file pathname)
+      (handler-case
+          (lsp-read-configurations pathname)
+        (cl-lsp:lsp-configuration-error (condition)
+          (error 'lsp-configuration-error
+                 :message     (cl-lsp:lsp-error-message condition)
+                 :pathname    (cl-lsp:lsp-configuration-error-pathname condition)
+                 :server-name (cl-lsp:lsp-configuration-error-server-name condition)
+                 :field       (cl-lsp:lsp-configuration-error-field condition)
+                 :cause       condition))))))
 
 (-> lsp-configuration-enabled-p (configuration) boolean)
 (defun lsp-configuration-enabled-p (configuration)

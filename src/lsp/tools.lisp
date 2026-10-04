@@ -2,16 +2,6 @@
 
 ;;;; -- Language Server Tools --
 
-(defparameter *lsp-query-operations*
-  '(("definition" "textDocument/definition" "definitionProvider")
-    ("references" "textDocument/references" "referencesProvider")
-    ("hover" "textDocument/hover" "hoverProvider")
-    ("implementation" "textDocument/implementation" "implementationProvider")
-    ("type-definition" "textDocument/typeDefinition" "typeDefinitionProvider")
-    ("document-symbols" "textDocument/documentSymbol" "documentSymbolProvider")
-    ("workspace-symbols" "workspace/symbol" "workspaceSymbolProvider"))
-  "Read-only query names, LSP methods, and required server capabilities.")
-
 (defparameter *lsp-tool-result-limit* 24000
   "Maximum characters returned by one explicit LSP tool.")
 
@@ -67,38 +57,23 @@ an authorized file elsewhere, as an editor opening that file would search."
         (make-pathname :directory '(:absolute) :name nil :type nil :version nil
                        :defaults path))))
 
-(-> lsp-tool--matching-configurations (lsp-manager tool-context pathname) list)
-(defun lsp-tool--matching-configurations (manager context path)
-  "Select enabled servers whose configured suffixes match PATH."
-  (remove-if-not
-   (lambda (configuration)
-     (and (not (lsp-server-configuration-disabled-p configuration))
-          (some (lambda (extension) (uiop:string-suffix-p (namestring path) extension))
-                (lsp-server-configuration-extensions configuration))))
-   (lsp-manager-configure manager (tool-context-configuration context))))
-
 (-> lsp-tool--call-for-file (lsp-manager tool-context pathname function) vector)
 (defun lsp-tool--call-for-file (manager context path function)
   "Run FUNCTION for each matching server and return independent success or failure rows."
   (with-recursive-lock-held ((lsp-manager-lock manager))
-    (let* ((configurations (lsp-tool--matching-configurations manager context path))
-           (boundary (lsp-tool--root-boundary context path)))
-      (unless configurations
-        (error 'lsp-error :message "No enabled language server matches this file; configure lsp.sexp."))
-      (map 'vector
-           (lambda (configuration)
-             (let ((name (lsp-server-configuration-name configuration)))
-               (handler-case
-                   (let* ((root (lsp-project-root path boundary
-                                                  (lsp-server-configuration-root-markers configuration)))
-                          (client (lsp-manager-client manager configuration root)))
-                     (lsp-client-resync client)
-                     (let ((document (lsp-client-sync client path)))
-                       (json-object "server" name "root" (namestring root)
-                                    "result" (funcall function client document))))
-                 (error (condition)
-                   (json-object "server" name "error" (princ-to-string condition))))))
-           configurations))))
+    (unless (lsp-configurations-for-path
+             (lsp-manager-configure manager (tool-context-configuration context))
+             path)
+      (error 'lsp-error :message "No enabled language server matches this file; configure lsp.sexp."))
+    (map 'vector
+         (lambda (row)
+           (if (getf row :error)
+               (json-object "server" (getf row :server)
+                            "error" (princ-to-string (getf row :error)))
+               (json-object "server" (getf row :server)
+                            "root" (namestring (getf row :root))
+                            "result" (getf row :result))))
+         (lsp-manager-map-file manager path (lsp-tool--root-boundary context path) function))))
 
 (-> lsp-tool--render (t &optional integer) string)
 (defun lsp-tool--render (value &optional (limit *lsp-tool-result-limit*))
@@ -113,54 +88,22 @@ an authorized file elsewhere, as an editor opening that file would search."
 (defun lsp-tool--position (document arguments)
   "Validate one-based UTF-16 coordinates and return the protocol position."
   (let ((line (tool-argument arguments "line" :required t))
-        (character (tool-argument arguments "character" :required t))
-        (current-line 1) (current-character 1) (found-p nil))
+        (character (tool-argument arguments "character" :required t)))
     (unless (and (integerp line) (plusp line) (integerp character) (plusp character))
       (error 'lsp-error :message "LSP line and character must be positive integers."))
-    (loop with text = (lsp-document-text document)
-          for index from 0 to (length text)
-          do (when (and (= current-line line) (= current-character character))
-               (setf found-p t) (return))
-             (when (= index (length text)) (return))
-             (let ((value (char text index)))
-               (cond
-                 ((char= value #\Newline)
-                  (incf current-line) (setf current-character 1))
-                 ((char= value #\Return)
-                  (unless (and (< (1+ index) (length text))
-                               (char= (char text (1+ index)) #\Newline))
-                    (incf current-line) (setf current-character 1)))
-                 (t
-                  (incf current-character (if (> (char-code value) #xffff) 2 1))))))
-    (unless found-p
-      (error 'lsp-error :message "LSP position is outside the document or splits a UTF-16 surrogate pair."))
-    (json-object "line" (1- line) "character" (1- character))))
+    (lsp-text-position (lsp-document-text document) (1- line) (1- character))))
 
 (-> lsp-tool--query (lsp-client lsp-document json-object) t)
 (defun lsp-tool--query (client document arguments)
   "Execute an advertised read-only operation using native LSP result coordinates."
-  (let* ((operation (tool-argument arguments "operation" :required t))
-         (specification (assoc operation *lsp-query-operations* :test #'equal)))
-    (unless specification
-      (error 'lsp-error :message "Unknown LSP query operation."))
-    (unless (json-get (lsp-client-capabilities client) (third specification))
-      (error 'lsp-error :message (format nil "Language server does not support ~A." operation)))
-    (let ((params (json-object)))
-      (if (string= operation "workspace-symbols")
-          (let ((query (tool-argument arguments "query" :required t)))
-            (unless (and (stringp query) (<= (length query) 1024))
-              (error 'lsp-error :message "Workspace symbol query must be a string of at most 1024 characters."))
-            (setf (gethash "query" params) query))
-          (progn
-            (setf (gethash "textDocument" params)
-                  (json-object "uri" (lsp-path-uri (lsp-document-path document))))
-            (unless (string= operation "document-symbols")
-              (setf (gethash "position" params) (lsp-tool--position document arguments)))))
-      (when (string= operation "references")
-        (setf (gethash "context" params) (json-object "includeDeclaration" t)))
-      (lsp-transport-request (lsp-client-transport client) (second specification) params
-                             :timeout (lsp-server-configuration-timeout-seconds
-                                       (lsp-client-configuration client))))))
+  (let ((operation (tool-argument arguments "operation" :required t)))
+    (lsp-client-query client operation document
+                      :position (and (assoc operation *lsp-query-operations* :test #'equal)
+                                     (not (member operation '("document-symbols" "workspace-symbols")
+                                                  :test #'equal))
+                                     (lsp-tool--position document arguments))
+                      :query (and (equal operation "workspace-symbols")
+                                  (tool-argument arguments "query" :required t)))))
 
 (defmethod tool-execute ((tool lsp-query-tool) (context tool-context) (arguments hash-table))
   "Synchronize the current disk snapshots before a read-only code query."
@@ -260,7 +203,9 @@ Explicit LSP tools use the configured server timeout; failed startup also reaps 
               (let* ((manager (lsp-tool-manager diagnostics-tool))
                      (path (lsp-tool--path context (workspace-file--decode-identifier "workspace" (subseq uri 10)))))
                 (with-recursive-lock-held ((lsp-manager-lock manager))
-                  (if (lsp-tool--matching-configurations manager context path)
+                  (if (lsp-configurations-for-path
+                       (lsp-manager-configure manager (tool-context-configuration context))
+                       path)
                       (let ((reports (lsp-tool--call-for-file
                                       manager context path
                                       (lambda (client document)
