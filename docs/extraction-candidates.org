@@ -148,41 +148,6 @@ the readable-schemes policy; observation alias retention (154-252) is tied to
 the conversation and may stay. =resource-uri-encode/decode= and the URI octet
 predicate hand-roll percent encoding while quri is already a dependency.
 
-** Management REPL socket (image-daemon, as an eval module)
-=src/management/repl.lisp= 52-240 (length-prefixed frames), 242-381
-(HMAC-SHA256 challenge-response, constant-time compare, zeroing), 384-450
-(bounded output stream), 455-733 (serial eval queue with deadlines), 736-972
-(Unix socket with stale-path quarantine, loopback TCP, accept loop), 1017-1072.
-An authenticated control endpoint for a Lisp image is image-daemon's stated
-purpose, yet this runs a second framing and auth protocol beside image-daemon's
-packets and bearer token. Cut: the application object, the
-=:management-repl-*= settings, platform file helpers, the AUTOLITH read
-package, transfer and quiescence. Security note: =management-repl-read-frame=
-(163-202) runs before authentication (346) with the full reader and
-=*package*= set to AUTOLITH, read-eval off only, so an unauthenticated peer can
-intern symbols and send deeply nested forms; sexp-config's bounded reader with
-a small grammar fixes that regardless of extraction.
-
-** Bounded s-expression reading and plist validation (sexp-config, sexp-store)
-- =task/job-boundary.lisp= 49-224 is a hand-written bounded data-only reader
-  (node, depth and string limits, forbidden dispatch, keyword-only symbols):
-  sexp-config =read-source= with an allowed-atom predicate.
-- =job-boundary.lisp= 344-367 reads a child result artifact of up to 16 MB with
-  plain =read= under standard syntax, unbounded depth, interning into CL-USER.
-- =job-boundary.lisp= 392-420 duplicates =snapshot-write=.
-- Plist schema checks (allowed, unique, required keys plus a proper-list test)
-  copy-pasted in =mcp/configuration.lisp= 272-398, =lsp/configuration.lisp=
-  47-85, =task/contracts.lisp= 169-237, =management/repl.lisp= 75-115,
-  =localgroup/protocol.lisp= 33-40: sexp-config needs a field-spec validator.
-- Tagged versioned record predicates in =localgroup/handoff.lisp= 144-169 and
-  =startup/active-image.lisp= 95-119 duplicate =record-check=.
-- Byte-bounded UTF-8 regular-file readers in =mcp/configuration.lisp= 982-1020,
-  =lsp/configuration.lisp= 88-105, =task/agents.lisp= 393-419: a
-  =read-source-file :maximum-bytes= in sexp-config; pinned ls-compat already
-  opens regular files safely.
-- =task/agents.lisp= 441-500 re-implements =validate-tree= for better
-  diagnostics; improve the library's diagnostics instead.
-
 ** Live-image introspection and reversible redefinition (new library)
 =self/apropos.lisp= 24-185 and 235-293 (definition kinds, apropos over defined
 symbols, near-miss suggestions); =self/tools.lisp= 11-140 (symbol resolution,
@@ -243,21 +208,14 @@ storm guard, runtime lifecycle) stays.
      implementations. The bounded reader (=core/streams.lisp=) and the path
      confinement (=tools/workspace.lisp=) then follow, since both only need
      that status protocol. Not started.
-2. Bounded reading and record validation: sexp-config and sexp-store already
-   own this; Autolith re-implements it in at least ten places, two of them
-   with real holes (the pre-authentication REPL frame reader, the unbounded
-   child result read).
-3. Provider authentication: the loopback OAuth login and the refresh grant are
+2. Provider authentication: the loopback OAuth login and the refresh grant are
    each written several times and partly copy cl-rfc8628.
-4. New libraries worth their own repository:
+3. New libraries worth their own repository:
    - the typed settings protocol
    - the SBCL introspection and reversible redefinition set
    - prompt image preparation.
 
 ** Correctness findings surfaced by the survey
-- =management-repl-read-frame= uses the full reader before authentication.
-- =task/job-boundary.lisp= 344-367 reads untrusted child artifacts without a
-  depth bound.
 - The identifier fallback in =make-identifier= is predictable while staging
   names claim unpredictability.
 - The Gemini loopback callback reader is unbounded; the ChatGPT one is not.
