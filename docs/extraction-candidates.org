@@ -148,20 +148,6 @@ the readable-schemes policy; observation alias retention (154-252) is tied to
 the conversation and may stay. =resource-uri-encode/decode= and the URI octet
 predicate hand-roll percent encoding while quri is already a dependency.
 
-** Live-image introspection and reversible redefinition (new library)
-=self/apropos.lisp= 24-185 and 235-293 (definition kinds, apropos over defined
-symbols, near-miss suggestions); =self/tools.lisp= 11-140 (symbol resolution,
-exactly-one-form reads with packages unlocked, lambda-list recovery through
-sb-introspect and the MOP), 221-292 (non-interactive restart selection),
-333-723 (definition signatures and keys including method qualifiers, undo
-capture for defun, defmethod, defvar, deftype, defclass and compiler macros via
-=sb-int:info= snapshots), 1066-1166 and 1401-1464 (top-level form spans with
-comment skipping, find and replace a definition in a file). SBCL machinery any
-self-modifying or IDE-like tool needs; sbcl-workers' source lookup covers
-related ground. Cut: the AUTOLITH defaults, the context-contributor and
-application-command undo branches (make an extensible generic), the mutation
-conditions, journal, image-commit fallbacks and the replay engine.
-
 ** MCP pieces (mcparen, cl-llm-provider-api)
 =mcp/tools.lisp= 555-681 (provider-safe tool identifiers: sanitize, FNV-1a
 suffix, 23-character Chat Completions limit) belongs with
@@ -212,7 +198,6 @@ storm guard, runtime lifecycle) stays.
    each written several times and partly copy cl-rfc8628.
 3. New libraries worth their own repository:
    - the typed settings protocol
-   - the SBCL introspection and reversible redefinition set
    - prompt image preparation.
 
 ** Correctness findings surfaced by the survey
