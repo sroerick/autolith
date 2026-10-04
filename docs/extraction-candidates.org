@@ -132,26 +132,7 @@ the readable-schemes policy; observation alias retention (154-252) is tied to
 the conversation and may stay. =resource-uri-encode/decode= and the URI octet
 predicate hand-roll percent encoding while quri is already a dependency.
 
-** MCP pieces (mcparen, cl-llm-provider-api)
-=mcp/tools.lisp= 555-681 (provider-safe tool identifiers: sanitize, FNV-1a
-suffix, 23-character Chat Completions limit) belongs with
-=provider-wire-tool-name=; 974-1137 (bounded validation and normalization of
-untrusted input schemas) partly repeats mcparen's decode bounds;
-=mcp/configuration.lisp= 121-182 and 534-838 (transport classes, URL, host,
-loopback and port validation) could be a declarative transport reader in
-mcparen. Approval policy, trusted tools, child tools and registration sources
-stay.
-
-** Tool and JSON Schema helpers (cl-llm-provider-api)
-Schema builders in =tools/registry.lisp= 180-202 duplicated in =tools/web.lisp=
-115-138, inlined in =tools/defaults.lisp= 52-90 and =lsp/tools.lisp= 222-228;
-the required-argument pre-check with oneOf and anyOf groups (1084-1199);
-namespace grouping (1043-1081). The rest of the registry (context, policies,
-storm guard, runtime lifecycle) stays.
-
 ** Smaller items
-- Layered source-ranked registry in =mcp/configuration.lisp= 1115-1284, the
-  same shape as the command, context and provider registries listed earlier.
 - DONE 2026-10-03: symlink-safe canonicalization and root confinement
   (=tools/workspace.lisp=) now call =ls-compat.posix:canonical-pathname= and
   =pathname-within-p=. cl-skills still carries its own copy (a separate
