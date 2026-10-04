@@ -36,7 +36,7 @@
            ;; Render while the capture bindings still cover user PRINT-OBJECT methods.
            (mapcar (lambda (value)
                      (multiple-value-bind (text truncated-p)
-                         (management-repl--print-bounded value 4000)
+                         (eval-print-bounded value 4000)
                        (if truncated-p
                            (concatenate 'string text " [value truncated]")
                            text)))

@@ -385,12 +385,7 @@
 
 (define-test-suite management-repl
   test-management-repl-configuration
-  test-management-repl-protocol
-  test-management-repl-debugger-hook
-  test-management-repl-adversarial-protocol
-  test-management-repl-client-bounds
   test-management-repl-unix-lifecycle
-  test-management-repl-start-failure-atomic
   test-management-repl-tcp-lifecycle)
 
 (define-test-suite active-image

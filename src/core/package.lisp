@@ -633,6 +633,7 @@
                 #:daemon-call
                 #:daemon-connect
                 #:daemon-packet-string
+                #:daemon-error-message
                 #:daemon-error-operation
                 #:daemon-error-session-id
                 #:daemon-random-nonce
@@ -641,6 +642,16 @@
                 #:daemon-read-response
                 #:daemon-socket-stream
                 #:daemon-write-packet
+                #:eval-call
+                #:eval-connect
+                #:eval-endpoint
+                #:eval-endpoint-create
+                #:eval-endpoint-error
+                #:eval-endpoint-error-reason
+                #:eval-endpoint-evaluator-thread
+                #:eval-endpoint-start
+                #:eval-endpoint-stop
+                #:eval-print-bounded
                 #:legacy-session-identifier-p
                 #:session-identifier-display
                 #:session-identifier-normalize

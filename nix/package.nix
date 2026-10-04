@@ -161,7 +161,7 @@ let
     pname = "image-daemon";
     version = qlotVersion "image-daemon";
     src = qlotSource "image-daemon";
-    systems = [ "image-daemon" "image-daemon/runtime" ];
+    systems = [ "image-daemon" "image-daemon/runtime" "image-daemon/eval" ];
     lispLibs = [
       idsmall
       pkgs.sbclPackages.ironclad
@@ -169,8 +169,10 @@ let
       pkgs.sbclPackages.serapeum
       lsCompat
       lsFlock
+      sexpConfig
       sexpStore
       structlisp
+      pkgs.sbclPackages.trivial-gray-streams
     ];
   };
 

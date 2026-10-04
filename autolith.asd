@@ -37,6 +37,7 @@
                #:flexi-streams
                #:idsmall
                #:image-daemon/runtime
+               #:image-daemon/eval
                #:ironclad/mac/siphash
                #:lambda-debugger
                #:ls-flock

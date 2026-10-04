@@ -149,11 +149,11 @@
     :accessor application-localgroup-session
     :type t
     :documentation "The process-local discovery and control endpoint, when running.")
-   (management-repl-runtime
+   (management-repl-endpoint
     :initform nil
-    :accessor application-management-repl-runtime
-    :type t
-    :documentation "The isolated authenticated active-image management runtime.")
+    :accessor application-management-repl-endpoint
+    :type (option eval-endpoint)
+    :documentation "The running authenticated active-image management endpoint, when enabled.")
    (mutation-replay-failures
     :initform nil
     :accessor application-mutation-replay-failures
