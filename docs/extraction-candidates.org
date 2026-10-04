@@ -71,7 +71,6 @@ reasons and usage mapping, as a fourth protocol beside the Anthropic one.
 =provider-request-object= (634-699) would go through =wire-request= as the
 Anthropic client does. The private Code Assist onboarding (349-477) and model
 catalog stay; its retry loop (297-326) should use =call-with-bounded-retries=.
-Gap: =gemini-code-assist--text-parts= (504-525) silently drops image parts.
 
 ** Image preparation for prompts (new small library)
 =src/conversation/image-input.lisp= 123-302 (magic bytes and PNG, GIF, JPEG,
@@ -262,4 +261,3 @@ storm guard, runtime lifecycle) stays.
 - The identifier fallback in =make-identifier= is predictable while staging
   names claim unpredictability.
 - The Gemini loopback callback reader is unbounded; the ChatGPT one is not.
-- =gemini-code-assist--text-parts= drops image parts silently.
