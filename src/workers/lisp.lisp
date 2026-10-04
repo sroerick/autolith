@@ -197,140 +197,55 @@
       pool
       (lisp-worker--environment configuration)))))
 
+;;; A manager is one worker, a named pool, or NIL; sbcl-workers' manager
+;;; protocol addresses all three, and these wrappers translate its failures.
+
 (-> lisp-worker-manager-change-working-directory (t configuration) t)
-(defgeneric lisp-worker-manager-change-working-directory (manager configuration)
-  (:documentation
-   "Move MANAGER's current and future REPLs to CONFIGURATION's workspace."))
-
-(defmethod lisp-worker-manager-change-working-directory
-    ((manager (eql nil)) (configuration configuration))
-  (declare (ignore manager configuration))
-  nil)
-
-(defmethod lisp-worker-manager-change-working-directory
-    ((manager sbcl-worker) (configuration configuration))
-  (lisp-worker-change-working-directory manager configuration))
-
-(defmethod lisp-worker-manager-change-working-directory
-    ((manager sbcl-worker-pool) (configuration configuration))
-  (lisp-worker-pool-change-working-directory manager configuration))
-
-(defmethod lisp-worker-manager-change-working-directory
-    (manager (configuration configuration))
-  (declare (ignore manager configuration))
-  (error 'worker-error
-         :message "No Lisp worker manager can change working directory."
-         :tool-name "lisp.cwd"))
+(defun lisp-worker-manager-change-working-directory (manager configuration)
+  "Move MANAGER's current and future REPLs to CONFIGURATION's workspace."
+  (lisp-worker--call
+   (lambda ()
+     (sbcl-worker-manager-change-working-directory
+      manager (lisp-worker--environment configuration)))))
 
 (-> lisp-worker-manager-stop (t) null)
-(defgeneric lisp-worker-manager-stop (manager)
-  (:documentation "Stop every live worker represented by MANAGER."))
-
-(defmethod lisp-worker-manager-stop ((manager sbcl-worker))
-  (lisp-worker-stop manager))
-
-(defmethod lisp-worker-manager-stop ((manager sbcl-worker-pool))
-  (lisp-worker-pool-stop-all manager))
-
-(defmethod lisp-worker-manager-stop (manager)
-  (declare (ignore manager))
+(defun lisp-worker-manager-stop (manager)
+  "Stop every live worker represented by MANAGER."
+  (lisp-worker--call (lambda () (sbcl-worker-manager-stop manager)))
   nil)
 
 (-> lisp-worker-manager-worker (t string) lisp-worker)
-(defgeneric lisp-worker-manager-worker (manager name)
-  (:documentation "Return named REPL NAME represented by MANAGER."))
-
-(defmethod lisp-worker-manager-worker
-    ((manager sbcl-worker-pool) (name string))
-  (lisp-worker-pool-worker manager name))
-
-(defmethod lisp-worker-manager-worker
-    ((manager sbcl-worker) (name string))
-  (unless (string= name (lisp-worker-name manager))
-    (error 'worker-error
-           :message "This legacy context provides only its default Lisp REPL."
-           :tool-name "lisp.worker"))
-  manager)
-
-(defmethod lisp-worker-manager-worker (manager (name string))
-  (declare (ignore manager name))
-  (error 'worker-error
-         :message "No Lisp worker manager is available."
-         :tool-name "lisp.worker"))
+(defun lisp-worker-manager-worker (manager name)
+  "Return named REPL NAME represented by MANAGER."
+  (lisp-worker--call (lambda () (sbcl-worker-manager-worker manager name))))
 
 (-> lisp-worker-manager-reset (t string string) lisp-worker)
-(defgeneric lisp-worker-manager-reset (manager name image-identifier)
-  (:documentation
-   "Reset named REPL NAME represented by MANAGER from IMAGE-IDENTIFIER."))
-
-(defmethod lisp-worker-manager-reset
-    ((manager sbcl-worker-pool) (name string) (image-identifier string))
-  (lisp-worker-pool-reset manager name image-identifier))
-
-(defmethod lisp-worker-manager-reset
-    ((manager sbcl-worker) (name string) (image-identifier string))
-  (unless (and (string= name (lisp-worker-name manager))
-               (string= image-identifier
-                        (lisp-worker-image-identifier manager)))
-    (error 'worker-error
-           :message "A legacy Lisp worker cannot switch its name or image."
-           :tool-name "lisp.reset"))
-  (lisp-worker-reset manager))
-
-(defmethod lisp-worker-manager-reset
-    (manager (name string) (image-identifier string))
-  (declare (ignore manager name image-identifier))
-  (error 'worker-error
-         :message "No Lisp worker manager is available."
-         :tool-name "lisp.reset"))
+(defun lisp-worker-manager-reset (manager name image-identifier)
+  "Reset named REPL NAME represented by MANAGER from IMAGE-IDENTIFIER."
+  (lisp-worker--call
+   (lambda () (sbcl-worker-manager-reset manager name image-identifier))))
 
 (-> lisp-worker-manager-start (t string string) lisp-worker)
-(defgeneric lisp-worker-manager-start (manager name image-identifier)
-  (:documentation
-   "Start named REPL NAME through MANAGER from IMAGE-IDENTIFIER."))
+(defun lisp-worker-manager-start (manager name image-identifier)
+  "Start named REPL NAME through MANAGER from IMAGE-IDENTIFIER."
+  (lisp-worker--call
+   (lambda () (sbcl-worker-manager-start manager name image-identifier))))
 
-(defmethod lisp-worker-manager-start
-    ((manager sbcl-worker-pool) (name string) (image-identifier string))
-  (lisp-worker-pool-start manager name image-identifier))
-
-(defmethod lisp-worker-manager-start
-    (manager (name string) (image-identifier string))
-  (declare (ignore manager name image-identifier))
-  (error 'worker-error
-         :message "Named REPL creation requires a Lisp worker pool."
-         :tool-name "lisp.start"))
+(-> lisp-worker-manager-stop-worker (t string) null)
+(defun lisp-worker-manager-stop-worker (manager name)
+  "Stop and forget named REPL NAME represented by MANAGER."
+  (lisp-worker--call (lambda () (sbcl-worker-manager-stop-worker manager name)))
+  nil)
 
 (-> lisp-worker-pool-render (lisp-worker-pool) string)
 (defun lisp-worker-pool-render (pool)
   "Return a concise model-visible list of named REPLs and their images."
   (sbcl-worker-pool-render pool))
 
-(-> lisp-worker-manager-stop-worker (t string) null)
-(defgeneric lisp-worker-manager-stop-worker (manager name)
-  (:documentation "Stop and forget named REPL NAME represented by MANAGER."))
-
-(defmethod lisp-worker-manager-stop-worker
-    ((manager sbcl-worker-pool) (name string))
-  (lisp-worker-pool-stop manager name))
-
-(defmethod lisp-worker-manager-stop-worker (manager (name string))
-  (declare (ignore manager name))
-  (error 'worker-error
-         :message "Named REPL removal requires a Lisp worker pool."
-         :tool-name "lisp.stop"))
-
 (-> lisp-worker-manager-render (t) string)
-(defgeneric lisp-worker-manager-render (manager)
-  (:documentation "Return a concise model-visible inventory for MANAGER."))
-
-(defmethod lisp-worker-manager-render ((manager sbcl-worker-pool))
-  (lisp-worker-pool-render manager))
-
-(defmethod lisp-worker-manager-render (manager)
-  (declare (ignore manager))
-  (error 'worker-error
-         :message "Named REPL listing requires a Lisp worker pool."
-         :tool-name "lisp.repls"))
+(defun lisp-worker-manager-render (manager)
+  "Return a concise model-visible inventory for MANAGER."
+  (lisp-worker--call (lambda () (sbcl-worker-manager-render manager))))
 
 (-> lisp-worker-save-image
     (configuration lisp-worker &key (:identifier string) (:note string))

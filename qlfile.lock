@@ -176,8 +176,8 @@
   :version "git-756b65f4f8be18c786e2331de89708729df42bd4"))
 ("sbcl-workers" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-workers.git" :ref "0e88ec7d8764ada4430b5fd728634ad1dd39530b")
-  :version "git-0e88ec7d8764ada4430b5fd728634ad1dd39530b"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-workers.git" :ref "86c7fea658e977bbd2e95c577fe9b934c19e1265")
+  :version "git-86c7fea658e977bbd2e95c577fe9b934c19e1265"))
 ("surgeon" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/surgeon.git" :ref "347e3a48f931c6ba178d0582fb8a79bd22a4ea6f")

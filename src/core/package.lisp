@@ -985,6 +985,13 @@
                 #:value-binding-restore)
   (:import-from #:sbcl-workers
                 #:+minimum-sbcl-worker-core-size+
+                #:sbcl-worker-manager-change-working-directory
+                #:sbcl-worker-manager-render
+                #:sbcl-worker-manager-reset
+                #:sbcl-worker-manager-start
+                #:sbcl-worker-manager-stop
+                #:sbcl-worker-manager-stop-worker
+                #:sbcl-worker-manager-worker
                 #:+pristine-sbcl-worker-image-identifier+
                 #:sbcl-worker
                 #:sbcl-worker-change-working-directory
