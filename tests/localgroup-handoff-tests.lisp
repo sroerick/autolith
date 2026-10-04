@@ -132,7 +132,7 @@
              (let ((*localgroup-handoff-setsid-function* (lambda () 0)))
                (localgroup-handoff-begin-startup record))
              (multiple-value-bind (pid-record complete-p)
-                 (snapshot-read (localgroup-handoff--pid-pathname handoff-pathname))
+                 (snapshot-read (image-daemon:handoff-ticket-sibling handoff-pathname ':pid))
                (test-assert
                 (and complete-p (probe-file (getf (rest record) :pathname))
                      (= (getf (rest pid-record) :pid) (sb-posix:getpid)))

@@ -408,14 +408,15 @@ opened by the directory's own name."
         (win32--fail ':launch nil)))))
 (defmethod platform-launch-detached-process
     ((platform win32-platform) arguments
-     &key directory output launcher-pid-pathname gate-pathname supervisor-script)
+     &key directory output ticket)
   "Create a suspended replacement, assign its entire tree, then release it.
 
 The suspended initial thread is the Windows startup gate. The job owns every
 child before any user code runs. Kill-on-close covers abandonment; a successful
 handoff explicitly releases ownership without terminating the detached session."
-  (declare (ignore platform gate-pathname supervisor-script))
-  (let ((handles nil)
+  (declare (ignore platform))
+  (let ((launcher-pid-pathname (image-daemon:handoff-ticket-sibling ticket ':launcher-pid))
+        (handles nil)
         (process-handle 0)
         (thread-handle 0)
         (job-handle 0)
@@ -471,12 +472,11 @@ handoff explicitly releases ownership without terminating the detached session."
                                                    :handle process-handle
                                                    :job-handle job-handle
                                                    :process-id pid)))
-                      (when launcher-pid-pathname
-                        (with-open-file (stream launcher-pid-pathname
-                                                :direction ':output
-                                                :if-exists ':supersede)
-                          (format stream "~D~%" pid))
-                        (platform-make-private *platform* launcher-pid-pathname))
+                      (with-open-file (stream launcher-pid-pathname
+                                              :direction ':output
+                                              :if-exists ':supersede)
+                        (format stream "~D~%" pid))
+                      (platform-make-private *platform* launcher-pid-pathname)
                       (when (= (win32--resume-thread thread-handle) #xFFFFFFFF)
                         (win32--fail ':launch nil))
                       (setf completed-p t)

@@ -66,7 +66,7 @@
               (and startup-cancelled-p
                    (not (platform-process-object-alive-p *platform* process))
                    (probe-file
-                    (localgroup-handoff--cancelled-pathname pathname)))
+                    (image-daemon:handoff-ticket-sibling pathname ':cancelled)))
               "a delayed replacement cannot reclaim an invalidated handoff"))
            (setf claimed-pathname
                  (localgroup-handoff--write application session ':detach))
@@ -101,7 +101,7 @@
              (test-assert
               (and
                (not (probe-file
-                     (localgroup-handoff--claimed-pathname claimed-pathname)))
+                     (image-daemon:handoff-ticket-sibling claimed-pathname ':claimed)))
                (let ((*localgroup-startup-record* record))
                  (handler-case
                      (progn
@@ -119,9 +119,9 @@
         (platform-terminate-process-object *platform* process :force t)
         (platform-wait-process *platform* process))
       (when pathname
-        (localgroup-handoff--delete-state-pathnames pathname))
+        (image-daemon:handoff-ticket-delete pathname))
       (when claimed-pathname
-        (localgroup-handoff--delete-state-pathnames claimed-pathname))
+        (image-daemon:handoff-ticket-delete claimed-pathname))
       (when application
         (localgroup-stop application)
         (application-release-conversation-lease application))

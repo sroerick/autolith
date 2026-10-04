@@ -346,22 +346,12 @@
 
 (defmethod platform-launch-detached-process
     ((platform posix-platform) arguments
-     &key directory output launcher-pid-pathname gate-pathname supervisor-script)
-  "Launch ARGUMENTS behind the POSIX process-group supervisor."
+     &key directory output ticket)
+  "Launch ARGUMENTS behind image-daemon's POSIX process-group supervisor."
   (declare (ignore platform))
-  (uiop:launch-program
-   (append
-    (list "bash" "-c" supervisor-script
-          "autolith-localgroup-handoff"
-          (first arguments)
-          (namestring launcher-pid-pathname)
-          (namestring gate-pathname))
-    (rest arguments))
-   :input nil
-   :output output
-   :error-output ':output
-   :directory directory
-   :wait nil))
+  (image-daemon:handoff-launch-supervised arguments ticket
+                                          :directory directory
+                                          :output output))
 
 
 ;;;; -- Installation --

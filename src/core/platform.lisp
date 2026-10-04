@@ -126,14 +126,13 @@ Signal PLATFORM-ERROR with operation :DETACH when the process cannot detach."))
   (:documentation "Return the stable launcher's executable and prefix arguments."))
 
 (defgeneric platform-launch-detached-process
-    (platform arguments &key directory output launcher-pid-pathname gate-pathname
-                             supervisor-script)
+    (platform arguments &key directory output ticket)
   (:documentation
    "Launch ARGUMENTS with a gated, owned process tree, writing OUTPUT.
 
-Write the launcher PID at LAUNCHER-PID-PATHNAME before releasing the startup
-gate. POSIX uses GATE-PATHNAME and SUPERVISOR-SCRIPT; Windows uses a suspended
-initial thread and a native Job Object. Return an owned process object."))
+Write the launcher PID in handoff TICKET's launcher-pid sibling before releasing
+the startup gate. POSIX uses image-daemon's gated supervisor; Windows uses a
+suspended initial thread and a native Job Object. Return an owned process object."))
 
 (defgeneric platform-release-process (platform process)
   (:documentation "Release caller resources without terminating the process."))

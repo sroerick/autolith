@@ -11,43 +11,6 @@
 (defparameter *localgroup-handoff-stop-grace-seconds* 1/5
   "The grace period between terminating and killing a failed replacement.")
 
-(defparameter *localgroup-handoff-supervisor-script*
-  "set -u
-launcher=$1
-pidfile=$2
-gate=$3
-shift 3
-child=
-cleanup()
-{
-  status=$?
-  trap - EXIT HUP INT TERM
-  if [[ -n \"$child\" ]]; then
-    kill -TERM -- \"-$child\" 2>/dev/null || true
-    wait \"$child\" 2>/dev/null || true
-  fi
-  rm -f -- \"$gate\"
-  exit \"$status\"
-}
-trap cleanup EXIT HUP INT TERM
-rm -f -- \"$gate\" \"$pidfile\"
-mkfifo -m 600 -- \"$gate\"
-set -m
-(
-  IFS= read -r ready < \"$gate\" || exit 70
-  exec \"$launcher\" \"$@\"
-) &
-child=$!
-printf '%s\\n' \"$child\" > \"$pidfile\"
-chmod 600 \"$pidfile\"
-printf 'start\\n' > \"$gate\"
-rm -f -- \"$gate\"
-wait \"$child\"
-status=$?
-child=
-exit \"$status\""
-  "The Bash supervisor that gates and owns the replacement process group.")
-
 (defparameter *localgroup-handoff-launch-function*
   (lambda (application handoff-pathname)
     (localgroup-handoff--launch application handoff-pathname))
@@ -101,44 +64,9 @@ exit \"$status\""
 
 (-> localgroup-handoff--pathname (configuration string) pathname)
 (defun localgroup-handoff--pathname (configuration session-id)
-  "Return a fresh private handoff pathname for SESSION-ID."
-  (merge-pathnames
-   (make-pathname
-    :name (format nil "~A-~A" session-id (daemon-random-nonce))
-    :type "sexp")
-   (localgroup-handoff-directory configuration)))
-
-(-> localgroup-handoff--state-pathname (pathname keyword) pathname)
-(defun localgroup-handoff--state-pathname (pathname state)
-  "Return PATHNAME's sibling handoff pathname for STATE."
-  (make-pathname
-   :name (format nil "~A-~(~A~)" (pathname-name pathname) state)
-   :defaults pathname))
-
-(-> localgroup-handoff--claimed-pathname (pathname) pathname)
-(defun localgroup-handoff--claimed-pathname (pathname)
-  "Return PATHNAME's atomically claimed replacement pathname."
-  (localgroup-handoff--state-pathname pathname ':claimed))
-
-(-> localgroup-handoff--cancelled-pathname (pathname) pathname)
-(defun localgroup-handoff--cancelled-pathname (pathname)
-  "Return PATHNAME's atomically cancelled replacement pathname."
-  (localgroup-handoff--state-pathname pathname ':cancelled))
-
-(-> localgroup-handoff--pid-pathname (pathname) pathname)
-(defun localgroup-handoff--pid-pathname (pathname)
-  "Return PATHNAME's replacement-process acknowledgement pathname."
-  (localgroup-handoff--state-pathname pathname ':pid))
-
-(-> localgroup-handoff--launcher-pid-pathname (pathname) pathname)
-(defun localgroup-handoff--launcher-pid-pathname (pathname)
-  "Return PATHNAME's supervised launcher process-group acknowledgement."
-  (localgroup-handoff--state-pathname pathname ':launcher-pid))
-
-(-> localgroup-handoff--gate-pathname (pathname) pathname)
-(defun localgroup-handoff--gate-pathname (pathname)
-  "Return PATHNAME's temporary launcher start-gate pathname."
-  (localgroup-handoff--state-pathname pathname ':gate))
+  "Return a fresh private handoff ticket pathname for SESSION-ID."
+  (image-daemon:handoff-ticket-pathname (localgroup-handoff-directory configuration)
+                                        session-id))
 
 (-> localgroup-handoff--timestamp-p (t) boolean)
 (defun localgroup-handoff--timestamp-p (value)
@@ -221,10 +149,7 @@ exit \"$status\""
 (-> localgroup-handoff--write-record (pathname list) null)
 (defun localgroup-handoff--write-record (pathname record)
   "Atomically write private handoff RECORD to PATHNAME."
-  (ensure-directories-exist pathname)
-  (platform-make-private *platform* (uiop:pathname-directory-pathname pathname))
-  (snapshot-write pathname (localgroup-handoff--disk-record record))
-  (platform-make-private *platform* pathname)
+  (image-daemon:handoff-ticket-write pathname (localgroup-handoff--disk-record record))
   nil)
 
 (-> localgroup-handoff--write
@@ -303,24 +228,11 @@ exit \"$status\""
 (defun localgroup-handoff-begin-startup (record)
   "Atomically claim RECORD, detach the replacement, and acknowledge its PID."
   (let* ((pending-pathname (getf (rest record) :pathname))
-         (claimed-pathname
-           (localgroup-handoff--claimed-pathname pending-pathname)))
-    (handler-case
-        (rename-file pending-pathname claimed-pathname)
-      (error (condition)
-        (error 'localgroup-error
-               :message "The localgroup handoff was cancelled before startup."
-               :operation ':handoff
-               :session-id (getf (rest record) :session-id)
-               :cause condition)))
+         (claimed-pathname (image-daemon:handoff-ticket-claim pending-pathname)))
     (setf (getf (rest record) :state) ':claimed
           (getf (rest record) :pending-pathname) pending-pathname
           (getf (rest record) :pathname) claimed-pathname
           (getf (rest record) :replacement-pid) (current-process-id))
-    (localgroup-handoff--write-record
-     (localgroup-handoff--pid-pathname pending-pathname)
-     (list :localgroup-handoff-pid
-           :pid (current-process-id)))
     (handler-case
         (funcall *localgroup-handoff-setsid-function*)
       (error (condition)
@@ -336,32 +248,18 @@ exit \"$status\""
   "Require the current replacement to retain its claimed handoff record."
   (when *localgroup-startup-record*
     (let* ((expected (rest *localgroup-startup-record*))
-           (pathname (getf expected :pathname))
            (pending-pathname (getf expected :pending-pathname))
            (record
-             (and pathname
-                  (probe-file pathname)
-                  (localgroup-handoff--record-at pathname)))
-           (pid-record
              (and pending-pathname
-                  (probe-file (localgroup-handoff--pid-pathname pending-pathname))
-                  (handler-case
-                      (multiple-value-bind (value complete-p)
-                          (snapshot-read
-                           (localgroup-handoff--pid-pathname pending-pathname))
-                        (and complete-p value))
-                    (error () nil)))))
+                  (image-daemon:handoff-ticket-owned-record
+                   pending-pathname
+                   :token (getf expected :token)
+                   :validate #'localgroup-handoff--record-p))))
       (unless (and record
-                   (member (getf (rest record) :state) '(:pending :claimed))
                    (equal (or (getf (rest record) :launch-id)
                               (getf (rest record) :session-id))
                           (or (getf expected :launch-id)
-                              (getf expected :session-id)))
-                   (string= (getf (rest record) :token)
-                            (getf expected :token))
-                   (eq (first pid-record) ':localgroup-handoff-pid)
-                   (= (or (getf (rest pid-record) :pid) 0)
-                      (current-process-id)))
+                              (getf expected :session-id))))
         (error 'localgroup-error
                :message "The localgroup handoff was cancelled during startup."
                :operation ':handoff
@@ -410,19 +308,10 @@ before any shell is involved."
     (error 'platform-capability-unavailable
            :capability ':detached-sessions
            :message "This host cannot supervise a detached session process, so localgroup handoff is withheld."))
-  (let ((launcher-pid-pathname
-          (localgroup-handoff--launcher-pid-pathname handoff-pathname))
-        (gate-pathname (localgroup-handoff--gate-pathname handoff-pathname)))
-    (dolist (pathname (list launcher-pid-pathname gate-pathname))
-      (when (probe-file pathname)
-        (ignore-errors (delete-file pathname))))
-    (platform-launch-detached-process
-     *platform* arguments
-     :directory directory
-     :output output
-     :launcher-pid-pathname launcher-pid-pathname
-     :gate-pathname gate-pathname
-     :supervisor-script *localgroup-handoff-supervisor-script*)))
+  (platform-launch-detached-process *platform* arguments
+                                    :directory directory
+                                    :output output
+                                    :ticket handoff-pathname))
 
 (-> localgroup-handoff--arguments
     (configuration pathname &key (:permission-argument string) (:immutable-p boolean))
@@ -558,56 +447,28 @@ detach is immediate and never interrupts session work."
           (when process
             (ignore-errors
               (funcall *localgroup-handoff-stop-function* process pathname)))
-          (localgroup-handoff--delete-state-pathnames pathname))))))
+          (image-daemon:handoff-ticket-delete pathname))))))
 
 (-> localgroup-handoff--ready-conversation-id
     (list string integer) (option string))
 (defun localgroup-handoff--ready-conversation-id (record token old-pid)
   "Return RECORD's authenticated active conversation ID for a new process."
-  (when (and (/= (getf (rest record) :pid) old-pid)
-             (string= (getf (rest record) :token) token))
-    (handler-case
-        (let* ((response (daemon-call (getf (rest record) :port) token ':status))
-               (status (getf (rest response) :status))
-               (identifier (getf (rest status) :session-id)))
-          (when (and (eq (first response) ':ok)
-                     (stringp identifier)
-                     (equal identifier (getf (rest status) :conversation-id))
-                     (equal identifier (getf (rest record) :session-id))
-                     (eql (getf (rest status) :pid) (getf (rest record) :pid)))
-            identifier))
-      (error ()
-        nil))))
+  (let* ((status (image-daemon:daemon-endpoint-status record token old-pid))
+         (identifier (and (consp status) (getf (rest status) :session-id))))
+    (when (and (stringp identifier)
+               (equal identifier (getf (rest status) :conversation-id))
+               (equal identifier (getf (rest record) :session-id))
+               (eql (getf (rest status) :pid) (getf (rest record) :pid)))
+      identifier)))
 
 (-> localgroup-handoff--wait-for-fresh (configuration string integer) (option string))
 (defun localgroup-handoff--wait-for-fresh (configuration token old-pid)
   "Resolve a private launch token to its published active conversation ID."
-  (let ((deadline (+ (get-internal-real-time)
-                     (* *localgroup-handoff-start-timeout-seconds*
-                        internal-time-units-per-second))))
-    (loop
-      (let ((identifier
-              (loop for entry in (localgroup-endpoint-records configuration)
-                    thereis (localgroup-handoff--ready-conversation-id
-                             (rest entry) token old-pid))))
-        (when identifier
-          (return identifier)))
-      (when (>= (get-internal-real-time) deadline)
-        (return nil))
-      (sleep 0.05))))
-(-> localgroup-handoff--replacement-ready-p
-    (configuration string string integer)
-    boolean)
-
-(defun localgroup-handoff--replacement-ready-p (configuration session-id token old-pid)
-  "Return true when SESSION-ID names a live replacement distinct from OLD-PID."
-  (let* ((pathname (localgroup-registry-pathname configuration session-id))
-         (record (image-daemon:daemon-registry-read pathname)))
-    (and record (/= (getf (rest record) :pid) old-pid)
-         (string= (getf (rest record) :token) token)
-         (handler-case
-          (eq (first (daemon-call (getf (rest record) :port) token ':status)) ':ok)
-          (error nil nil)))))
+  (image-daemon:daemon-wait-until
+   (lambda ()
+     (loop for entry in (localgroup-endpoint-records configuration)
+           thereis (localgroup-handoff--ready-conversation-id (rest entry) token old-pid)))
+   *localgroup-handoff-start-timeout-seconds*))
 
 (-> localgroup-handoff--wait-for-replacement
     (configuration string string integer)
@@ -615,17 +476,14 @@ detach is immediate and never interrupts session work."
 (defun localgroup-handoff--wait-for-replacement
     (configuration session-id token old-pid)
   "Wait boundedly for a live replacement endpoint."
-  (let ((deadline
-          (+ (get-internal-real-time)
-             (* *localgroup-handoff-start-timeout-seconds*
-                internal-time-units-per-second))))
-    (loop
-      (when (localgroup-handoff--replacement-ready-p
-             configuration session-id token old-pid)
-        (return t))
-      (when (>= (get-internal-real-time) deadline)
-        (return nil))
-      (sleep 0.05))))
+  (not (null
+        (image-daemon:daemon-wait-until
+         (lambda ()
+           (image-daemon:daemon-endpoint-status
+            (image-daemon:daemon-registry-read
+             (localgroup-registry-pathname configuration session-id))
+            token old-pid))
+         *localgroup-handoff-start-timeout-seconds*))))
 
 (-> localgroup-handoff--signal-pid (integer boolean) null)
 (defun localgroup-handoff--signal-pid (pid force-p)
@@ -637,96 +495,10 @@ detach is immediate and never interrupts session work."
     (error () nil))
   nil)
 
-(-> localgroup-handoff--record-at (pathname) (option list))
-(defun localgroup-handoff--record-at (pathname)
-  "Return PATHNAME's complete valid handoff record, when present."
-  (handler-case
-      (multiple-value-bind (record complete-p)
-          (snapshot-read pathname)
-        (and complete-p
-             (localgroup-handoff--record-p record)
-             record))
-    (error () nil)))
-
-(-> localgroup-handoff--state-pathnames (pathname) list)
-(defun localgroup-handoff--state-pathnames (pathname)
-  "Return PATHNAME and its claimed and cancelled siblings."
-  (list pathname
-        (localgroup-handoff--claimed-pathname pathname)
-        (localgroup-handoff--cancelled-pathname pathname)
-        (localgroup-handoff--pid-pathname pathname)
-        (localgroup-handoff--launcher-pid-pathname pathname)
-        (localgroup-handoff--gate-pathname pathname)))
-
-(-> localgroup-handoff--plain-pid-at (pathname) (option integer))
-(defun localgroup-handoff--plain-pid-at (pathname)
-  "Return PATHNAME's one positive decimal PID, when complete."
-  (handler-case
-      (with-open-file (stream pathname
-                              :direction ':input
-                              :external-format ':utf-8)
-        (let ((line (read-line stream nil nil)))
-          (and (non-empty-string-p line)
-               (every #'digit-char-p line)
-               (let ((pid (parse-integer line)))
-                 (and (plusp pid) pid)))))
-    (error () nil)))
-
-(-> localgroup-handoff--record-replacement-pid (pathname) (option integer))
-(defun localgroup-handoff--record-replacement-pid (pathname)
-  "Return PATHNAME family's acknowledged replacement PID, when available."
-  (let ((pid-pathname (localgroup-handoff--pid-pathname pathname)))
-    (or
-     (and (probe-file pid-pathname)
-          (handler-case
-              (multiple-value-bind (record complete-p)
-                  (snapshot-read pid-pathname)
-                (and complete-p
-                     (eq (first record) ':localgroup-handoff-pid)
-                     (typep (getf (rest record) :pid) '(integer 1))
-                     (getf (rest record) :pid)))
-            (error () nil)))
-     (loop for candidate in (localgroup-handoff--state-pathnames pathname)
-           for record = (and (probe-file candidate)
-                             (localgroup-handoff--record-at candidate))
-           for pid = (and record (getf (rest record) :replacement-pid))
-           when pid
-             return pid))))
-
 (-> localgroup-handoff--cancel (pathname) pathname)
 (defun localgroup-handoff--cancel (pathname)
   "Atomically invalidate PATHNAME's pending or claimed startup ownership."
-  (let ((claimed (localgroup-handoff--claimed-pathname pathname))
-        (cancelled (localgroup-handoff--cancelled-pathname pathname)))
-    (labels ((cancel-source (source)
-               "Rename SOURCE to CANCELLED and publish its cancelled state."
-               (let ((record (localgroup-handoff--record-at source)))
-                 (when record
-                   (handler-case
-                       (progn
-                         (rename-file source cancelled)
-                         (setf (getf (rest record) :state) ':cancelled)
-                         (localgroup-handoff--write-record cancelled record)
-                         t)
-                     (error () nil))))))
-      (or (and (probe-file cancelled) cancelled)
-          (and (probe-file pathname)
-               (cancel-source pathname)
-               cancelled)
-          (and (probe-file claimed)
-               (cancel-source claimed)
-               cancelled)
-          (progn
-            (sleep 0.05)
-            (cond ((probe-file cancelled) cancelled)
-                  ((and (probe-file pathname)
-                        (cancel-source pathname))
-                   cancelled)
-                  ((and (probe-file claimed)
-                        (cancel-source claimed))
-                   cancelled)
-                  (t
-                   cancelled)))))))
+  (image-daemon:handoff-ticket-cancel pathname :validate #'localgroup-handoff--record-p))
 
 (-> localgroup-handoff--pid-alive-p (integer) boolean)
 (defun localgroup-handoff--pid-alive-p (pid)
@@ -736,14 +508,6 @@ detach is immediate and never interrupts session work."
           (platform-process-group-alive-p *platform* (- pid))
           (platform-process-alive-p *platform* pid))
     (error () nil)))
-
-(-> localgroup-handoff--delete-state-pathnames (pathname) null)
-(defun localgroup-handoff--delete-state-pathnames (pathname)
-  "Delete every pending, claimed, or cancelled record in PATHNAME's family."
-  (dolist (candidate (localgroup-handoff--state-pathnames pathname))
-    (when (probe-file candidate)
-      (ignore-errors (delete-file candidate))))
-  nil)
 
 (defun localgroup-handoff--process-object-pid (process)
   "Return PROCESS's adapter PID."
@@ -773,10 +537,10 @@ detach is immediate and never interrupts session work."
       (let* ((now (get-internal-real-time))
              (force-p (>= now kill-at))
              (launcher-pid
-               (localgroup-handoff--plain-pid-at
-                (localgroup-handoff--launcher-pid-pathname handoff-pathname)))
+               (image-daemon:handoff-ticket-launcher-pid handoff-pathname))
              (replacement-pid
-               (localgroup-handoff--record-replacement-pid handoff-pathname)))
+               (image-daemon:handoff-ticket-replacement-pid
+                handoff-pathname :validate #'localgroup-handoff--record-p)))
         (when root-pid
           (setf known-pids
                 (remove-duplicates
@@ -1088,7 +852,7 @@ recalled draft lives only in this editor, not in the snapshot."
                                                                    application
                                                                    conversation-id))
                                                                 (when handoff-pathname
-                                                                  (localgroup-handoff--delete-state-pathnames
+                                                                  (image-daemon:handoff-ticket-delete
                                                                    handoff-pathname))
                                                                 (with-lock-held ((image-daemon:daemon-runtime-lock
                                                                                   session))
@@ -1112,5 +876,5 @@ recalled draft lives only in this editor, not in the snapshot."
                (or (getf (rest *localgroup-startup-record*) :pending-pathname)
                    (getf (rest *localgroup-startup-record*) :pathname)))))
     (when pathname
-      (localgroup-handoff--delete-state-pathnames pathname)))
+      (image-daemon:handoff-ticket-delete pathname)))
   nil)

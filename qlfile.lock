@@ -140,8 +140,8 @@
   :version "git-918d456528474e880014fe8377e4810e4a55e6a9"))
 ("image-daemon" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/image-daemon.git" :ref "941d605b4f1c332ac401127a003ee7514fdaebe9")
-  :version "git-941d605b4f1c332ac401127a003ee7514fdaebe9"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/image-daemon.git" :ref "565ac032cf9646dd8da9e98cb7461b2c1a0748c7")
+  :version "git-565ac032cf9646dd8da9e98cb7461b2c1a0748c7"))
 ("ls-compat" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/ls-compat.git" :ref "52c959f2bc00adc30f2970c2fd2226bd0c01730d")
