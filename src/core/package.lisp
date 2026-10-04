@@ -349,7 +349,6 @@
                 #:provider-credential-manager
                 #:provider-event
                 #:provider-family
-                #:provider-family-for-registration
                 #:provider-item-event
                 #:provider-item-event-item
                 #:provider-native-compact-conversation

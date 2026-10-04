@@ -23,16 +23,6 @@
     :documentation "The most recent portable rate limit snapshot from response headers."))
   (:documentation "A direct ChatGPT subscription client for the Codex Responses service."))
 
-(-> provider-account-label (model-provider) string)
-(defgeneric provider-account-label (provider)
-  (:documentation "Return the short user-visible name of PROVIDER's account service."))
-
-(defmethod provider-account-label ((provider model-provider))
-  "Return the registered provider name for a provider without a custom label."
-  (or (and (model-provider-registration provider)
-           (provider-registration-name (model-provider-registration provider)))
-      "provider"))
-
 (defmethod provider-account-label ((provider codex-subscription-provider))
   "Name the ChatGPT account service in user-visible failures."
   (declare (ignore provider))
@@ -156,17 +146,6 @@
   (format nil "~A authentication was saved by Autolith."
           (provider-account-label provider)))
 
-(-> provider-note-response-headers (subscription-provider t) t)
-(defgeneric provider-note-response-headers (provider headers)
-  (:documentation
-   "Record portable metadata carried by sanitized response HEADERS."))
-
-(defmethod provider-note-response-headers
-    ((provider subscription-provider) (headers t))
-  "Ignore response headers for providers without portable metadata."
-  (declare (ignore provider headers))
-  nil)
-
 (defmethod provider-note-response-headers
     ((provider codex-subscription-provider) (headers t))
   "Record the subscription rate limit snapshot from Codex HEADERS."
@@ -176,11 +155,6 @@
   "Return no rate limit snapshot for providers that do not report one."
   (declare (ignore provider))
   nil)
-
-(defmethod provider-family-for-registration
-    ((registration provider-registration))
-  "Return the family declared by an Autolith provider registration."
-  (provider-registration-family registration))
 
 (defmethod provider-family ((provider codex-subscription-provider))
   "The Codex provider serves the ChatGPT model family."
