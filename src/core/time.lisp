@@ -2,13 +2,7 @@
 
 ;;;; -- Epoch Conversion --
 
-(defparameter *unix-epoch-universal-time* 2208988800
-  "The Common Lisp universal time corresponding to the Unix epoch.")
-
-(-> unix-time->universal-time (integer) integer)
-(defun unix-time->universal-time (unix-time)
-  "Convert integer UNIX-TIME seconds to Common Lisp universal time."
-  (+ unix-time *unix-epoch-universal-time*))
+;;; cl-rfc8628 owns the epoch offset and the Unix-to-universal conversion.
 
 (-> universal-time->unix-time (integer) integer)
 (defun universal-time->unix-time (universal-time)

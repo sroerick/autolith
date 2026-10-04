@@ -615,7 +615,7 @@ and codes follow the Codex reference at commit 6f51c65958."
 (defun provider--epoch-local-time (seconds)
   "Return POSIX epoch SECONDS as a compact local date and time."
   (multiple-value-bind (second minute hour date month year)
-      (decode-universal-time (+ seconds 2208988800))
+      (decode-universal-time (unix-time->universal-time seconds))
     (declare (ignore second))
     (format nil "~4,'0D-~2,'0D-~2,'0D ~2,'0D:~2,'0D" year month date hour minute)))
 

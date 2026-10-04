@@ -176,6 +176,8 @@
                 #:skill-metadata-source-format
                 #:skill-read-error)
   (:import-from #:cl-rfc8628
+                #:*unix-epoch-universal-time*
+                #:unix-time->universal-time
                 #:*device-authentication-redaction-marker*
                 #:*device-authentication-timeout*
                 #:*rfc8628-device-slow-down-increment*
