@@ -96,8 +96,8 @@
   :version "git-dea112d1bf2750a52c52f33344157af7b9f4f6f8"))
 ("cl-llm-provider-api" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "0784ef4d9f6644941f1e1dcaab453b6e60bd24f6")
-  :version "git-0784ef4d9f6644941f1e1dcaab453b6e60bd24f6"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "2e782571bbd81bac2a37a0ad45aa95b0c3e9ea5e")
+  :version "git-2e782571bbd81bac2a37a0ad45aa95b0c3e9ea5e"))
 ("cl-lsp" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-lsp.git" :ref "9f459b8d3d41e6eeb82cae06159879cf7258701a")
@@ -156,8 +156,8 @@
   :version "git-3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9"))
 ("mcparen" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/mcparen.git" :ref "e4af00d718a727229fce986c002c608b0a7c5353")
-  :version "git-e4af00d718a727229fce986c002c608b0a7c5353"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/mcparen.git" :ref "03c47248988ebb7dd9aaa40a77d4ca5ac6e21889")
+  :version "git-03c47248988ebb7dd9aaa40a77d4ca5ac6e21889"))
 ("sbcl-generations" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-generations.git" :ref "944b6f8b001508466eb2e15cc55ed11c235693fd")

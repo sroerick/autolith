@@ -22,7 +22,7 @@ git cl-jobpond https://github.com/luciusmagn/cl-jobpond.git :ref ee2e2eb0bd5080c
 git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 08acbc1caaab2beaa0ea824507d722a117ec70b0
 git cl-rfc8252 https://github.com/lambda-symbolics/cl-rfc8252.git :ref b9affbd04c12e2adac4a2403f60a3a2802f9ac45
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref dea112d1bf2750a52c52f33344157af7b9f4f6f8
-git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref 0784ef4d9f6644941f1e1dcaab453b6e60bd24f6
+git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref 2e782571bbd81bac2a37a0ad45aa95b0c3e9ea5e
 git cl-lsp https://github.com/lambda-symbolics/cl-lsp.git :ref 9f459b8d3d41e6eeb82cae06159879cf7258701a
 git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref 935e10dacfb37b5140bd23ea72144b9a336c1282
 git cl-termdown https://github.com/lambda-symbolics/cl-termdown.git :ref 681f4bcf636b15761119f5dc57691b1cdf1eb376
@@ -37,7 +37,7 @@ git image-daemon https://github.com/lambda-symbolics/image-daemon.git :ref 4c9c7
 git ls-compat https://github.com/lambda-symbolics/ls-compat.git :ref 52c959f2bc00adc30f2970c2fd2226bd0c01730d
 git ls-flock https://github.com/lambda-symbolics/ls-flock.git :ref 0e3e0ada0f5b693cb3f32f46aefbb8dbebcc20f2
 git idsmall https://github.com/luciusmagn/idsmall.git :ref 3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9
-git mcparen https://github.com/lambda-symbolics/mcparen.git :ref e4af00d718a727229fce986c002c608b0a7c5353
+git mcparen https://github.com/lambda-symbolics/mcparen.git :ref 03c47248988ebb7dd9aaa40a77d4ca5ac6e21889
 git sbcl-generations https://github.com/lambda-symbolics/sbcl-generations.git :ref 944b6f8b001508466eb2e15cc55ed11c235693fd
 git sexp-config https://github.com/lambda-symbolics/sexp-config.git :ref 09e0b86650d08d98c7624ec525d346a41b98323c
 git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 4d38e6544d87412d99acef9f097272df41359eff

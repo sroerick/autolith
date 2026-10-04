@@ -247,6 +247,7 @@ let
       babel
       bordeaux-threads
       dexador
+      quri
       serapeum
     ]);
   };
