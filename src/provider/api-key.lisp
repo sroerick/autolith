@@ -350,19 +350,9 @@ never retains the resulting credential after this call."
 
 ;;;; -- Environment API-Key Credential Sources --
 
-(defclass environment-api-key-credential-source (credential-source)
-  ((environment-variable
-    :initarg :environment-variable
-    :reader environment-api-key-credential-source-environment-variable
-    :type non-empty-string
-    :documentation
-    "The environment variable holding this provider's static API key.")
-   (account-id
-    :initarg :account-id
-    :reader environment-api-key-credential-source-account-id
-    :type non-empty-string
-    :documentation
-    "The synthetic account identifier pinned for this static API key."))
+(defclass environment-api-key-credential-source
+    (cl-rfc8628:environment-credential-source)
+  ()
   (:documentation
    "A read-only adapter loading one static provider API key from the environment."))
 
@@ -381,67 +371,16 @@ never retains the resulting credential after this call."
     ((source environment-api-key-credential-source))
   "Report a conventional key path because the environment has no pathname."
   (environment-api-key-credential-source--pathname
-   (environment-api-key-credential-source-account-id source)))
-
-(defmethod credential-source-label
-    ((source environment-api-key-credential-source))
-  "Name the environment source in user-visible failures."
-  (format nil "the ~A environment variable"
-          (environment-api-key-credential-source-environment-variable source)))
-
-(defmethod credential-source-load
-    ((source environment-api-key-credential-source))
-  "Load SOURCE's API key from its environment variable, or return NIL."
-  (let ((key (uiop:getenv
-              (environment-api-key-credential-source-environment-variable
-               source))))
-    (when (non-empty-string-p key)
-      (make-instance 'oauth-credentials
-                     :access-token key
-                     :refresh-token nil
-                     :id-token nil
-                     :account-id
-                     (environment-api-key-credential-source-account-id source)
-                     :expires-at nil
-                     :source-path (credential-source-pathname source)))))
-
-(defmethod credential-source-save
-    ((source environment-api-key-credential-source)
-     (credentials oauth-credentials))
-  "Reject writes to the environment source."
-  (declare (ignore credentials))
-  (error 'authentication-error
-         :message
-         (format nil "The ~A environment source is read-only."
-                 (environment-api-key-credential-source-environment-variable
-                  source))))
+   (cl-rfc8628:environment-credential-source-account-id source)))
 
 
 ;;;; -- Static API-Key Credential Manager --
 
-(defclass static-api-key-credential-manager (api-key-credential-manager)
+(defclass static-api-key-credential-manager
+    (api-key-credential-manager cl-rfc8628:static-credential-manager)
   ()
   (:documentation
    "A static API-key manager that prefers the current environment key."))
-
-(defmethod credential-manager-load ((manager static-api-key-credential-manager))
-  "Prefer the current environment key, then load the saved interactive key."
-  (let ((environment
-          (credential-source-load
-           (credential-manager-bootstrap-source manager))))
-    (credential-manager-accept-account
-     manager
-     (or environment
-         (credential-source-load
-          (credential-manager-primary-source manager))
-         (error 'credentials-unavailable
-                :message
-                (format nil "No ~A API key is available; ~A."
-                        (credential-manager-provider-label manager)
-                        (credential-manager-login-hint manager))
-                :searched-paths
-                (list (credential-source-pathname
-                       (credential-manager-primary-source manager))))))))
 
 (-> api-key-credential-manager-persist-key
     (api-key-credential-manager non-empty-string)
@@ -461,7 +400,7 @@ never retains the resulting credential after this call."
             :id-token nil
             :account-id
             (if (typep bootstrap 'environment-api-key-credential-source)
-                (environment-api-key-credential-source-account-id bootstrap)
+                (cl-rfc8628:environment-credential-source-account-id bootstrap)
                 (string-downcase (credential-manager-provider-label manager)))
             :expires-at nil
             :source-path (credential-source-pathname source)))))))
@@ -520,7 +459,7 @@ never retains the resulting credential after this call."
             (note
               (when (typep bootstrap 'environment-api-key-credential-source)
                 (format nil "~A overrides the stored key when set."
-                        (environment-api-key-credential-source-environment-variable
+                        (cl-rfc8628:environment-credential-source-environment-variable
                          bootstrap))))
             (key
               (string-trim
