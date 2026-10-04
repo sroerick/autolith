@@ -172,13 +172,6 @@
   "Record the subscription rate limit snapshot from Codex HEADERS."
   (provider-record-rate-limits provider headers))
 
-(defparameter *provider-stream-inactivity-seconds* 300
-  "Seconds one provider stream line may stall before reconnecting.
-
-Dexador's :READ-TIMEOUT governs the response header exchange but not the
-blocking reads that follow on a TLS stream, so a connection lost mid-stream
-otherwise parks the turn forever. NIL disables the bound.")
-
 (defmethod provider-rate-limits ((provider model-provider))
   "Return no rate limit snapshot for providers that do not report one."
   (declare (ignore provider))
@@ -717,36 +710,11 @@ and codes follow the Codex reference at commit 6f51c65958."
 
 ;;;; -- SSE Decoding --
 
-;;; Bounded SSE decoding lives in cl-llm-provider-api. Autolith supplies the
-;;; runtime-specific pieces: an inactivity deadline around each line read and
-;;; a provider condition class for stream size violations.
+;;; Bounded SSE decoding and the per-line inactivity deadline live in
+;;; cl-llm-provider-api. Autolith installs the deadline reader and names its
+;;; condition class for stream size violations.
 
-(-> sse-read-line (stream) t)
-(defun sse-read-line (stream)
-  "Read one bounded line, reconnecting when the stream stalls.
-
-The deadline covers one line, so every delivered line renews it. A stream
-that stops mid-turn signals a transport failure the bounded retry ladder can
-act on instead of blocking on a dead connection indefinitely."
-  (if (and *provider-stream-inactivity-seconds*
-           (plusp *provider-stream-inactivity-seconds*))
-      (handler-case
-          (provider-call-with-response-deadline
-           *provider-stream-inactivity-seconds*
-           (lambda ()
-             (sse-read-line-characters stream)))
-        (sb-sys:deadline-timeout ()
-          (error 'response-stream-error
-                 :message
-                 (format nil
-                         "The provider stream delivered nothing for ~D seconds."
-                         *provider-stream-inactivity-seconds*)
-                 :status nil
-                 :request-id nil
-                 :response nil)))
-      (sse-read-line-characters stream)))
-
-(setf *sse-read-line-function* #'sse-read-line)
+(setf *sse-read-line-function* #'sse-read-line-within-inactivity-deadline)
 (setf *stream-limit-error-class* 'response-stream-limit-error)
 
 ;;;; -- Rate Limit Snapshots --
@@ -879,138 +847,6 @@ act on instead of blocking on a dead connection indefinitely."
        (http-request-failed (condition)
                             (provider-signal-transport-failure provider condition))))))
 
-(defparameter *provider-maximum-transient-retries* 6
-  "Maximum retryable provider failures allowed after the initial attempt.")
-
-(defparameter *provider-maximum-streaming-retries* 2
-  "Maximum retries of one request after an attempt already streamed model output.
-
-A failure before any output costs only the wait, so the full transient ladder
-applies. Once reasoning or output has streamed, every retry bills a fresh
-generation of the same prompt, so the budget is deliberately tighter.")
-
-(defclass provider-attempt-failed-event (provider-event)
-  ((attempt
-    :initarg :attempt
-    :reader provider-attempt-failed-event-attempt
-    :type (integer 1)
-    :documentation "The one-based attempt of the logical request that failed.")
-   (elapsed-seconds
-    :initarg :elapsed-seconds
-    :reader provider-attempt-failed-event-elapsed-seconds
-    :type (integer 0)
-    :documentation "Whole seconds between the attempt's start and its failure.")
-   (output-received-p
-    :initarg :output-received-p
-    :reader provider-attempt-failed-event-output-received-p
-    :type boolean
-    :documentation "Whether the attempt streamed reasoning, text, or an item first.")
-   (retryable-p
-    :initarg :retryable-p
-    :reader provider-attempt-failed-event-retryable-p
-    :type boolean
-    :documentation "Whether the failure class is eligible for the retry ladder.")
-   (condition
-    :initarg :condition
-    :reader provider-attempt-failed-event-condition
-    :type provider-error
-    :documentation "The provider condition that ended the attempt."))
-  (:documentation
-   "One attempt of a provider request failed; carries the retry audit trail."))
-
-(define-condition provider-stream-abandoned (provider-error)
-  ((attempts
-    :initarg :attempts
-    :reader provider-stream-abandoned-attempts
-    :type (integer 1)
-    :documentation "How many attempts had streamed output before giving up."))
-  (:documentation
-   "A request kept failing after streaming output, past the streaming retry budget."))
-
-(-> provider--call-with-transient-retries
-    (function function &key (:sleep-function function) (:random-state random-state))
-    t)
-(defun provider--call-with-transient-retries
-       (attempt-function event-callback
-        &key (sleep-function *bounded-retry-sleep-function*)
-        (random-state *random-state*))
-  "Apply the product reconnect limits and jitter policy to the shared retry engine.
-
-ATTEMPT-FUNCTION receives the event callback to stream through, so each
-attempt's output is observed here. Every failed attempt is reported to
-EVENT-CALLBACK as a PROVIDER-ATTEMPT-FAILED-EVENT before the ladder decides.
-Failures before any output use *PROVIDER-MAXIMUM-TRANSIENT-RETRIES*; failures
-after output streamed are capped by *PROVIDER-MAXIMUM-STREAMING-RETRIES* and
-then end the request with PROVIDER-STREAM-ABANDONED."
-  (let ((attempt-number 0)
-        (streaming-failures 0)
-        (output-received-p nil)
-        (started-at 0))
-    (labels ((observe-event (event)
-               "Note streamed output before forwarding EVENT."
-               (when (typep event '(or assistant-delta-event
-                                       reasoning-delta-event
-                                       provider-item-event))
-                 (setf output-received-p t))
-               (funcall event-callback event))
-
-             (elapsed-seconds ()
-               "Return whole seconds since the current attempt started."
-               (max 0 (round (- (get-internal-real-time) started-at)
-                             internal-time-units-per-second)))
-
-             (note-failure (condition)
-               "Report CONDITION and enforce the streaming retry budget."
-               (let ((retryable-p (typep condition 'provider-retryable-error)))
-                 (funcall event-callback
-                          (make-instance 'provider-attempt-failed-event
-                                         :attempt attempt-number
-                                         :elapsed-seconds (elapsed-seconds)
-                                         :output-received-p output-received-p
-                                         :retryable-p retryable-p
-                                         :condition condition))
-                 (when (and retryable-p output-received-p)
-                   (incf streaming-failures)
-                   (when (> streaming-failures
-                            *provider-maximum-streaming-retries*)
-                     (error 'provider-stream-abandoned
-                            :message
-                            (format nil
-                                    "The provider stream failed after model output began on ~D attempts; giving up instead of billing another generation. Last failure: ~A"
-                                    streaming-failures
-                                    condition)
-                            :status (provider-error-status condition)
-                            :code (provider-error-code condition)
-                            :request-id (provider-error-request-id condition)
-                            :response-id (provider-error-response-id condition)
-                            :response (provider-error-response condition)
-                            :attempts streaming-failures)))))
-
-             (attempt ()
-               "Run one attempt with fresh output tracking."
-               (incf attempt-number)
-               (setf output-received-p nil
-                     started-at (get-internal-real-time))
-               (handler-bind
-                   ((provider-error
-                      (lambda (condition)
-                        (unless (typep condition 'provider-resample-requested)
-                          (note-failure condition)))))
-                 (funcall attempt-function #'observe-event))))
-      (call-with-bounded-retries
-       #'attempt #'observe-event
-       :maximum-retries *provider-maximum-transient-retries*
-       :sleep-function sleep-function
-       :delay-function
-       (lambda (retry-number condition)
-         (declare (ignore condition))
-         (let ((base-delay (min 50 (ash 1 (min 6 (1- retry-number))))))
-           (max 1
-                (min 60
-                     (round
-                      (* base-delay
-                         (+ 0.8d0 (random 0.4d0 random-state))))))))))))
-
 (-> provider--call-with-bounded-retries
     (subscription-provider function function)
     t)
@@ -1023,36 +859,27 @@ each attempt must stream through."
   (labels ((attempt-with-authentication (event-callback)
              "Run one logical request with bounded credential recovery."
              (let* ((manager (provider-credential-manager provider))
-                    (refreshable-p
-                      (credential-manager-refreshable-p manager))
-                    (maximum-attempts (if refreshable-p 2 1)))
-               (loop for attempt-number from 1 to maximum-attempts
-                     for force-refresh = (and refreshable-p
-                                              (= attempt-number 2))
-                     do (handler-case
-                            (return-from attempt-with-authentication
-                              (provider--call-with-transport-normalization
-                               (lambda ()
-                                 (funcall attempt-function
-                                          force-refresh event-callback))))
-                          (provider-unauthorized ()
-                            (when (= attempt-number maximum-attempts)
-                              (error 'authentication-error
-                                     :message
-                                     (if refreshable-p
-                                         (format nil
-                                                 "~A rejected Autolith's credentials after a bounded refresh."
-                                                 (provider-account-label provider))
-                                         (format nil
-                                                 "~A rejected Autolith's API key; ~A."
-                                                 (provider-account-label provider)
-                                                 (credential-manager-login-hint manager))))))))
-               (error 'authentication-error
-                      :message
-                      (format nil "~A authentication retry ended unexpectedly."
-                              (provider-account-label provider))))))
-    (provider--call-with-transient-retries
-     #'attempt-with-authentication event-callback)))
+                    (refreshable-p (credential-manager-refreshable-p manager)))
+               (call-with-credential-refresh
+                (lambda (force-refresh)
+                  (provider--call-with-transport-normalization
+                   (lambda ()
+                     (funcall attempt-function force-refresh event-callback))))
+                :refreshable-p refreshable-p
+                :exhausted-function
+                (lambda (condition)
+                  (declare (ignore condition))
+                  (error 'authentication-error
+                         :message
+                         (if refreshable-p
+                             (format nil
+                                     "~A rejected Autolith's credentials after a bounded refresh."
+                                     (provider-account-label provider))
+                             (format nil
+                                     "~A rejected Autolith's API key; ~A."
+                                     (provider-account-label provider)
+                                     (credential-manager-login-hint manager)))))))))
+    (call-with-streaming-retries #'attempt-with-authentication event-callback)))
 
 (defmethod provider-stream-turn
     ((provider subscription-provider)

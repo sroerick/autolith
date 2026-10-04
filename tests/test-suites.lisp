@@ -240,10 +240,7 @@
   test-provider-usage-limit-terminal
   test-provider-credential-echo-containment
   test-provider-authentication-retries
-  test-provider-persistent-transient-retries
-  test-provider-streaming-retry-budget
   test-agent-attempt-failure-metadata
-  test-provider-stream-inactivity-deadline
   test-provider-response-deadlines
   test-provider-stream-retries)
 

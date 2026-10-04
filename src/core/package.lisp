@@ -270,6 +270,20 @@
                 #:browser-authentication-request
                 #:browser-authentication-token-document)
   (:import-from #:cl-llm-provider-api
+                #:*provider-maximum-streaming-retries*
+                #:*provider-maximum-transient-retries*
+                #:*sse-inactivity-seconds*
+                #:call-with-credential-refresh
+                #:call-with-streaming-retries
+                #:provider-attempt-failed-event
+                #:provider-attempt-failed-event-attempt
+                #:provider-attempt-failed-event-condition
+                #:provider-attempt-failed-event-elapsed-seconds
+                #:provider-attempt-failed-event-output-received-p
+                #:provider-attempt-failed-event-retryable-p
+                #:provider-stream-abandoned
+                #:provider-stream-abandoned-attempts
+                #:sse-read-line-within-inactivity-deadline
                 #:*provider-registry-error-class*
                 #:model-list-decode
                 #:model-spec-name
