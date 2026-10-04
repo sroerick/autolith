@@ -405,73 +405,13 @@ filesystem paths are only a programmatic Lisp designator."
                      (t
                       (rlm--tool-object-content context object)))))))))
 
-(-> rlm--json-schema-type (t) keyword)
-(defun rlm--json-schema-type (type)
-  "Convert a JSON Schema TYPE string to the native schema keyword."
-  (unless (stringp type)
-    (error 'rlm-inference-error
-           :message "A contract type must be a JSON Schema type string."))
-  (intern (string-upcase type) '#:keyword))
-
 (-> rlm--json-schema->contract (t) list)
 (defun rlm--json-schema->contract (schema)
   "Convert the JSON Schema object SCHEMA to a native output schema plist."
-  (unless (json-object-p schema)
-    (error 'rlm-inference-error
-           :message "A contract must be one JSON Schema object."))
-  (let ((contract nil))
-    (let ((maximum (or (json-get schema "maxItems")
-                       (json-get schema "max-items"))))
-      (when maximum
-        (setf contract (list* ':max-items maximum contract))))
-    (let ((minimum (or (json-get schema "minItems")
-                       (json-get schema "min-items"))))
-      (when minimum
-        (setf contract (list* ':min-items minimum contract))))
-    (let ((items (json-get schema "items")))
-      (when items
-        (setf contract
-              (list* ':items (rlm--json-schema->contract items) contract))))
-    (multiple-value-bind (additional additional-present-p)
-        (gethash "additionalProperties" schema)
-      (when additional-present-p
-        (setf contract
-              (list* ':additional-properties (eq additional t) contract))))
-    (let ((required (json-get schema "required")))
-      (when required
-        (setf contract
-              (list* ':required (coerce required 'list) contract))))
-    (let ((properties (json-get schema "properties")))
-      (when properties
-        (unless (json-object-p properties)
-          (error 'rlm-inference-error
-                 :message "Contract properties must be one JSON object."))
-        (setf contract
-              (list* ':properties
-                     (sort
-                      (loop for name being the hash-keys of properties
-                              using (hash-value child)
-                            collect (list name
-                                          (rlm--json-schema->contract child)))
-                      #'string<
-                      :key #'first)
-                     contract))))
-    (let ((enum (json-get schema "enum")))
-      (when enum
-        (setf contract
-              (list* ':enum
-                     ;; Native NIL and :NULL denote JSON false and null in
-                     ;; enum positions, so the exact decoder's false maps.
-                     (loop for value across enum
-                           collect (if (json-false-p value) nil value))
-                     contract))))
-    (let ((type (json-get schema "type")))
-      (when type
-        (setf contract (list* ':type (rlm--json-schema-type type) contract))))
-    (unless contract
+  (handler-case (cl-llm-provider-api:output-json-schema->schema schema)
+    (cl-llm-provider-api:output-contract-error (condition)
       (error 'rlm-inference-error
-             :message "A contract requires at least a type or an enum."))
-    contract))
+             :message (cl-llm-provider-api:provider-api-error-message condition)))))
 
 (-> rlm--tool-capabilities (t) (option keyword))
 (defun rlm--tool-capabilities (capabilities)

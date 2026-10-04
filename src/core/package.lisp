@@ -406,6 +406,7 @@
                 #:rlm-budget-remaining-calls
                 #:rlm-budget-remaining-tokens
                 #:rlm-budget-settle-output
+                #:rlm-usage-billable-tokens
                 #:rlm-context-object
                 #:rlm-context-object-characters
                 #:rlm-context-object-digest

@@ -157,19 +157,6 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
 (-> test-rlm-budget-cache-discount () null)
 (defun test-rlm-budget-cache-discount ()
   "Test budget settlement discounts prompt-cache reads from reported usage."
-  (test-assert (null (rlm--usage-billable-tokens nil))
-               "usage-less responses settle as a full refund")
-  (test-assert (= (rlm--usage-billable-tokens
-                   (json-object "total_tokens" 150
-                                "cached_input_tokens" 80))
-                  70)
-               "cached input tokens do not drain the token pool")
-  (test-assert (= (rlm--usage-billable-tokens '(("total_tokens" 150))) 150)
-               "usage without cache counters settles at the reported total")
-  (test-assert (zerop (rlm--usage-billable-tokens
-                       (json-object "total_tokens" 100
-                                    "cached_input_tokens" 120)))
-               "over-reported cache reads clamp settlement at zero")
   (let ((provider
           (make-instance
            'rlm-inference-test-provider

@@ -189,54 +189,19 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
               "Reply with exactly one JSON value satisfying this JSON Schema, and nothing else:~%~A"
               (json-encode (task-output-schema->json contract)))))
 
-(-> rlm--parse-structured (string) (values t boolean))
-(defun rlm--parse-structured (text)
-  "Return the JSON value TEXT carries and whether one was found.
-
-Any JSON value is accepted, tolerating surrounding prose or fences
-around one object or array. The exact task decoder keeps false and
-null distinguishable, matching the contract validator."
-  (flet ((decode (candidate)
-           (handler-case
-               (values (task-json-decode candidate :tool-name "rlm") t)
-             (error () (values nil nil)))))
-    (let ((trimmed (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
-      (multiple-value-bind (value found-p) (decode trimmed)
-        (if found-p
-            (values value t)
-            (let* ((object-start (position #\{ trimmed))
-                   (array-start (position #\[ trimmed))
-                   (start (if (and object-start array-start)
-                              (min object-start array-start)
-                              (or object-start array-start)))
-                   (end (and start
-                             (position (if (eql start array-start) #\] #\})
-                                       trimmed :from-end t))))
-              (if (and start end (< start end))
-                  (decode (subseq trimmed start (1+ end)))
-                  (values nil nil))))))))
-
 (-> rlm--contract-value (t (option string)) (values t boolean (option string)))
 (defun rlm--contract-value (contract text)
-  "Return CONTRACT's value in TEXT, its validity, and any repair reason."
-  (let ((trimmed (and text
-                      (string-trim '(#\Space #\Tab #\Newline #\Return) text))))
-    (cond
-      ((not (non-empty-string-p trimmed))
-       (values nil nil "The response contained no answer text."))
-      ((eq contract ':text)
-       (values trimmed t nil))
-      (t
-       (multiple-value-bind (value found-p) (rlm--parse-structured trimmed)
-         (cond
-           ((not found-p)
-            (values nil nil
-                    "The response did not contain one parseable JSON value."))
-           ((not (task-output-schema-valid-p value contract))
-            (values nil nil
-                    "The JSON value does not satisfy the required schema."))
-           (t
-            (values (task-json->sexp value) t nil))))))))
+  "Return CONTRACT's value in TEXT, its validity, and any repair reason.
+
+A :TEXT contract accepts any nonempty answer; a schema contract reads one JSON
+value from the text through the library's answer reader."
+  (if (eq contract ':text)
+      (let ((trimmed (and text
+                          (string-trim '(#\Space #\Tab #\Newline #\Return) text))))
+        (if (non-empty-string-p trimmed)
+            (values trimmed t nil)
+            (values nil nil "The response contained no answer text.")))
+      (cl-llm-provider-api:output-text-answer text contract)))
 
 (-> rlm--frame-request (string list string) string)
 (defun rlm--frame-request (task views instructions)
@@ -292,21 +257,6 @@ pass (context-slice ...) directly instead of wrapping it in a list."
         nil)))
   nil)
 
-(-> rlm--usage-billable-tokens (t) (option integer))
-(defun rlm--usage-billable-tokens (usage)
-  "Return USAGE's token total with prompt-cache reads discounted.
-
-Cache-read tokens are repeated context served from the provider prompt
-cache. Charging them at full weight would exhaust a shared-prefix run's
-token budget long before its genuinely new work, so settlement charges
-the reported total minus the cached input tokens."
-  (let ((total (conversation--usage-total usage)))
-    (and total
-         (max 0
-              (- total
-                 (or (conversation--usage-field usage "cached_input_tokens")
-                     0))))))
-
 (-> rlm--run-direct-inference
     (string string t rlm-budget model-provider conversation
      &key (:activity-callback (option function)))
@@ -336,7 +286,7 @@ the reported total minus the cached input tokens."
                                                         (declare (ignore event))
                                                         nil)))))
                         (rlm--record-response conversation result)
-                        (let ((billable (rlm--usage-billable-tokens
+                        (let ((billable (rlm-usage-billable-tokens
                                          (provider-usage-normalize
                                           (provider-result-usage result)))))
                           (incf tokens-spent (or billable 0))
@@ -399,7 +349,7 @@ returns the billable tokens settled so far."
           tranche)
          (:provider-request-completed
           (when tranche
-            (let ((billable (rlm--usage-billable-tokens
+            (let ((billable (rlm-usage-billable-tokens
                              (getf details ':usage))))
               (incf tokens-spent (or billable 0))
               (rlm-budget-settle-output budget (shiftf tranche nil)
