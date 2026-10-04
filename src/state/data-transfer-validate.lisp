@@ -153,7 +153,7 @@
     (when (eq (getf file :area) ':input)
       (unless (and (equal (getf file :path)
                           (list (format nil "~A.image" (data-transfer--digest (getf file :bytes)))))
-                   (image-input--format (getf file :bytes)))
+                   (yolokuva:image-format (getf file :bytes)))
         (data-transfer--fail pathname ':invalid "Queued image content or digest is invalid.")))
     (if (eq (getf file :area) ':context)
         (unless (and (equal (getf file :owner) (data-transfer--digest (getf file :bytes)))

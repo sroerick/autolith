@@ -918,19 +918,6 @@
                 #:response-body
                 #:response-headers
                 #:response-status)
-  (:import-from #:opticl
-                #:8-bit-gray-alpha-image
-                #:8-bit-gray-image
-                #:8-bit-rgb-image
-                #:8-bit-rgba-image
-                #:coerce-image
-                #:gray-alpha-image
-                #:gray-image
-                #:read-image-stream
-                #:resize-image
-                #:rgb-image
-                #:rgba-image
-                #:write-png-file)
   (:import-from #:quri
                 #:uri
                 #:uri-host

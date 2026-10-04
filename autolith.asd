@@ -44,7 +44,6 @@
                #:ls-flock
                #:bordeaux-threads
                #:mcparen/managed
-               #:opticl
                #:org-templater
                #:parenchek
                #:quri
@@ -55,6 +54,8 @@
                #:sbcl-generations
                #:sbcl-workers
                #:surgeon
+               #:yolokuva
+               #:yolokuva/opticl
                #:sexp-config
                #:sexp-store
                #:sophisticated-clipboard

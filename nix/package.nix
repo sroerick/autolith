@@ -52,7 +52,7 @@ let
     "clifff" "clinedi" "clinker-transcript" "colordiff" "colorlisp" "fetch-gist"
     "idsmall" "image-daemon" "lambda-debugger" "ls-compat" "ls-flock" "mcparen" "org-templater"
     "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config" "sexp-store"
-    "sophisticated-clipboard" "structlisp" "surgeon"
+    "sophisticated-clipboard" "structlisp" "surgeon" "yolokuva"
   ];
   qlotSourcesWithoutBuildMetadata =
     lib.subtractLists qlotLibrariesWithBuildMetadata (builtins.attrNames qlotGitSources);
@@ -370,6 +370,14 @@ let
     ]);
   };
 
+  yolokuva = pkgs.sbcl.buildASDFSystem {
+    pname = "yolokuva";
+    version = qlotVersion "yolokuva";
+    src = qlotSource "yolokuva";
+    systems = [ "yolokuva" "yolokuva/opticl" ];
+    lispLibs = with pkgs.sbclPackages; [ opticl ];
+  };
+
   surgeon = pkgs.sbcl.buildASDFSystem {
     pname = "surgeon";
     version = qlotVersion "surgeon";
@@ -501,7 +509,6 @@ let
       fiveam
       fetchGist
       ironclad
-      opticl
       parenchek
       orgTemplater
       quri
@@ -533,6 +540,7 @@ let
       sophisticatedClipboard
       structlisp
       surgeon
+      yolokuva
     ];
     nativeBuildInputs = [ pkgs.git ];
 

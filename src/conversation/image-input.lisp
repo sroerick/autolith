@@ -111,6 +111,8 @@
     :documentation "The prepared image height in pixels."))
   (:documentation "A validated provider-ready image stored outside conversation text."))
 
+(setf yolokuva:*image-error-class* 'image-input-error)
+
 (-> image-input--error (pathname keyword string &optional t) null)
 (defun image-input--error (pathname stage message &optional cause)
   "Signal a structured image failure for PATHNAME at STAGE."
@@ -120,468 +122,91 @@
          :stage stage
          :cause cause))
 
-(-> image-input--octets-match-p
-    ((simple-array (unsigned-byte 8) (*)) integer list)
-    boolean)
-(defun image-input--octets-match-p (bytes start expected)
-  "Return true when BYTES contains EXPECTED octets beginning at START."
-  (and (<= (+ start (length expected)) (length bytes))
-       (loop for expected-octet in expected
-             for index from start
-             always (= (aref bytes index) expected-octet))))
+(-> image-input--limits () list)
+(defun image-input--limits ()
+  "Return the Codex high-detail size limits as yolokuva keyword arguments."
+  (list :maximum-dimension *image-input-maximum-dimension*
+        :patch-size *image-input-patch-size*
+        :maximum-patches *image-input-maximum-patches*))
 
-(-> image-input--ascii-match-p
-    ((simple-array (unsigned-byte 8) (*)) integer string)
-    boolean)
-(defun image-input--ascii-match-p (bytes start expected)
-  "Return true when BYTES contains ASCII EXPECTED beginning at START."
-  (and (<= (+ start (length expected)) (length bytes))
-       (loop for character across expected
-             for index from start
-             always (= (aref bytes index) (char-code character)))))
-
-(-> image-input--unsigned-little-endian
-    ((simple-array (unsigned-byte 8) (*)) integer integer)
-    integer)
-(defun image-input--unsigned-little-endian (bytes start count)
-  "Decode COUNT little-endian octets from BYTES beginning at START."
-  (loop for index from start below (+ start count)
-        for shift from 0 by 8
-        sum (ash (aref bytes index) shift)))
-
-(-> image-input--unsigned-big-endian
-    ((simple-array (unsigned-byte 8) (*)) integer integer)
-    integer)
-(defun image-input--unsigned-big-endian (bytes start count)
-  "Decode COUNT big-endian octets from BYTES beginning at START."
-  (loop with value = 0
-        for index from start below (+ start count)
-        do (setf value (+ (ash value 8) (aref bytes index)))
-        finally (return value)))
-
-(-> image-input--format
-    ((simple-array (unsigned-byte 8) (*)))
-    (option keyword))
-(defun image-input--format (bytes)
-  "Recognize a supported prompt-image format from leading BYTES."
-  (cond
-    ((image-input--octets-match-p bytes 0 '(137 80 78 71 13 10 26 10))
-     ':png)
-    ((image-input--octets-match-p bytes 0 '(255 216 255))
-     ':jpeg)
-    ((or (image-input--ascii-match-p bytes 0 "GIF87a")
-         (image-input--ascii-match-p bytes 0 "GIF89a"))
-     ':gif)
-    ((and (image-input--ascii-match-p bytes 0 "RIFF")
-          (image-input--ascii-match-p bytes 8 "WEBP"))
-     ':webp)
-    (t
-     nil)))
-
-(-> image-input--jpeg-dimensions
-    ((simple-array (unsigned-byte 8) (*)))
-    (values integer integer))
-(defun image-input--jpeg-dimensions (bytes)
-  "Return JPEG width and height from complete BYTES."
-  (block image-input--jpeg-dimensions
-    (let ((position 2))
-      (loop while (< (+ position 3) (length bytes))
-            do (if (/= (aref bytes position) #xff)
-                   (incf position)
-                   (progn
-                     (loop while (and (< position (length bytes))
-                                      (= (aref bytes position) #xff))
-                           do (incf position))
-                     (when (>= position (length bytes))
-                       (return))
-                     (let ((marker (aref bytes position)))
-                       (incf position)
-                       (cond
-                         ((member marker '(#xd8 #xd9 #x01))
-                          nil)
-                         ((<= #xd0 marker #xd7)
-                          nil)
-                         ((>= (+ position 1) (length bytes))
-                          (return))
-                         (t
-                          (let ((segment-length
-                                  (image-input--unsigned-big-endian
-                                   bytes position 2)))
-                            (when (or (< segment-length 2)
-                                      (> (+ position segment-length)
-                                         (length bytes)))
-                              (return))
-                            (when (and
-                                   (member marker
-                                           '(#xc0 #xc1 #xc2 #xc3 #xc5 #xc6 #xc7
-                                             #xc9 #xca #xcb #xcd #xce #xcf))
-                                   (<= (+ position 6) (length bytes)))
-                              (return-from image-input--jpeg-dimensions
-                                (values
-                                 (image-input--unsigned-big-endian
-                                  bytes (+ position 5) 2)
-                                 (image-input--unsigned-big-endian
-                                  bytes (+ position 3) 2))))
-                            (incf position segment-length)))))))))
-    (values 0 0)))
-
-(-> image-input--webp-dimensions
-    ((simple-array (unsigned-byte 8) (*)))
-    (values integer integer))
-(defun image-input--webp-dimensions (bytes)
-  "Return WebP width and height from leading BYTES."
-  (cond
-    ((image-input--ascii-match-p bytes 12 "VP8X")
-     (if (>= (length bytes) 30)
-         (values (1+ (image-input--unsigned-little-endian bytes 24 3))
-                 (1+ (image-input--unsigned-little-endian bytes 27 3)))
-         (values 0 0)))
-    ((image-input--ascii-match-p bytes 12 "VP8L")
-     (if (and (>= (length bytes) 25) (= (aref bytes 20) #x2f))
-         (let ((b0 (aref bytes 21))
-               (b1 (aref bytes 22))
-               (b2 (aref bytes 23))
-               (b3 (aref bytes 24)))
-           (values (1+ (logior b0 (ash (logand b1 #x3f) 8)))
-                   (1+ (logior (ash b1 -6)
-                               (ash b2 2)
-                               (ash (logand b3 #x0f) 10)))))
-         (values 0 0)))
-    ((and (image-input--ascii-match-p bytes 12 "VP8 ")
-          (image-input--octets-match-p bytes 23 '(157 1 42))
-          (>= (length bytes) 30))
-     (values (logand (image-input--unsigned-little-endian bytes 26 2) #x3fff)
-             (logand (image-input--unsigned-little-endian bytes 28 2) #x3fff)))
-    (t
-     (values 0 0))))
-
-(-> image-input--dimensions
-    (keyword (simple-array (unsigned-byte 8) (*)))
-    (values integer integer))
-(defun image-input--dimensions (format bytes)
-  "Return FORMAT's width and height from complete or leading BYTES."
-  (case format
-    (:png
-     (if (>= (length bytes) 24)
-         (values (image-input--unsigned-big-endian bytes 16 4)
-                 (image-input--unsigned-big-endian bytes 20 4))
-         (values 0 0)))
-    (:gif
-     (if (>= (length bytes) 10)
-         (values (image-input--unsigned-little-endian bytes 6 2)
-                 (image-input--unsigned-little-endian bytes 8 2))
-         (values 0 0)))
-    (:jpeg
-     (image-input--jpeg-dimensions bytes))
-    (:webp
-     (image-input--webp-dimensions bytes))
-    (t
-     (values 0 0))))
-
-(-> image-input--read-file
-    (pathname)
-    (simple-array (unsigned-byte 8) (*)))
-(defun image-input--read-file (pathname)
-  "Read PATHNAME after enforcing the source-byte sanity limit."
-  (with-open-file (stream pathname
-                          :direction ':input
-                          :element-type '(unsigned-byte 8))
-    (let ((length (file-length stream)))
-      (when (> length *image-input-maximum-source-bytes*)
-        (image-input--error
-         pathname
-         ':recognition
-         (format nil "Image ~A is larger than the ~:D-byte input limit."
-                 pathname
-                 *image-input-maximum-source-bytes*)))
-      (let ((bytes (make-array length :element-type '(unsigned-byte 8))))
-        (unless (= (read-sequence bytes stream) length)
-          (image-input--error pathname ':recognition
-                              (format nil "Image ~A could not be read completely."
-                                      pathname)))
-        bytes))))
-
-(defparameter *image-input-inspection-prefix-bytes* 30
-  "The leading bytes identifying every format and every non-JPEG dimension.")
+(-> image-input--absolute (pathname) pathname)
+(defun image-input--absolute (pathname)
+  "Return PATHNAME resolved through the platform, or signal a recognition failure."
+  (handler-case
+      (platform-truename *platform* pathname)
+    (error (condition)
+      (image-input--error
+       pathname ':recognition
+       (format nil "Image ~A does not exist or cannot be read." pathname)
+       condition))))
 
 (-> image-input--inspect
     (pathname)
     (values keyword integer integer))
 (defun image-input--inspect (pathname)
-  "Identify PATHNAME, returning its image format and pixel dimensions.
-
-Only JPEG reads the complete file, because its dimension marker can
-follow arbitrarily large metadata segments; every other supported
-format is identified from the leading bytes alone."
-  (let ((absolute
-          (handler-case
-              (platform-truename *platform* pathname)
-            (error (condition)
-              (image-input--error
-               pathname ':recognition
-               (format nil "Image ~A does not exist or cannot be read." pathname)
-               condition)))))
-    (with-open-file (stream absolute
-                            :direction ':input
-                            :element-type '(unsigned-byte 8))
-      (let ((length (file-length stream)))
-        (when (> length *image-input-maximum-source-bytes*)
-          (image-input--error
-           absolute
-           ':recognition
-           (format nil "Image ~A is larger than the ~:D-byte input limit."
-                   absolute
-                   *image-input-maximum-source-bytes*)))
-        (let* ((prefix-length
-                 (min length *image-input-inspection-prefix-bytes*))
-               (bytes (make-array prefix-length
-                                  :element-type '(unsigned-byte 8))))
-          (unless (= (read-sequence bytes stream) prefix-length)
-            (image-input--error
-             absolute ':recognition
-             (format nil "Image ~A could not be read completely." absolute)))
-          (let ((format (image-input--format bytes)))
-            (unless format
-              (image-input--error
-               absolute ':recognition
-               (format nil
-                       "Autolith cannot attach ~A: use PNG, JPEG, GIF, or WebP."
-                       absolute)))
-            (when (eq format ':jpeg)
-              (let ((complete (make-array length
-                                          :element-type '(unsigned-byte 8))))
-                (replace complete bytes)
-                (unless (= (read-sequence complete stream
-                                          :start prefix-length)
-                           length)
-                  (image-input--error
-                   absolute ':recognition
-                   (format nil "Image ~A could not be read completely."
-                           absolute)))
-                (setf bytes complete)))
-            (multiple-value-bind (width height)
-                (image-input--dimensions format bytes)
-              (unless (and (plusp width) (plusp height))
-                (image-input--error
-                 absolute ':recognition
-                 (format nil "Image ~A has no valid pixel dimensions."
-                         absolute)))
-              (values format width height))))))))
-
-(-> image-input--dimensions-fit-p (integer integer) boolean)
-(defun image-input--dimensions-fit-p (width height)
-  "Return true when WIDTH and HEIGHT satisfy Codex high-detail limits."
-  (and (<= width *image-input-maximum-dimension*)
-       (<= height *image-input-maximum-dimension*)
-       (<= (* (ceiling width *image-input-patch-size*)
-              (ceiling height *image-input-patch-size*))
-           *image-input-maximum-patches*)))
-
-(-> image-input--target-dimensions (integer integer) (values integer integer))
-(defun image-input--target-dimensions (width height)
-  "Return WIDTH and HEIGHT reduced to Codex high-detail prompt limits."
-  (if (image-input--dimensions-fit-p width height)
-      (values width height)
-      (let* ((maximum (max width height))
-             (dimension-scale
-               (min 1.0d0 (/ *image-input-maximum-dimension*
-                             (coerce maximum 'double-float))))
-             (scaled-width (max 1 (round (* width dimension-scale))))
-             (scaled-height (max 1 (round (* height dimension-scale)))))
-        (if (image-input--dimensions-fit-p scaled-width scaled-height)
-            (values scaled-width scaled-height)
-            (let* ((patch-size (coerce *image-input-patch-size* 'double-float))
-                   (scale
-                     (sqrt (/ (* patch-size patch-size
-                                 *image-input-maximum-patches*)
-                              (* (coerce scaled-width 'double-float)
-                                 scaled-height))))
-                   (patches-wide (/ (* scaled-width scale) patch-size))
-                   (patches-high (/ (* scaled-height scale) patch-size))
-                   (adjusted-scale
-                     (* scale
-                        (min (/ (floor patches-wide) patches-wide)
-                             (/ (floor patches-high) patches-high)))))
-              (values (max 1 (floor (* scaled-width adjusted-scale)))
-                      (max 1 (floor (* scaled-height adjusted-scale)))))))))
-
-(-> image-input--decoded-image (pathname keyword) array)
-(defun image-input--decoded-image (pathname format)
-  "Decode PATHNAME as FORMAT through the pinned Lisp image codec."
-  (handler-case
-      (with-open-file (stream pathname
-                              :direction ':input
-                              :element-type '(unsigned-byte 8))
-        (read-image-stream stream
-                           (ecase format
-                             (:png "png")
-                             (:jpeg "jpeg")
-                             (:gif "gif"))))
-    (error (condition)
-      (image-input--error
-       pathname ':decoding
-       (format nil "Image ~A could not be decoded: ~A" pathname condition)
-       condition))))
-
-(-> image-input--8-bit-image (array) array)
-(defun image-input--8-bit-image (image)
-  "Coerce IMAGE to a PNG-writable eight-bit representation."
-  (cond
-    ((typep image 'rgba-image)
-     (coerce-image image '8-bit-rgba-image))
-    ((typep image 'rgb-image)
-     (coerce-image image '8-bit-rgb-image))
-    ((typep image 'gray-alpha-image)
-     (coerce-image image '8-bit-gray-alpha-image))
-    ((typep image 'gray-image)
-     (coerce-image image '8-bit-gray-image))
-    (t
-     (error "Unsupported decoded image representation ~S." (type-of image)))))
-
-(-> image-input--publish
-    (pathname pathname keyword integer integer string)
-    image-attachment)
-(defun image-input--publish
-    (source artifact-root format width height source-name)
-  "Prepare SOURCE under ARTIFACT-ROOT and return its immutable attachment."
-  (multiple-value-bind (target-width target-height)
-      (image-input--target-dimensions width height)
-    (let* ((identifier (make-identifier))
-           (preserve-p (and (member format '(:png :jpeg))
-                            (= width target-width)
-                            (= height target-height)))
-           (output-format (if preserve-p format ':png))
-           (extension (ecase output-format
-                        (:png "png")
-                        (:jpeg "jpg")))
-           (mime-type (ecase output-format
-                        (:png "image/png")
-                        (:jpeg "image/jpeg")))
-           (target (merge-pathnames
-                    (make-pathname :name identifier :type extension)
-                    artifact-root)))
-      (ensure-directories-exist target)
-      (platform-make-private *platform* artifact-root)
-      (handler-case
-          (progn
-            (publish-pathname
-             target
-             (lambda (temporary)
-               (if preserve-p
-                   (progn
-                     (image-input--decoded-image source format)
-                     (uiop:copy-file source temporary))
-                   (let* ((decoded (image-input--decoded-image source format))
-                          (resized
-                            (if (and (= width target-width)
-                                     (= height target-height))
-                                decoded
-                                (resize-image decoded
-                                              target-height target-width
-                                              :interpolate ':bilinear))))
-                     (write-png-file temporary
-                                     (image-input--8-bit-image resized))))))
-            (platform-make-private *platform* target :read-only-p t))
-        (image-input-error (condition)
-          (error condition))
-        (error (condition)
-          (image-input--error
-           source ':persistence
-           (format nil "Image ~A could not be stored: ~A" source condition)
-           condition)))
-      (make-instance 'image-attachment
-                     :identifier identifier
-                     :pathname target
-                     :source-name source-name
-                     :mime-type mime-type
-                     :width target-width
-                     :height target-height))))
+  "Identify PATHNAME, returning its image format and pixel dimensions."
+  (yolokuva:image-inspect (image-input--absolute pathname)
+                          :maximum-octets *image-input-maximum-source-bytes*))
 
 (-> image-input-prepare (pathname pathname) image-attachment)
 (defun image-input-prepare (source artifact-root)
-  "Validate and persist SOURCE beneath private ARTIFACT-ROOT."
-  (let ((absolute
+  "Validate SOURCE and publish its prompt-ready form privately beneath ARTIFACT-ROOT.
+
+The prepared image stays within the Codex high-detail limits: a fitting PNG,
+JPEG, or WebP image is copied, anything else becomes a resized PNG."
+  (let ((absolute (image-input--absolute source)))
+    (multiple-value-bind (format width height) (image-input--inspect absolute)
+      (multiple-value-bind (output-format target-width target-height)
+          (apply #'yolokuva:image-preparation format width height
+                 :pathname absolute (image-input--limits))
+        (let* ((identifier (make-identifier))
+               (target (merge-pathnames
+                        (make-pathname :name identifier
+                                       :type (ecase output-format
+                                               (:png "png")
+                                               (:jpeg "jpg")
+                                               (:webp "webp")))
+                        artifact-root)))
+          (ensure-directories-exist target)
+          (platform-make-private *platform* artifact-root)
           (handler-case
-              (platform-truename *platform* source)
+              (progn
+                (publish-pathname
+                 target
+                 (lambda (temporary)
+                   (yolokuva:image-write-prepared absolute temporary
+                                                  :source-format format
+                                                  :output-format output-format
+                                                  :width target-width
+                                                  :height target-height)))
+                (platform-make-private *platform* target :read-only-p t))
+            (image-input-error (condition)
+              (error condition))
             (error (condition)
               (image-input--error
-               source ':recognition
-               (format nil "Image ~A does not exist or cannot be read." source)
-               condition)))))
-    (multiple-value-bind (format width height)
-        (image-input--inspect absolute)
-      (when (and (eq format ':webp)
-                 (not (image-input--dimensions-fit-p width height)))
-        (image-input--error
-         absolute ':resizing
-         (format nil
-                 "WebP image ~A is ~Dx~D; use one within the high-detail image limits."
-                 absolute width height)))
-      (if (eq format ':webp)
-          (let* ((identifier (make-identifier))
-                 (target (merge-pathnames
-                          (make-pathname :name identifier :type "webp")
-                          artifact-root)))
-            (ensure-directories-exist target)
-            (platform-make-private *platform* artifact-root)
-            (publish-pathname target
-                              (lambda (temporary)
-                                (uiop:copy-file absolute temporary)))
-            (platform-make-private *platform* target :read-only-p t)
-            (make-instance 'image-attachment
-                           :identifier identifier
-                           :pathname target
-                           :source-name (namestring absolute)
-                           :mime-type "image/webp"
-                           :width width
-                           :height height))
-          (image-input--publish absolute artifact-root format width height
-                                (namestring absolute))))))
+               absolute ':persistence
+               (format nil "Image ~A could not be stored: ~A" absolute condition)
+               condition)))
+          (make-instance 'image-attachment
+                         :identifier identifier
+                         :pathname target
+                         :source-name (namestring absolute)
+                         :mime-type (yolokuva:image-mime-type output-format)
+                         :width target-width
+                         :height target-height))))))
 
 
 ;;;; -- Paste Recognition --
 
-(-> image-input--unquote-pasted-path (string) (option string))
-(defun image-input--unquote-pasted-path (text)
-  "Return one POSIX shell-like path token from pasted TEXT, or NIL."
-  (let ((result (make-string-output-stream))
-        (quote nil)
-        (escaped-p nil))
-    (loop for character across (string-trim '(#\Space #\Tab #\Newline #\Return)
-                                             text)
-          do (cond
-               (escaped-p
-                (write-char character result)
-                (setf escaped-p nil))
-               ((and (null quote) (char= character #\\))
-                (setf escaped-p t))
-               ((and (null quote) (member character '(#\' #\")))
-                (setf quote character))
-               ((and quote (char= character quote))
-                (setf quote nil))
-               ((and (null quote) (find character '(#\Space #\Tab #\Newline)))
-                (return-from image-input--unquote-pasted-path nil))
-               (t
-                (write-char character result))))
-    (if (or quote escaped-p)
-        nil
-        (get-output-stream-string result))))
-
 (-> image-input-normalize-pasted-path (string) (option pathname))
 (defun image-input-normalize-pasted-path (text)
-  "Normalize one pasted local path or file URL into an absolute pathname."
-  (let ((token (image-input--unquote-pasted-path text)))
-    (when (non-empty-string-p token)
-      (let* ((file-url-p (uiop:string-prefix-p "file://" token))
-             (decoded
-               (if file-url-p
-                   (url-decode (subseq token (length "file://")))
-                   token))
-             (pathname
-               (uiop:ensure-pathname (platform-pathname decoded)
-                                     :defaults (uiop:getcwd)
-                                     :ensure-absolute t
-                                     :want-non-wild t)))
+  "Normalize one pasted local path or file URL into an absolute existing pathname."
+  (let ((path (clinedi:pasted-path text)))
+    (when (non-empty-string-p path)
+      (let ((pathname (uiop:ensure-pathname (platform-pathname path)
+                                            :defaults (uiop:getcwd)
+                                            :ensure-absolute t
+                                            :want-non-wild t)))
         (and (uiop:file-exists-p pathname) (platform-truename *platform* pathname))))))
 
 (-> image-input-recognize-pasted-path (string) (option pathname))
@@ -683,33 +308,24 @@ format is identified from the leading bytes alone."
 
 (-> image-input--data-url (image-attachment) string)
 (defun image-input--data-url (attachment)
-  "Return ATTACHMENT as a base64 data URL for one provider request.
-
-The URL is pure ASCII, so it is built as a compact base string without
-materializing a separate intermediate base64 string."
-  (let ((bytes (image-input--read-file (image-attachment-pathname attachment))))
-    (with-output-to-string (stream nil :element-type 'base-char)
-      (write-string "data:" stream)
-      (write-string (image-attachment-mime-type attachment) stream)
-      (write-string ";base64," stream)
-      (usb8-array-to-base64-stream bytes stream))))
+  "Return ATTACHMENT as a base64 data URL for one provider request."
+  (yolokuva:image-data-url
+   (yolokuva:image-read-octets (image-attachment-pathname attachment)
+                               :maximum-octets *image-input-maximum-source-bytes*)
+   (image-attachment-mime-type attachment)))
 
 (-> image-input-content-item (image-attachment) json-object)
 (defun image-input-content-item (attachment)
   "Return ATTACHMENT as one Codex-compatible provider image item."
-  (json-object
-   "type" "input_image"
-   "image_url" (image-input--data-url attachment)
-   "detail" "high"))
+  (clinker-transcript:input-image-item (image-input--data-url attachment)))
 
 (-> image-input-content-items (image-attachment integer) list)
 (defun image-input-content-items (attachment label-number)
   "Return Codex-compatible provider content for ATTACHMENT labelled LABEL-NUMBER."
   (list
-   (json-object
-    "type" "input_text"
-    "text" (format nil "<image name=[Image #~D] path=\"~A\">"
-                   label-number
-                   (image-attachment-source-name attachment)))
+   (clinker-transcript:input-text-item
+    (format nil "<image name=[Image #~D] path=\"~A\">"
+            label-number
+            (image-attachment-source-name attachment)))
    (image-input-content-item attachment)
-   (json-object "type" "input_text" "text" "</image>")))
+   (clinker-transcript:input-text-item "</image>")))
