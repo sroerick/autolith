@@ -79,22 +79,6 @@ input with echo off and bracketed paste stripped). The five near-identical
 mistral (about 75 lines each, differing only in data) should collapse into one
 data-driven definition regardless of extraction.
 
-** Overrides and copies of pinned libraries
-- =client.lisp= 26-34 and 159-168 re-declare the library's own
-  =provider-account-label= and =provider-note-response-headers= generics, and
-  30-34 and 187-191 replace its default methods; which wins depends on load
-  order. The library should ask the registration instead.
-- =provider-user-agent= (client.lisp 511-518) duplicates
-  =authentication-user-agent=; =provider--epoch-local-time= (657-663) hard-codes
-  the epoch offset cl-rfc8628 already encodes; =oauth--base64url= belongs with
-  cl-rfc8628's helpers.
-- Every provider repeats the same streaming =dexador:post= call (fireworks,
-  anthropic, nous, grok, openai-compatible 481-499, client.lisp 560-612); one
-  helper in =/dexador= removes it.
-- The secret-use counter (=provider/authentication.lisp= 5-67) is already wired
-  as cl-rfc8628's =*secret-region-function*=; sbcl-generations could own it as
-  a checkpoint guard, otherwise leave it.
-
 * Tools, resources, workers, tasks and the rest
 
 Checked against the pinned versions in =.qlot/dists=, not the older checkouts.
