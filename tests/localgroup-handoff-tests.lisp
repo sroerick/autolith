@@ -3,10 +3,11 @@
 ;;;; -- Localgroup Process Handoff Tests --
 
 (-> test-localgroup--relay-application
-    (configuration &key (:persisted-p boolean))
+    (configuration &key (:persisted-p boolean) (:main-thread sb-thread:thread))
     (values application application-input-controller localgroup-terminal conversation))
-(defun test-localgroup--relay-application (configuration &key persisted-p)
-  "Return a leased APPLICATION with a foreground localgroup terminal relay."
+(defun test-localgroup--relay-application
+    (configuration &key persisted-p (main-thread (current-thread)))
+  "Return a leased application and terminal relay owned by MAIN-THREAD."
   (let* ((direct
            (stream-terminal-create
             :input-stream (make-string-input-stream "")
@@ -25,7 +26,7 @@
          (controller
            (make-instance 'application-input-controller
                           :application application
-                          :main-thread (current-thread))))
+                          :main-thread main-thread)))
     (when persisted-p
       (conversation-append-user-message conversation "persisted"))
     (setf (application-input-controller application) controller
@@ -599,6 +600,7 @@
              "Run one successful fake replacement for PERSISTED-P."
              (let* ((configuration (test-configuration))
                     (root (test-configuration-root configuration))
+                    (main-thread (test-localgroup--make-main-thread))
                     (application nil)
                     (controller nil)
                     (session nil)
@@ -608,8 +610,8 @@
                     (configuration-ensure-directories configuration)
                     (multiple-value-bind
                         (new-application new-controller relay conversation)
-                        (test-localgroup--relay-application configuration :persisted-p
-                         persisted-p)
+                        (test-localgroup--relay-application
+                         configuration :persisted-p persisted-p :main-thread main-thread)
                       (declare (ignore relay))
                       (setf application new-application
                             controller new-controller
@@ -656,12 +658,14 @@
                    (localgroup-stop application)
                    (application-release-conversation-lease application))
                  (when controller (application-input-controller-stop controller))
+                 (image-daemon:daemon-stop-thread main-thread)
                  (uiop/filesystem:delete-directory-tree root :validate t
                                                         :if-does-not-exist ':ignore)))))
     (run-success nil)
     (run-success t))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
+         (main-thread (test-localgroup--make-main-thread))
          (application nil)
          (controller nil)
          (session nil)
@@ -670,7 +674,8 @@
         (progn
          (configuration-ensure-directories configuration)
          (multiple-value-bind (new-application new-controller relay conversation)
-             (test-localgroup--relay-application configuration :persisted-p t)
+             (test-localgroup--relay-application
+              configuration :persisted-p t :main-thread main-thread)
            (declare (ignore relay conversation))
            (setf application new-application
                  controller new-controller
@@ -714,6 +719,7 @@
         (application-release-conversation-lease application))
       (when controller
         (application-input-controller-stop controller))
+      (image-daemon:daemon-stop-thread main-thread)
       (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
                                              ':ignore)))
   nil)

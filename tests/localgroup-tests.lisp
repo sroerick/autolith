@@ -2,6 +2,24 @@
 
 ;;;; -- Localgroup Tests --
 
+(-> test-localgroup--make-main-thread () sb-thread:thread)
+(defun test-localgroup--make-main-thread ()
+  "Return an idle application owner after installing its cancellation boundary."
+  (let* ((ready (sb-thread:make-semaphore :name "Localgroup test owner ready"))
+         (thread
+           (make-thread
+            (lambda ()
+              (loop
+                (handler-case
+                    (progn
+                      (sb-thread:signal-semaphore ready)
+                      (sleep 60))
+                  (application-turn-cancelled ()
+                    nil))))
+            :name "Localgroup test main thread")))
+    (sb-thread:wait-on-semaphore ready)
+    thread))
+
 (-> test-localgroup--application (configuration) (values application application-input-controller))
 (defun test-localgroup--application (configuration)
   "Return a minimal APPLICATION and responsive controller for localgroup tests."
@@ -488,9 +506,10 @@
          (application
           (make-instance 'application :configuration configuration :conversation
                          conversation :ui ui))
+         (main-thread (test-localgroup--make-main-thread))
          (controller
           (make-instance 'application-input-controller :application application
-                         :main-thread (current-thread)))
+                         :main-thread main-thread))
          (session nil)
          (socket nil)
          (stream nil))
@@ -569,6 +588,7 @@
         (ignore-errors (sb-bsd-sockets:socket-close socket)))
       (when session (localgroup-stop application))
       (application-input-controller-stop controller)
+      (image-daemon:daemon-stop-thread main-thread)
       (ignore-errors (terminal-stop relay))
       (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
                                              ':ignore)))
