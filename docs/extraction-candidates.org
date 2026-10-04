@@ -2,14 +2,16 @@
 
 * Terminal and application
 ** Layered source-tagged registry (new library, or structlisp)
-=src/application/command.lisp= 492-746. Ordered registration layers keyed by
-source and name, shadowing, an effective index with collision checks,
-snapshot/restore, and remove-by-source. The same shape is written three times:
-commands, =agent/context.lisp= 241 and 403, and the MCP registry. Providers
-moved to =cl-llm-provider-api/registry= on 2026-10-04, whose layering a shared
-library could adopt too; =startup/user-init.lisp= calls every remove-by-source
-function in a row. Cut: the extension transaction macro,
-=configuration-error=, and the command validation hook.
+=src/core/layered-registry.lisp= holds the list mechanics shared by commands,
+=agent/context.lisp= and the MCP registry: ordered registration layers keyed
+by source and name, replace and remove in place, remove-by-source, the
+effective source-ranked view, and position-preserving restore. Each caller
+still wraps them in its own lock, snapshot/restore and effective index with
+collision checks (=application/command.lisp= 484-724 is the largest).
+Providers moved to =cl-llm-provider-api/registry= on 2026-10-04, whose
+layering a shared library could adopt too; =startup/user-init.lisp= calls
+every remove-by-source function in a row. Cut: the extension transaction
+macro, =configuration-error=, and the command validation hook.
 
 ** Bounded, sanitising, throttled capture streams (new library, or ls-compat)
 2026-10-03: the two copies are one. =bounded-output-stream= in
