@@ -13,9 +13,10 @@ macro, =configuration-error=, and the command validation hook.
 ** Bounded, sanitising, throttled capture streams (new library, or ls-compat)
 2026-10-03: the two copies are one. =bounded-output-stream= in
 =core/streams.lisp= keeps a structlisp bounded builder prefix and the column on
-trivial-gray-streams; the management REPL uses it directly, and
-=async-lisp-output.lisp= subclasses it with ANSI stripping, a pending structlisp
-deque with omission counts, and the rate-limited sink. Moving the stream into a
+trivial-gray-streams, and =async-lisp-output.lisp= subclasses it with ANSI
+stripping, a pending structlisp deque with omission counts, and the rate-limited
+sink. Since 2026-10-04 the management REPL captures through image-daemon/eval's
+own bounded stream instead. Moving the stream into a
 library is still open. Cut: only =bounded-string= and =sanitize-text=, both
 already from clinedi.
 
@@ -191,16 +192,9 @@ storm guard, runtime lifecycle) stays.
      =platform-stream-status=, =platform-open-regular-file=,
      =platform-list-directory=, =platform-publish-new-file= and the privacy
      calls delegate to them instead of carrying parallel POSIX and Win32
-     implementations. The bounded reader (=core/streams.lisp=) and the path
-     confinement (=tools/workspace.lisp=) then follow, since both only need
-     that status protocol. Not started.
+     implementations. The bounded reader (=core/streams.lisp=) then follows,
+     since it only needs that status protocol. Not started.
 2. Provider authentication: the loopback OAuth login and the refresh grant are
    each written several times and partly copy cl-rfc8628.
 3. New libraries worth their own repository:
-   - the typed settings protocol
    - prompt image preparation.
-
-** Correctness findings surfaced by the survey
-- The identifier fallback in =make-identifier= is predictable while staging
-  names claim unpredictability.
-- The Gemini loopback callback reader is unbounded; the ChatGPT one is not.
