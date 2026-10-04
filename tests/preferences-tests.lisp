@@ -120,6 +120,17 @@ Source precedence, source recording, and value rejection belong to setinka."
                                (eq (getf plist :fullscreen-p) t)
                                (null (member :turn-timestamps-p plist)))
                           "storing merges into the file as another process left it")))
+          (snapshot-write pathname
+                          '(:preferences :version 8
+                            :model "first" :model "second"))
+          (let ((plist (preferences--read configuration)))
+            (test-assert (string= (getf plist :model) "first")
+                         "duplicate preference keys use their first value"))
+          (preferences-store configuration :compact-view-p t)
+          (test-assert (string= (getf (preferences-tests--file-plist configuration)
+                                     :model)
+                               "first")
+                       "preference writes retain first-value duplicate semantics")
           (dolist (version '(1 2 3 4 5 6 7 9))
             (let ((form (list ':preferences ':version version
                               ':model "gpt-5.6-luna"

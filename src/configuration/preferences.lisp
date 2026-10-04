@@ -3,11 +3,7 @@
 ;;;; -- Durable Settings --
 
 (defclass preferences-store (setting-store)
-  ((lock
-    :initform (make-lock "Autolith preferences store")
-    :reader preferences-store-lock
-    :type t
-    :documentation "The lock serializing preferences file reads and writes."))
+  ()
   (:documentation
    "The durable setting store kept in each configuration's preferences file."))
 
@@ -20,12 +16,11 @@ name; unknown keys survive rewrites so releases can share one file.")
 (-> preferences--form-p (t) boolean)
 (defun preferences--form-p (form)
   "Return true when FORM is one complete version 8 preferences record."
-  (and (consp form)
-       (eq (first form) ':preferences)
-       (listp (rest form))
-       (eql (getf (rest form) :version) *preferences-version*)
-       (loop for (key nil) on (rest form) by #'cddr
-             always (keywordp key))
+  (and (record-check form
+                     :tag ':preferences
+                     :versions (list *preferences-version*)
+                     :keyword-keys-p t
+                     :allow-duplicate-keys t)
        t))
 
 (-> preferences--form->plist (list) list)
@@ -40,50 +35,36 @@ name; unknown keys survive rewrites so releases can share one file.")
   "Return the version 8 record holding PLIST."
   (list* ':preferences ':version *preferences-version* plist))
 
+(-> preferences--store
+    (configuration &key (:recover-read-error (or null function)))
+    sexp-store:snapshot-store)
+(defun preferences--store (configuration &key recover-read-error)
+  "Construct CONFIGURATION's validated transactional preferences store."
+  (make-instance 'sexp-store:snapshot-store
+                 :pathname (configuration-preferences-path configuration)
+                 :lock-pathname (merge-pathnames
+                                  "preferences.lock"
+                                  (config :state-root configuration))
+                 :initial-state #'list
+                 :validator #'preferences--form-p
+                 :decoder #'preferences--form->plist
+                 :encoder #'preferences--plist->form
+                 :duplicate-keys ':first
+                 :recover-read-error recover-read-error))
+
 (-> preferences--read (configuration) list)
 (defun preferences--read (configuration)
   "Read CONFIGURATION's durable values from its version 8 preferences file."
-  (block nil
-    (let ((pathname (configuration-preferences-path configuration)))
-      (unless (probe-file pathname)
-        (return nil))
-      (handler-case
-          (multiple-value-bind (form sole-form-p)
-              (snapshot-read pathname)
-            (if (and sole-form-p (preferences--form-p form))
-                (preferences--form->plist form)
-                (error 'preferences-error
-                       :message (format nil "Preferences at ~A are malformed or unsupported."
-                                        pathname)
-                       :pathname pathname
-                       :operation ':read
-                       :cause nil)))
-        (preferences-error (condition)
-          (error condition))
-        (error (cause)
-          (error 'preferences-error
-                 :message (format nil "Could not read preferences at ~A: ~A"
-                                  pathname cause)
-                 :pathname pathname
-                 :operation ':read
-                 :cause cause))))))
-
-(-> preferences--write (configuration list) null)
-(defun preferences--write (configuration plist)
-  "Atomically write PLIST as CONFIGURATION's version 8 preferences file."
-  (let ((pathname (configuration-preferences-path configuration)))
-    (handler-case
-        (progn
-          (ensure-directories-exist pathname)
-          (snapshot-write pathname (preferences--plist->form plist)))
-      (error (cause)
-        (error 'preferences-error
-               :message (format nil "Could not persist preferences at ~A: ~A"
-                                pathname cause)
-               :pathname pathname
-               :operation ':write
-               :cause cause))))
-  nil)
+  (handler-case
+      (sexp-store:store-read (preferences--store configuration))
+    (sexp-store:store-error (cause)
+      (error 'preferences-error
+             :message (format nil "Could not read preferences at ~A: ~A"
+                              (configuration-preferences-path configuration)
+                              cause)
+             :pathname (configuration-preferences-path configuration)
+             :operation ':read
+             :cause cause))))
 
 (defmethod store-read-values ((store preferences-store) configuration)
   "Read CONFIGURATION's durable values from its preferences file."
@@ -103,28 +84,37 @@ name; unknown keys survive rewrites so releases can share one file.")
   "Return CONFIGURATION's persisted durable values.
 
 Report malformed or unsupported files through PREFERENCES-LOAD-WARNING and
-return NIL."
-  (with-lock-held ((preferences-store-lock *preferences-store*))
-    (handler-case
-        (preferences--read configuration)
-      (preferences-error (condition)
-        (warn 'preferences-load-warning
-              :pathname (preferences-error-pathname condition)
-              :cause condition)
-        nil))))
+return NIL. Reading never repairs or rewrites a corrupt file."
+  (handler-case
+      (preferences--read configuration)
+    (preferences-error (condition)
+      (warn 'preferences-load-warning
+            :pathname (preferences-error-pathname condition)
+            :cause condition)
+      nil)))
 
 (-> preferences-store (configuration keyword t) null)
 (defun preferences-store (configuration name value)
-  "Persist VALUE under NAME, merging into whatever the file currently holds.
-
-The file is re-read before writing so values another process stored since
-this one started are kept."
-  (with-lock-held ((preferences-store-lock *preferences-store*))
-    (let ((plist (handler-case (preferences--read configuration)
-                   (preferences-error ()
-                     nil))))
-      (setf (getf plist name) value)
-      (preferences--write configuration plist)))
+  "Persist VALUE under NAME, merging into the freshly read preferences state."
+  (let ((pathname (configuration-preferences-path configuration)))
+    (handler-case
+        (sexp-store:store-transact
+         (preferences--store
+          configuration
+          :recover-read-error (lambda (condition)
+                                (declare (ignore condition))
+                                nil))
+         (lambda (current)
+           (let ((replacement (copy-list current)))
+             (setf (getf replacement name) value)
+             (values replacement nil t))))
+      (sexp-store:store-error (cause)
+        (error 'preferences-error
+               :message (format nil "Could not persist preferences at ~A: ~A"
+                                pathname cause)
+               :pathname pathname
+               :operation ':write
+               :cause cause))))
   nil)
 
 (setf *configuration-store* *preferences-store*)
