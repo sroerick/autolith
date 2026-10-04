@@ -309,27 +309,6 @@ that carries a platform accepts only that platform's qualified name."
   (or (null value)
       (and (stringp value) (release-tag-valid-p value))))
 
-(-> update-state--form-p (t) boolean)
-(defun update-state--form-p (form)
-  "Return true when FORM is one complete supported update-state record."
-  (values
-   (record-check form
-                 :tag ':update-state
-                 :versions (list *update-state-version*)
-                 :fields (list (list :indicator ':last-attempt-at
-                                     :validate #'update-state--optional-time-p
-                                     :required t)
-                               (list :indicator ':last-success-at
-                                     :validate #'update-state--optional-time-p
-                                     :required t)
-                               (list :indicator ':latest-tag
-                                     :validate #'update-state--optional-tag-p
-                                     :required t)
-                               (list :indicator ':dismissed-tag
-                                     :validate #'update-state--optional-tag-p
-                                     :required t))
-                 :allow-other-keys nil)))
-
 (-> update-state--form->state (list) update-state)
 (defun update-state--form->state (form)
   "Return the validated update state represented by FORM."
@@ -354,14 +333,24 @@ that carries a platform accepts only that platform's qualified name."
 (defun update-state-load (configuration)
   "Return cached update state, using empty state after absence or corruption."
   (handler-case
-      (let ((pathname (configuration-update-state-path configuration)))
-        (if (probe-file pathname)
-            (multiple-value-bind (form sole-form-p)
-                (snapshot-read pathname)
-              (if (and sole-form-p (update-state--form-p form))
-                  (update-state--form->state form)
-                  (make-instance 'update-state)))
-            (make-instance 'update-state)))
+      (update-state--form->state
+       (snapshot-read-record
+        (configuration-update-state-path configuration)
+        :tag ':update-state
+        :versions (list *update-state-version*)
+        :fields (list (list :indicator ':last-attempt-at
+                            :validate #'update-state--optional-time-p
+                            :required t)
+                      (list :indicator ':last-success-at
+                            :validate #'update-state--optional-time-p
+                            :required t)
+                      (list :indicator ':latest-tag
+                            :validate #'update-state--optional-tag-p
+                            :required t)
+                      (list :indicator ':dismissed-tag
+                            :validate #'update-state--optional-tag-p
+                            :required t))
+        :allow-other-keys nil))
     (error ()
       (make-instance 'update-state))))
 
