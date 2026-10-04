@@ -35,9 +35,10 @@ already from clinedi.
 
 Compared against the library versions Autolith pins through qlot, not the
 older checkouts under =~/common-lisp=: the pinned cl-llm-provider-api already
-has a =/wire= system (Responses, Chat Completions, Anthropic Messages, SSE,
-contracts) and the pinned cl-rfc8628 has a managed credential manager, JWT
-helpers, redaction, browser opening and request helpers.
+has a =/wire= system (Responses with deferred tool search, Chat Completions,
+Anthropic Messages, Gemini GenerateContent, SSE, contracts) and the pinned
+cl-rfc8628 has a managed credential manager, JWT helpers, redaction, browser
+opening and request helpers.
 
 ** Token refresh repeated across providers, partly copying cl-rfc8628
 Refresh exchanges in chatgpt (289-410), =grok/authentication.lisp= 110-221,
@@ -50,22 +51,6 @@ and the document helpers copy =device-authentication-json-request=. The Nous
 cross-process refresh lock that reloads under the lock and adopts a newer
 rotation (nous 19-41, 281-376) applies to any rotating refresh token and
 belongs in =managed-credential-manager= as a lock hook.
-
-** Responses tool_search over deferred namespaces (cl-llm-provider-api/wire)
-=src/provider/wire-protocol.lisp= 129-449: =defer_loading= wire form, the
-client-executed =tool_search= declaration, tokenized scored search, and
-=tool_search_output= rebuilding on replay. Pure Responses wire behavior;
-clinker-transcript already owns =tool-search-item-p=. Cut: the history
-trimming special (keyword argument), the structlisp deque, the description
-text. The Codex model gate (78-121) and Codex methods (451-546) stay.
-
-** Gemini GenerateContent wire protocol (cl-llm-provider-api/wire)
-=src/provider/gemini-code-assist.lisp= 480-632 and 728-890: portable items to
-=contents=, function declarations and responses, the SSE consumer, finish
-reasons and usage mapping, as a fourth protocol beside the Anthropic one.
-=provider-request-object= (634-699) would go through =wire-request= as the
-Anthropic client does. The private Code Assist onboarding (349-477) and model
-catalog stay; its retry loop (297-326) should use =call-with-bounded-retries=.
 
 ** Image preparation for prompts (new small library)
 =src/conversation/image-input.lisp= 123-302 (magic bytes and PNG, GIF, JPEG,
