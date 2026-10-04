@@ -433,3 +433,34 @@
           (eq (model-provider-registration provider) registration))
      "Gemini model selection creates the subscription provider and OAuth manager"))
   nil)
+
+(-> gemini-code-assist-test--image-parts () null)
+(defun gemini-code-assist-test--image-parts ()
+  "Test that message images reach Gemini inline instead of being dropped."
+  (let* ((contents (gemini-code-assist--content-items
+                    (list (json-object
+                           "type" "message" "role" "user"
+                           "content" (json-array
+                                      (json-object "type" "input_text" "text" "look")
+                                      (json-object "type" "input_image"
+                                                   "image_url" "data:image/png;base64,iVBORw0K"
+                                                   "detail" "high"))))))
+         (parts (json-get (aref contents 0) "parts"))
+         (inline (json-get (aref parts 1) "inlineData")))
+    (test-assert (and (= (length parts) 2)
+                      (equal (json-get (aref parts 0) "text") "look")
+                      (equal (json-get inline "mimeType") "image/png")
+                      (equal (json-get inline "data") "iVBORw0K"))
+                 "an image part becomes Gemini inline data beside its text")
+    (test-assert
+     (handler-case
+         (progn
+           (gemini-code-assist--content-items
+            (list (json-object "type" "message" "role" "user"
+                               "content" (json-array
+                                          (json-object "type" "input_image"
+                                                       "image_url" "https://example.com/a.png")))))
+           nil)
+       (gemini-code-assist-error () t))
+     "an image Gemini cannot receive fails instead of vanishing"))
+  nil)

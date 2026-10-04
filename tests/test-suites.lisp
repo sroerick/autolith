@@ -269,6 +269,7 @@
   gemini-code-assist-test--builtin-registration
   gemini-code-assist-test--model-catalog
   gemini-code-assist-test--request-conversion
+  gemini-code-assist-test--image-parts
   gemini-code-assist-test--stream-fixture
   gemini-code-assist-test--terminal-semantics
   gemini-code-assist-test--credential-redaction

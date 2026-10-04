@@ -501,9 +501,28 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
     (t
      (json-object))))
 
+(-> gemini-code-assist--image-part (json-object) json-object)
+(defun gemini-code-assist--image-part (part)
+  "Translate one portable input_image PART into a Gemini inlineData part.
+
+Gemini takes an image inline as its MIME type and base64 data, which the
+portable data URL carries. An image that is not a base64 data URL cannot be
+sent, so it signals GEMINI-CODE-ASSIST-ERROR instead of leaving the request."
+  (let* ((image-url (json-get part "image_url"))
+         (url (if (json-object-p image-url) (json-get image-url "url") image-url))
+         (marker (and (stringp url) (search ";base64," url))))
+    (unless (and marker
+                 (uiop:string-prefix-p "data:" url)
+                 (> marker (length "data:")))
+      (error 'gemini-code-assist-error
+             :message "Gemini Code Assist can only send images given as base64 data URLs."))
+    (json-object "inlineData"
+                 (json-object "mimeType" (subseq url (length "data:") marker)
+                              "data" (subseq url (+ marker (length ";base64,")))))))
+
 (-> gemini-code-assist--text-parts (t) vector)
 (defun gemini-code-assist--text-parts (content)
-  "Translate portable message CONTENT into Gemini text parts."
+  "Translate portable message CONTENT into Gemini text and inline image parts."
   (coerce
    (cond
      ((stringp content) (list (json-object "text" content)))
@@ -520,6 +539,8 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
                 ((and (json-string= (json-get part "type") "input_text")
                       (stringp (json-get part "text")))
                  (list (json-object "text" (json-get part "text"))))
+                ((json-string= (json-get part "type") "input_image")
+                 (list (gemini-code-assist--image-part part)))
                 (t nil))))
      (t (list (json-object "text" (bounded-string content :limit 2000)))))
    'vector))
