@@ -110,13 +110,6 @@
           (file-length stream))
         0)))
 
-(-> image-commit--write-atomically (pathname function) pathname)
-(defun image-commit--write-atomically (pathname writer)
-  "Atomically publish PATHNAME using a stream WRITER, then make it read-only."
-  (publish-file pathname writer)
-  (platform-make-read-only *platform* pathname)
-  pathname)
-
 (-> image-commit--write-form-atomically (pathname list) pathname)
 (defun image-commit--write-form-atomically (pathname form)
   "Atomically write portable FORM to PATHNAME."
@@ -124,11 +117,8 @@
 
 (-> image-commit--write-string-atomically (pathname string) pathname)
 (defun image-commit--write-string-atomically (pathname content)
-  "Atomically write CONTENT to PATHNAME and make the result read-only."
-  (image-commit--write-atomically
-   pathname
-   (lambda (stream)
-     (write-string content stream))))
+  "Atomically write CONTENT to PATHNAME as a read-only artifact."
+  (snapshot-write-text pathname content :mode #o444))
 
 
 ;;;; -- Private Git History --
@@ -749,15 +739,16 @@ A definition entry that already records its tracked base keeps it."
     pathname)
 (defun image-commit-write-script (pathname &key identifier title entries)
   "Atomically write ENTRIES as IDENTIFIER's complete reconstruction script."
-  (image-commit--write-atomically
+  (snapshot-write-text
    pathname
-   (lambda (stream)
+   (with-output-to-string (stream)
      (format stream ";;;; Autolith image reconstruction script~%")
      (image-commit--write-comment
       stream (format nil "Commit ~A: ~A" identifier title))
      (format stream "(in-package #:autolith)~2%")
      (dolist (entry entries)
-       (image-commit--write-entry stream entry)))))
+       (image-commit--write-entry stream entry)))
+   :mode #o444))
 
 
 ;;;; -- Clean Replay Probe --
