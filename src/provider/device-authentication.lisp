@@ -178,7 +178,7 @@
            :headers (list (cons "Content-Type" "application/json")
                           (cons "Accept" "application/json")
                           (cons "User-Agent"
-                                (authentication-user-agent)))
+                                (provider-user-agent)))
            :content content
            :stage ':poll)
         (declare (ignore response-headers))
@@ -295,5 +295,5 @@
 
 ;;;; -- cl-rfc8628 Host Wiring --
 
-(setf cl-rfc8628:*user-agent-function* #'authentication-user-agent
+(setf cl-rfc8628:*user-agent-function* #'provider-user-agent
       cl-rfc8628:*device-authentication-error-class* 'device-authentication-error)

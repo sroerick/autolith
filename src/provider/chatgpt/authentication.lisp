@@ -115,7 +115,7 @@
   "POST an OAuth form with Autolith's identity and OpenAI's originator header."
   (cl-rfc8252:browser-authentication-request
    :url url :content content
-   :headers (list (cons "User-Agent" (authentication-user-agent))
+   :headers (list (cons "User-Agent" (provider-user-agent))
                   (cons "originator" *openai-oauth-originator*))
    :request-wrapper #'chatgpt-oauth--request-wrapper))
 

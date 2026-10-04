@@ -84,9 +84,9 @@ its protocol-level close operation."
 
 ;;;; -- OAuth Wire Helpers --
 
-(-> authentication-user-agent () string)
-(defun authentication-user-agent ()
-  "Return the honest Autolith user agent sent to authentication services."
+(-> provider-user-agent () string)
+(defun provider-user-agent ()
+  "Return the honest Autolith user agent sent to providers and authentication services."
   (format nil "autolith/~A (~A ~A; ~A)"
           *autolith-version*
           (software-type)

@@ -474,15 +474,6 @@ checkpoint summarizes history rather than continuing it."
       (when (configuration-codex-fast-mode-active-p configuration)
         (list "service_tier" "priority"))))))
 
-(-> provider-user-agent () string)
-(defun provider-user-agent ()
-  "Return an honest, stable user agent for direct Autolith provider requests."
-  (format nil "autolith/~A (~A ~A; ~A)"
-          *autolith-version*
-          (software-type)
-          (software-version)
-          (machine-type)))
-
 (-> provider--codex-request-headers
     (codex-subscription-provider oauth-credentials conversation
      &key (:accept string))

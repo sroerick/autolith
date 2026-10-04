@@ -137,7 +137,7 @@
   "POST one form-encoded request to Google's OAuth token endpoint."
   (browser-authentication-request
    :url url :content content
-   :headers (list (cons "User-Agent" (authentication-user-agent)))
+   :headers (list (cons "User-Agent" (provider-user-agent)))
    :request-wrapper #'gemini-oauth--request-wrapper))
 
 
