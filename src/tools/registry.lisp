@@ -180,26 +180,22 @@
 (-> tool-object-schema (json-object list) json-object)
 (defun tool-object-schema (properties required)
   "Return a closed JSON object schema with PROPERTIES and REQUIRED names."
-  (json-object
-   "type" "object"
-   "properties" properties
-   "required" (coerce required 'vector)
-   "additionalProperties" (json-false)))
+  (cl-llm-provider-api:provider-object-schema properties required))
 
 (-> tool-string-property (string) json-object)
 (defun tool-string-property (description)
   "Return a documented JSON string property schema."
-  (json-object "type" "string" "description" description))
+  (cl-llm-provider-api:provider-string-property description))
 
 (-> tool-integer-property (string) json-object)
 (defun tool-integer-property (description)
   "Return a documented JSON integer property schema."
-  (json-object "type" "integer" "description" description))
+  (cl-llm-provider-api:provider-integer-property description))
 
 (-> tool-boolean-property (string) json-object)
 (defun tool-boolean-property (description)
   "Return a documented JSON boolean property schema."
-  (json-object "type" "boolean" "description" description))
+  (cl-llm-provider-api:provider-boolean-property description))
 
 (-> tool-restart-property () json-object)
 (defun tool-restart-property ()
@@ -1043,129 +1039,29 @@ spilling is unavailable, in which case the tail is discarded as before.")
 (defun tool-registry-provider-schemas
     (registry &key (canonical-names nil canonical-names-supplied-p))
   "Return REGISTRY grouped into provider schemas, optionally filtered by name."
-  (let ((namespace-tools (make-ordered-map :test #'equal))
-        (schemas (make-deque)))
-    (dolist (tool (tool-registry-tools registry))
-      (when (or (not canonical-names-supplied-p)
-                (member (tool-canonical-name tool)
-                        canonical-names
-                        :test #'string=))
-        (let ((tools
-                (or (ordered-map-get namespace-tools (tool-namespace tool))
-                    (ordered-map-set namespace-tools
-                                     (tool-namespace tool)
-                                     (make-deque)))))
-          (deque-push-back tools (tool-provider-schema tool)))))
-    (ordered-map-map
-     (lambda (namespace tools)
-       (deque-push-back
-        schemas
-        (json-object
-         "type" "namespace"
-         "name" namespace
-         "description" (tool-namespace-description registry namespace)
-         "tools" (deque->vector tools))))
-     namespace-tools)
-    (deque->vector schemas)))
+  (cl-llm-provider-api:provider-group-tool-schemas
+   (if canonical-names-supplied-p
+       (remove-if-not
+        (lambda (tool)
+          (member (tool-canonical-name tool) canonical-names :test #'string=))
+        (tool-registry-tools registry))
+       (tool-registry-tools registry))
+   :namespace-function #'tool-namespace
+   :schema-function #'tool-provider-schema
+   :description-function (lambda (namespace)
+                           (tool-namespace-description registry namespace))))
 
 (-> function-call-canonical-name (json-object) string)
 (defun function-call-canonical-name (call)
-  "Return the dotted canonical name carried by function CALL.
+  "Return the dotted or bare canonical name carried by function CALL."
+  (cl-llm-provider-api:provider-call-canonical-name call))
 
-A call without a namespace reads as its bare name instead of gaining
-a spurious leading dot."
-  (let ((namespace (json-get call "namespace"))
-        (name (or (json-get call "name") "")))
-    (if (non-empty-string-p namespace)
-        (format nil "~A.~A" namespace name)
-        name)))
-
-
-(-> tool--schema-required-names (t) list)
-(defun tool--schema-required-names (schema)
-  "Return SCHEMA's well-formed top-level required property names."
-  (let ((required (and (json-object-p schema)
-                       (json-get schema "required"))))
-    (cond
-      ((and (vectorp required)
-            (not (stringp required))
-            (every #'stringp required))
-       (coerce required 'list))
-      ((and (listp required)
-            (every #'stringp required))
-       required)
-      (t
-       nil))))
-
-(-> tool--schema-required-groups (json-object) list)
-(defun tool--schema-required-groups (schema)
-  "Return alternative complete required-name groups from top-level SCHEMA."
-  (let* ((base (tool--schema-required-names schema))
-         (alternatives
-           (or (json-get schema "oneOf")
-               (json-get schema "anyOf")))
-         (schemas
-           (cond
-             ((and (vectorp alternatives)
-                   (not (stringp alternatives)))
-              (coerce alternatives 'list))
-             ((listp alternatives)
-              alternatives)
-             (t
-              nil))))
-    (if schemas
-        (mapcar
-         (lambda (alternative)
-           (remove-duplicates
-            (append base (tool--schema-required-names alternative))
-            :test #'string=))
-         schemas)
-        (list base))))
 
 (-> tool--missing-required-names (tool json-object) list)
 (defun tool--missing-required-names (tool arguments)
   "Return one unsatisfied required-name group for TOOL and ARGUMENTS."
-  (let ((missing-groups
-          (mapcar
-           (lambda (group)
-             (remove-if
-              (lambda (name)
-                (nth-value 1 (gethash name arguments)))
-              group))
-           (tool--schema-required-groups (tool-parameters tool)))))
-    (cond
-      ((some #'null missing-groups)
-       nil)
-      ((and (rest missing-groups)
-            (every (lambda (group) (= (length group) 1)) missing-groups))
-       (cons ':one-of (mapcar #'first missing-groups)))
-      (t
-       (first (sort missing-groups #'< :key #'length))))))
-
-(-> tool--argument-placeholder (t) t)
-(defun tool--argument-placeholder (schema)
-  "Return a conservative JSON placeholder matching property SCHEMA."
-  (let ((enumeration (and (json-object-p schema)
-                          (json-get schema "enum")))
-        (type (and (json-object-p schema)
-                   (json-get schema "type"))))
-    (cond
-      ((and (vectorp enumeration)
-            (not (stringp enumeration))
-            (plusp (length enumeration)))
-       (aref enumeration 0))
-      ((equal type "string")
-       "")
-      ((member type '("integer" "number") :test #'equal)
-       0)
-      ((equal type "boolean")
-       (json-false))
-      ((equal type "array")
-       #())
-      ((equal type "object")
-       (json-object))
-      (t
-       nil))))
+  (cl-llm-provider-api:provider-schema-missing-required-names
+   (tool-parameters tool) arguments))
 
 (-> tool--missing-arguments-result (tool json-object list) tool-result)
 (defun tool--missing-arguments-result (tool arguments missing-names)
@@ -1181,7 +1077,7 @@ a spurious leading dot."
      arguments)
     (dolist (name skeleton-names)
       (setf (gethash name skeleton-arguments)
-            (tool--argument-placeholder
+            (cl-llm-provider-api:provider-schema-argument-placeholder
              (and (json-object-p properties)
                   (json-get properties name)))))
     (tool-mechanics

@@ -53,49 +53,47 @@
   "Return the closed workspace, scratchpad, agenda, memory, and papercut resource.edit variants."
   (labels ((line-property (description)
              "Return one positive original-snapshot line schema."
-             (json-object "type" "integer"
-                          "minimum" 1
-                          "description" description))
+             (let ((schema (tool-integer-property description)))
+               (setf (gethash "minimum" schema) 1)
+               schema))
 
-
-            (anchor-property (description)
-              "Return one optional short hashline anchor schema."
-              (json-object "type" "string"
-                           "pattern" "^[0-9A-Fa-f]{4}$"
-                           "description" description))
+           (anchor-property (description)
+             "Return one optional short hashline anchor schema."
+             (let ((schema (tool-string-property description)))
+               (setf (gethash "pattern" schema) "^[0-9A-Fa-f]{4}$")
+               schema))
 
            (status-property ()
              "Return the closed agenda status schema."
-             (json-object
-              "type" "string"
-              "enum" (vector "todo" "doing" "blocked" "done" "note")
-              "description" "The agenda item's lifecycle or note status."))
+             (cl-llm-provider-api:provider-enum-schema
+              '("todo" "doing" "blocked" "done" "note")
+              "The agenda item's lifecycle or note status."))
 
            (memory-identifiers-property ()
              "Return the bounded agenda memory attachment schema."
-             (json-object
-              "type" "array"
-              "description" "Stable memory identifiers to attach; empty detaches all."
-              "maxItems" *agenda-item-memory-limit*
-              "items" (tool-string-property "One stable memory identifier.")))
+             (let ((schema
+                     (cl-llm-provider-api:provider-array-schema
+                      (tool-string-property "One stable memory identifier.")
+                      "Stable memory identifiers to attach; empty detaches all.")))
+               (setf (gethash "maxItems" schema) *agenda-item-memory-limit*)
+               schema))
 
            (memory-tags-property ()
              "Return the bounded persistent-memory tag schema."
-             (json-object
-              "type" "array"
-              "description" "Optional complete replacement tag list; empty clears tags."
-              "maxItems" *memory-tag-count-limit*
-              "items" (json-object
-                       "type" "string"
-                       "minLength" 1
-                       "maxLength" *memory-tag-limit*)))
+             (let ((schema
+                     (cl-llm-provider-api:provider-array-schema
+                      (json-object "type" "string"
+                                   "minLength" 1
+                                   "maxLength" *memory-tag-limit*)
+                      "Optional complete replacement tag list; empty clears tags.")))
+               (setf (gethash "maxItems" schema) *memory-tag-count-limit*)
+               schema))
 
            (memory-scope-property ()
              "Return the closed persistent-memory replacement scope schema."
-             (json-object
-              "type" "string"
-              "enum" (vector "global" "workspace")
-              "description" "Optional complete replacement scope."))
+             (cl-llm-provider-api:provider-enum-schema
+              '("global" "workspace")
+              "Optional complete replacement scope."))
 
            (operation-schema (name properties required &key any-required)
              "Return one closed resource edit operation variant."

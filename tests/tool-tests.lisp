@@ -543,7 +543,10 @@
                   (lambda (schema) (json-get schema "name"))
                   (json-get (aref schemas 0) "tools"))
              #("replaceable" "two")))
-       "provider schemas preserve first-seen namespace and tool order")))
+        "provider schemas preserve first-seen namespace and tool order"))
+    (test-assert
+     (zerop (length (tool-registry-provider-schemas registry :canonical-names nil)))
+     "an explicit empty selection advertises no tools"))
   (let ((registry (make-instance 'tool-registry))
         (runtime-identity (list ':shared-runtime))
         (close-count 0)

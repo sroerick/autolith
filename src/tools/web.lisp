@@ -115,22 +115,17 @@ Responses may not excessively quote or draw on a specific source. There are seve
 (-> web--object-schema (json-object &key (:required list)) json-object)
 (defun web--object-schema (properties &key required)
   "Return the open JSON object schema used by Codex's web.run command model."
-  (let ((schema (json-object "type" "object" "properties" properties)))
-    (when required
-      (setf (gethash "required" schema) (coerce required 'vector)))
-    schema))
+  (cl-llm-provider-api:provider-open-object-schema properties :required required))
 
 (-> web--array-schema (json-object string) json-object)
 (defun web--array-schema (items description)
   "Return an array schema containing ITEMS and described by DESCRIPTION."
-  (json-object "type" "array" "description" description "items" items))
+  (cl-llm-provider-api:provider-array-schema items description))
 
 (-> web--enum-schema (list string) json-object)
 (defun web--enum-schema (values description)
   "Return the string enum schema containing VALUES and DESCRIPTION."
-  (json-object "type" "string"
-               "description" description
-               "enum" (coerce values 'vector)))
+  (cl-llm-provider-api:provider-enum-schema values description))
 
 (-> web--string-array-schema (string) json-object)
 (defun web--string-array-schema (description)
