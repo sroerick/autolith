@@ -198,19 +198,6 @@ related ground. Cut: the AUTOLITH defaults, the context-contributor and
 application-command undo branches (make an extensible generic), the mutation
 conditions, journal, image-commit fallbacks and the replay engine.
 
-** LSP glue (cl-lsp)
-=lsp/configuration.lisp= 1-218 builds =cl-lsp:lsp-server-configuration= from
-=lsp.sexp=, so cl-lsp should own a declarative reader; 235-259 implements the
-root-marker project-root selection its own docstring promises; =lsp/tools.lisp=
-103-128 is the inverse of the exported =lsp-position=, 5-13 and 130-154 gate
-methods on capabilities, 60-92 fan out by extension. Cut: =config-root=,
-=tool-argument=, workspace confinement, =json-object-source-p=.
-
-- DONE 2026-10-03: project-root selection. cl-lsp 5aa382d exports
-  =lsp-project-root= and =*lsp-maximum-root-depth*= (literal marker names,
-  canonical inputs); Autolith 51b05a25 dropped its copy. The declarative
-  =lsp.sexp= reader, the position inverse and the capability gates remain.
-
 ** MCP pieces (mcparen, cl-llm-provider-api)
 =mcp/tools.lisp= 555-681 (provider-safe tool identifiers: sanitize, FNV-1a
 suffix, 23-character Chat Completions limit) belongs with
