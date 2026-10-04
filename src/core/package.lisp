@@ -680,7 +680,13 @@
                 #:make-checkpoint-backend
                 #:make-generation-store
                 #:make-restart-checkpoint-backend
-                #:make-sbcl-core-probe-runner)
+                #:make-sbcl-core-probe-runner
+                #:image-build-record
+                #:image-build-record-compatible-p
+                #:image-install
+                #:image-installed-record
+                #:image-running-build-record
+                #:image-save)
   (:import-from #:sexp-config
                 #:make-source-grammar
                 #:read-source

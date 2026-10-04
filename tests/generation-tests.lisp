@@ -594,15 +594,13 @@
              "Install with SAVER on a multi-threaded host; return its failure stage and pathname."
              (test-call-with-function-replacements
               (list
-               (list 'active-image-build-record-create
-                     (lambda (active-source-root)
-                       (declare (ignore active-source-root))
-                       '(:active-image-build-test)))
                (list 'checkpoint-single-threaded-p (lambda () nil))
-               (list 'active-image--save-in-fresh-process
+               (list 'active-image--fresh-process-command
                      (lambda (saver-source-root temporary)
                        (declare (ignore saver-source-root temporary))
-                       nil)))
+                       (list (uiop:native-namestring sb-ext:*runtime-pathname*)
+                             "--non-interactive" "--no-sysinit" "--no-userinit"
+                             "--eval" "(sb-ext:exit :code 1)"))))
               (lambda ()
                 (handler-case
                     (progn

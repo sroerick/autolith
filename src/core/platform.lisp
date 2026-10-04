@@ -175,15 +175,6 @@ initial thread and a native Job Object. Return an owned process object."))
   (declare (ignore platform))
   (uiop:wait-process process))
 
-(defgeneric platform-run-image-saver (platform child-function)
-  (:documentation
-   "Run CHILD-FUNCTION in a saver child sharing this image's heap and wait for it.
-
-Return true when the child exited successfully. CHILD-FUNCTION must end the
-child process itself, normally through SAVE-LISP-AND-DIE; returning from it
-counts as failure. Signal PLATFORM-ERROR with operation :FORK when no child
-could be started and :WAIT when its exit could not be observed."))
-
 
 ;;;; -- Environment --
 

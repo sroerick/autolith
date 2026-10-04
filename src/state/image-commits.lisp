@@ -945,10 +945,7 @@ the failure stays diagnosable after the tool call ends."
            (let ((record (symbol-value '*checkpoint-core-probe-record*)))
              (and (listp record)
                   (getf (rest record) :git-commit))))
-      (and (boundp '*active-image-build-record*)
-           (let ((record (symbol-value '*active-image-build-record*)))
-             (and (listp record)
-                  (getf (rest record) :source-commit))))))
+      (getf (rest (image-running-build-record)) :source-commit)))
 
 (-> image-commit-publish
     (configuration

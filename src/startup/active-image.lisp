@@ -2,35 +2,13 @@
 
 ;;;; -- Preloaded Active Image --
 
-(defparameter *active-image-protocol-version* 1
-  "The installed active-image handshake version.")
+;;; sbcl-generations builds, probes and installs the image; this file names its
+;;; inputs, its entry point, the SBCL that boots it, and the platform steps that
+;;; publish it.
 
 (defparameter *active-image-probe-argument*
   "--autolith-internal-active-image-probe"
-  "The private argument requesting active-image validation.")
-
-(defvar *active-image-build-record* nil
-  "The source and runtime identity embedded in a preloaded active image.")
-
-(-> active-image--git-output (pathname list) string)
-(defun active-image--git-output (source-root arguments)
-  "Return trimmed output from Git ARGUMENTS beneath SOURCE-ROOT."
-  (handler-case
-      (string-trim
-       '(#\Space #\Tab #\Newline #\Return)
-         (uiop:run-program
-          (append (list "git"
-                        "-c" "safe.directory=*"
-                        "-C" (namestring source-root))
-                  arguments)
-          :output ':string
-          :error-output ':output))
-    (error (condition)
-      (error 'active-image-build-error
-             :message (format nil "Could not identify active-image source: ~A"
-                              condition)
-             :stage ':source
-             :pathname source-root))))
+  "The private argument requesting active-image validation, which the launchers pass.")
 
 (-> active-image-source-paths (pathname) list)
 (defun active-image-source-paths (source-root)
@@ -54,138 +32,24 @@
                   lisp-paths)
           #'string<)))
 
-(-> active-image--source-blobs (pathname list) list)
-(defun active-image--source-blobs (source-root relative-pathnames)
-  "Return Git content identities for RELATIVE-PATHNAMES beneath SOURCE-ROOT."
-  (let ((identities
-          (uiop:split-string
-           (active-image--git-output
-            source-root
-            (append '("hash-object" "--") relative-pathnames))
-           :separator '(#\Newline #\Return))))
-    (unless (= (length identities) (length relative-pathnames))
-      (error 'active-image-build-error
-             :message "Git returned the wrong number of active-image source identities."
-             :stage ':source
-             :pathname source-root))
-    identities))
-
 (-> active-image-build-record-create (pathname) list)
 (defun active-image-build-record-create (source-root)
-  "Return the exact source and runtime identity for a new active image."
-  (setf source-root (uiop:ensure-directory-pathname source-root))
-  (let* ((paths (active-image-source-paths source-root))
-         (blobs (active-image--source-blobs source-root paths))
-         (status (active-image--git-output
-                  source-root
-                  (append '("status" "--porcelain" "--") paths))))
-    (list :active-image-build
-          :version *active-image-protocol-version*
-          :source-commit
-          (active-image--git-output source-root '("rev-parse" "HEAD"))
-          :source-clean-p (zerop (length status))
-          :source-files
-          (mapcar #'list paths blobs)
-          :sbcl-version (lisp-implementation-version)
-          :operating-system (software-type)
-          :operating-system-version (software-version)
-          :architecture (machine-type))))
-
-(-> active-image--source-files-p (t) boolean)
-(defun active-image--source-files-p (source-files)
-  "Return true when SOURCE-FILES contains unique source/blob pairs."
-  (and (proper-list-p source-files :nonempty-p t)
-       (every (lambda (entry)
-                (and (proper-list-p entry)
-                     (= (length entry) 2)
-                     (non-empty-string-p (first entry))
-                     (non-empty-string-p (second entry))))
-              source-files)
-       (= (length source-files)
-          (length (remove-duplicates source-files
-                                     :key #'first
-                                     :test #'string=)))))
-
-(-> active-image-build-record-p (t) boolean)
-(defun active-image-build-record-p (value)
-  "Return true when VALUE is a complete portable active-image build record."
-  (values
-   (record-check
-    value :tag ':active-image-build :versions '(1)
-    :allow-other-keys nil :keyword-keys-p t :maximum-length 16
-    :fields
-    `((:indicator :source-commit :required t :validate non-empty-string-p)
-      (:indicator :source-clean-p :required t
-       :validate ,(lambda (value) (typep value 'boolean)))
-      (:indicator :source-files :required t :validate active-image--source-files-p)
-      (:indicator :sbcl-version :required t :validate non-empty-string-p)
-      (:indicator :operating-system :required t :validate non-empty-string-p)
-      (:indicator :operating-system-version :required t :validate non-empty-string-p)
-      (:indicator :architecture :required t :validate non-empty-string-p)))))
+  "Return the exact source and runtime identity for a new active image of SOURCE-ROOT."
+  (active-image--call-translating-errors
+   (lambda ()
+     (image-build-record (uiop:ensure-directory-pathname source-root)
+                         :inputs #'active-image-source-paths))))
 
 (-> active-image-build-record-compatible-p (t pathname) boolean)
 (defun active-image-build-record-compatible-p (record source-root)
   "Return true when RECORD exactly matches SOURCE-ROOT and this runtime."
   (handler-case
-      (let* ((source-root (uiop:ensure-directory-pathname
-                           (platform-truename *platform* source-root)))
-             (source-files (and (active-image-build-record-p record)
-                                (getf (rest record) :source-files))))
-        (and source-files
-             (string= (getf (rest record) :sbcl-version)
-                      (lisp-implementation-version))
-             (string= (getf (rest record) :operating-system)
-                      (software-type))
-             (string= (getf (rest record) :operating-system-version)
-                      (software-version))
-             (string= (getf (rest record) :architecture)
-                      (machine-type))
-             (equal (mapcar #'first source-files)
-                    (active-image-source-paths source-root))
-             (equal (mapcar #'second source-files)
-                    (active-image--source-blobs source-root
-                                                (mapcar #'first source-files)))
-             t))
+      (image-build-record-compatible-p
+       record
+       (uiop:ensure-directory-pathname (platform-truename *platform* source-root))
+       :inputs #'active-image-source-paths)
     (error ()
       nil)))
-
-(-> active-image-probe-record (list) list)
-(defun active-image-probe-record (build-record)
-  "Return the exact public handshake for BUILD-RECORD."
-  (list :autolith-active-image
-        :version *active-image-protocol-version*
-        :source-commit (getf (rest build-record) :source-commit)))
-
-(-> active-image-probe-output (list) string)
-(defun active-image-probe-output (record)
-  "Return canonical one-line output for active-image probe RECORD."
-  (with-output-to-string (stream)
-    (let ((*print-base* 10)
-          (*print-case* ':upcase)
-          (*print-circle* nil)
-          (*print-length* nil)
-          (*print-level* nil)
-          (*print-pretty* nil)
-          (*print-radix* nil)
-          (*print-readably* t))
-      (write record :stream stream)
-      (terpri stream))))
-
-(-> active-image-manifest-form (pathname list) list)
-(defun active-image-manifest-form (core-pathname build-record)
-  "Return the portable manifest for CORE-PATHNAME and BUILD-RECORD."
-  (list :active-image
-        :version *active-image-protocol-version*
-        :core (namestring core-pathname)
-        :built-at (get-universal-time)
-        :source-commit (getf (rest build-record) :source-commit)
-        :source-clean-p (getf (rest build-record) :source-clean-p)
-        :source-files (getf (rest build-record) :source-files)
-        :sbcl-version (getf (rest build-record) :sbcl-version)
-        :operating-system (getf (rest build-record) :operating-system)
-        :operating-system-version
-        (getf (rest build-record) :operating-system-version)
-        :architecture (getf (rest build-record) :architecture)))
 
 
 ;;;; -- Installed Image Selection --
@@ -193,22 +57,7 @@
 (-> active-image-installed-build-record (pathname) (option list))
 (defun active-image-installed-build-record (core-pathname)
   "Return the build record in CORE-PATHNAME's manifest, or NIL when it is unusable."
-  (let ((manifest (merge-pathnames "manifest.sexp" core-pathname)))
-    (handler-case
-        (when (probe-file manifest)
-          (multiple-value-bind (form sole-form-p) (snapshot-read manifest)
-            (when (and sole-form-p (consp form) (eq (first form) :active-image))
-              (let ((record
-                      (cons :active-image-build
-                            (loop for key in '(:version :source-commit :source-clean-p
-                                               :source-files :sbcl-version
-                                               :operating-system
-                                               :operating-system-version
-                                               :architecture)
-                                  append (list key (getf (rest form) key))))))
-                (and (active-image-build-record-p record) record)))))
-      (error ()
-        nil))))
+  (image-installed-record core-pathname :read-function #'active-image--read-manifest))
 
 (-> active-image-current-core (configuration) (option pathname))
 (defun active-image-current-core (configuration)
@@ -217,11 +66,9 @@
 The manifest beside the core carries the build record that the core embeds, so
 the exact source and runtime comparison needs no extra boot of the image."
   (let ((core (config :active-image-core configuration)))
-    (and (probe-file core)
-         (let ((record (active-image-installed-build-record core)))
-           (and record
-                (active-image-build-record-compatible-p
-                 record (config :source-root configuration))))
+    (and (active-image-build-record-compatible-p (active-image-installed-build-record core)
+                                                 (config :source-root configuration))
+         (probe-file core)
          core)))
 
 (-> active-image-process-command (configuration list) list)
@@ -230,10 +77,7 @@ the exact source and runtime comparison needs no extra boot of the image."
 
 The process boots the current active core when one matches the source, which
 takes a fraction of a second, and otherwise loads the system from source."
-  (let* ((configured-command (uiop:getenv "AUTOLITH_SBCL"))
-         (sbcl-command (if (non-empty-string-p configured-command)
-                           configured-command
-                           "sbcl"))
+  (let* ((sbcl-command (active-image--sbcl-command))
          (source-root (config :source-root configuration))
          (core (active-image-current-core configuration)))
     (if core
@@ -249,74 +93,58 @@ takes a fraction of a second, and otherwise loads the system from source."
                (namestring (merge-pathnames "bin/autolith-active" source-root))
                arguments))))
 
+(-> active-image--sbcl-command () string)
+(defun active-image--sbcl-command ()
+  "Return the SBCL that boots active images: AUTOLITH_SBCL, or sbcl from PATH."
+  (let ((configured-command (uiop:getenv "AUTOLITH_SBCL")))
+    (if (non-empty-string-p configured-command)
+        configured-command
+        "sbcl")))
+
+(-> active-image--read-manifest (pathname) t)
+(defun active-image--read-manifest (pathname)
+  "Return the single form of the active-image manifest at PATHNAME."
+  (multiple-value-bind (form sole-form-p) (snapshot-read pathname)
+    (unless sole-form-p
+      (error 'active-image-build-error
+             :message "The active-image manifest does not hold exactly one form."
+             :stage ':manifest
+             :pathname pathname))
+    form))
+
 
 ;;;; -- Image Entry and Publication --
 
-(-> active-image-main () null)
-(defun active-image-main ()
-  "Validate a probe or run Autolith from a preloaded active image."
-  (sb-ext:disable-debugger)
-  (let ((arguments (uiop:command-line-arguments)))
-    (handler-case
-        (let ((source-root
-                (and arguments
-                     (uiop:ensure-directory-pathname
-                      (pathname (first arguments))))))
-          (cond
-            ((and (= (length arguments) 2)
-                  (string= (second arguments)
-                           *active-image-probe-argument*))
-             (unless (active-image-build-record-compatible-p
-                      *active-image-build-record*
-                      source-root)
-               (error 'active-image-build-error
-                      :message "The preloaded active image does not match its source."
-                      :stage ':probe
-                      :pathname source-root))
-             (write-string
-              (active-image-probe-output
-               (active-image-probe-record *active-image-build-record*))
-              *standard-output*)
-             (finish-output *standard-output*))
-            ((null source-root)
-             (error 'active-image-build-error
-                    :message "The preloaded active image needs its source root."
-                    :stage ':entry
-                    :pathname nil))
-            (t
-             (platform-setenv "AUTOLITH_SOURCE_ROOT" (namestring source-root))
-             (restart-case
-                 (main (rest arguments))
-               (abort ()
-                 :report "Exit the preloaded Autolith image."
-                 nil)))))
-      (serious-condition (condition)
-        (format *error-output* "Autolith's preloaded active image failed: ~A~%"
-                condition)
-        (uiop:quit 1))))
+(-> active-image--toplevel (list) null)
+(defun active-image--toplevel (arguments)
+  "Run Autolith in a booted active image whose first of ARGUMENTS is its source root."
+  (handler-case
+      (let ((source-root (and arguments
+                              (uiop:ensure-directory-pathname (pathname (first arguments))))))
+        (unless source-root
+          (error 'active-image-build-error
+                 :message "The preloaded active image needs its source root."
+                 :stage ':entry
+                 :pathname nil))
+        (platform-setenv "AUTOLITH_SOURCE_ROOT" (namestring source-root))
+        (restart-case
+            (main (rest arguments))
+          (abort ()
+            :report "Exit the preloaded Autolith image."
+            nil)))
+    (serious-condition (condition)
+      (format *error-output* "Autolith's preloaded active image failed: ~A~%" condition)
+      (uiop:quit 1)))
   nil)
 
-(-> active-image--save-child (pathname list) null)
-(defun active-image--save-child (pathname build-record)
-  "Save a detached preloaded image for BUILD-RECORD at PATHNAME."
-  (handler-case
-      (progn
-        (setf *active-image-build-record* build-record
-              *active-application* nil
-              *credentials-in-request-scope* nil
-              *active-secret-use-count* 0
-              *secret-use-depth* 0
-              *secret-use-quiescence-owner* nil
-              *checkpoint-in-progress-p* nil
-              sbcl-generations::*checkpoint-core-probe-record* nil)
-        (sb-ext:save-lisp-and-die
-         (namestring pathname)
-         :toplevel #'active-image-main
-         :executable nil
-         :purify nil
-         :compression nil))
-    (error ()
-      (sb-ext:exit :code 1 :abort t)))
+(-> active-image--prepare-saver () null)
+(defun active-image--prepare-saver ()
+  "Clear this process's session and credential state before it is saved."
+  (setf *active-application* nil
+        *credentials-in-request-scope* nil
+        *active-secret-use-count* 0
+        *secret-use-depth* 0
+        *secret-use-quiescence-owner* nil)
   nil)
 
 (-> active-image-save (pathname pathname) null)
@@ -326,79 +154,46 @@ takes a fraction of a second, and otherwise loads the system from source."
 The build record is computed here, so it names exactly the source this process
 loaded; the process exits inside the save. Hosts without fork build their image
 this way, from a fresh process that script/build-active.lisp starts."
-  (active-image--save-child
-   pathname
-   (active-image-build-record-create
-    (uiop:ensure-directory-pathname (platform-truename *platform* source-root))))
+  (image-save pathname
+              (active-image-build-record-create
+               (uiop:ensure-directory-pathname (platform-truename *platform* source-root)))
+              :inputs         #'active-image-source-paths
+              :toplevel       #'active-image--toplevel
+              :prepare        #'active-image--prepare-saver
+              :probe-argument *active-image-probe-argument*)
   nil)
 
-(-> active-image--save-in-fresh-process (pathname pathname) boolean)
-(defun active-image--save-in-fresh-process (source-root temporary)
-  "Save the active image at TEMPORARY from a fresh SBCL that loads SOURCE-ROOT.
+(-> active-image--fresh-process-command (pathname pathname) list)
+(defun active-image--fresh-process-command (source-root temporary)
+  "Return the argv that loads SOURCE-ROOT in a new SBCL and saves it at TEMPORARY."
+  (list (uiop:native-namestring sb-ext:*runtime-pathname*)
+        "--noinform"
+        "--script" (uiop:native-namestring
+                    (merge-pathnames "script/build-active.lisp" source-root))
+        "--child" (uiop:native-namestring temporary)))
 
-A host without fork cannot hand this heap to a child, so a new process of the
-same runtime loads the system through script/build-active.lisp and saves
-itself. Return true when it exited successfully; the caller probes the core
-against its own build record."
-  (let ((script (merge-pathnames "script/build-active.lisp" source-root)))
-    (handler-case
-        (zerop
-         (nth-value 2
-                    (uiop:run-program
-                     (list (uiop:native-namestring sb-ext:*runtime-pathname*)
-                           "--noinform"
-                           "--script" (uiop:native-namestring script)
-                           "--child" (uiop:native-namestring temporary))
-                     :input nil
-                     :output *standard-output*
-                     :error-output *error-output*
-                     :ignore-error-status t)))
-      (error (condition)
-        (error 'active-image-build-error
-               :message (format nil "Could not run the active-image saver: ~A"
-                                condition)
-               :stage ':save
-               :pathname temporary)))))
-
-(-> active-image--probe-core (pathname pathname list) null)
-(defun active-image--probe-core (core-pathname source-root build-record)
-  "Boot CORE-PATHNAME and require its exact BUILD-RECORD handshake."
-  (let* ((configured-command (uiop:getenv "AUTOLITH_SBCL"))
-         (sbcl-command (if (non-empty-string-p configured-command)
-                           configured-command
-                           "sbcl"))
-         (actual
-           (handler-case
-               (uiop:run-program
-                (list sbcl-command
-                      "--noinform"
-                      "--core" (namestring core-pathname)
-                      "--end-runtime-options"
-                      (namestring source-root)
-                      *active-image-probe-argument*)
-                :input nil
-                :output ':string
-                :error-output ':output)
-             (error (condition)
-               (error 'active-image-build-error
-                      :message (format nil "The active-image probe failed: ~A"
-                                       condition)
-                      :stage ':probe
-                      :pathname core-pathname))))
-         (expected
-           (active-image-probe-output
-            (active-image-probe-record build-record))))
-    (unless (string= actual expected)
-      (error 'active-image-build-error
-             :message "The saved active image returned the wrong identity."
-             :stage ':probe
-             :pathname core-pathname)))
+(-> active-image--publish-core (pathname pathname) null)
+(defun active-image--publish-core (temporary core-pathname)
+  "Replace CORE-PATHNAME with the probed TEMPORARY core and make it read-only."
+  (platform-replace-file *platform* temporary core-pathname)
+  (platform-make-read-only *platform* core-pathname)
   nil)
 
 (-> active-image--write-manifest (pathname list) pathname)
 (defun active-image--write-manifest (pathname form)
-  "Atomically replace PATHNAME with portable active-image manifest FORM."
+  "Atomically replace PATHNAME with the read-only active-image manifest FORM."
   (snapshot-write pathname form :mode #o444))
+
+(-> active-image--call-translating-errors (function) t)
+(defun active-image--call-translating-errors (function)
+  "Call FUNCTION, reporting sbcl-generations image failures as ACTIVE-IMAGE-BUILD-ERROR."
+  (handler-case
+      (funcall function)
+    (sbcl-generations:checkpoint-error (condition)
+      (error 'active-image-build-error
+             :message  (sbcl-generations:checkpoint-error-message condition)
+             :stage    (sbcl-generations:checkpoint-error-stage condition)
+             :pathname (sbcl-generations:checkpoint-error-pathname condition)))))
 
 (-> active-image-install
     (pathname pathname &key (:saver (member :automatic :fresh-process)))
@@ -408,82 +203,22 @@ against its own build record."
 
 SAVER :AUTOMATIC forks this process where the host can; :FRESH-PROCESS always
 loads the system in a new SBCL, so the image holds nothing else from this heap."
-  (setf source-root (uiop:ensure-directory-pathname (platform-truename *platform* source-root))
-        core-pathname (pathname core-pathname))
-  (let* ((directory (uiop:pathname-directory-pathname core-pathname))
-         (temporary
-           (merge-pathnames
-            (format nil ".~A.~D.core" (pathname-name core-pathname)
-                    (current-process-id))
-            directory))
-         (manifest (merge-pathnames "manifest.sexp" directory))
-         (identity-before (active-image-build-record-create source-root))
-         (fresh-process-p
-           (or (eq saver ':fresh-process)
-               (not (platform-supports-p *platform* ':forked-image-saver)))))
-    (ensure-directories-exist core-pathname)
-    (when (probe-file temporary)
-      (delete-file temporary))
-    (unless (or fresh-process-p (checkpoint-single-threaded-p))
-      (error 'active-image-build-error
-             :message "Building an active image requires one live Lisp thread."
-             :stage ':fork
-             :pathname core-pathname))
-    (finish-output *standard-output*)
-    (finish-output *error-output*)
-    (unwind-protect
-         (let ((saved-p
-                 (if fresh-process-p
-                     (active-image--save-in-fresh-process source-root temporary)
-                     (handler-case
-                         (platform-run-image-saver
-                          *platform*
-                          (lambda ()
-                            (active-image--save-child temporary identity-before)))
-                       (platform-error (condition)
-                         (if (eq (platform-error-operation condition) ':fork)
-                             (error 'active-image-build-error
-                                    :message (format nil
-                                                     "Could not fork the active-image saver: ~A"
-                                                     condition)
-                                    :stage ':fork
-                                    :pathname temporary)
-                             (error 'active-image-build-error
-                                    :message (format nil
-                                                     "Could not wait for the active-image saver: ~A"
-                                                     condition)
-                                    :stage ':save
-                                    :pathname temporary)))))))
-           (unless (and saved-p (probe-file temporary))
-             (error 'active-image-build-error
-                    :message "The active-image saver child failed."
-                    :stage ':save
-                    :pathname temporary))
-           (active-image--probe-core temporary
-                                     source-root
-                                     identity-before)
-           (let ((identity-after
-                   (active-image-build-record-create source-root)))
-             (unless (equal identity-before identity-after)
-               (error 'active-image-build-error
-                      :message "Active-image inputs changed during the build."
-                      :stage ':source
-                      :pathname source-root)))
-           (handler-case
-               (progn
-                 (platform-replace-file *platform* temporary core-pathname)
-                 (platform-make-read-only *platform* core-pathname)
-                 (active-image--write-manifest
-                  manifest
-                  (active-image-manifest-form core-pathname
-                                              identity-before)))
-             (error (condition)
-               (error 'active-image-build-error
-                      :message (format nil
-                                       "Could not publish the active image: ~A"
-                                       condition)
-                      :stage ':publish
-                      :pathname core-pathname))))
-      (when (probe-file temporary)
-        (delete-file temporary)))
-    core-pathname))
+  (let ((source-root (uiop:ensure-directory-pathname
+                      (platform-truename *platform* source-root))))
+    (active-image--call-translating-errors
+     (lambda ()
+       (image-install source-root (pathname core-pathname)
+                      :inputs           #'active-image-source-paths
+                      :toplevel         #'active-image--toplevel
+                      :prepare          #'active-image--prepare-saver
+                      :saver            (if (platform-supports-p *platform* ':forked-image-saver)
+                                            saver
+                                            ':fresh-process)
+                      :fresh-process-command
+                      (lambda (temporary)
+                        (active-image--fresh-process-command source-root temporary))
+                      :probe-runner     (make-sbcl-core-probe-runner
+                                         :command (active-image--sbcl-command))
+                      :probe-argument   *active-image-probe-argument*
+                      :publish-function #'active-image--publish-core
+                      :write-function   #'active-image--write-manifest)))))

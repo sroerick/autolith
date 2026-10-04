@@ -168,7 +168,7 @@ run_recovery()
 active_image_valid()
 {
   [[ -f "$active_core" && -f "$active_manifest" ]] &&
-     grep -Eq '^\(:ACTIVE-IMAGE :VERSION 1([[:space:]]|$)' "$active_manifest" &&
+     grep -Eq '^\(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1([[:space:]]|$)' "$active_manifest" &&
      "$sbcl_command" --noinform --core "$active_core" \
        --end-runtime-options "$source_root" \
        --autolith-internal-active-image-probe >/dev/null 2>&1

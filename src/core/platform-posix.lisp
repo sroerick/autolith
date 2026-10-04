@@ -104,20 +104,6 @@
   (posix--call ':detach nil (lambda () (sb-posix:setsid)))
   nil)
 
-(defmethod platform-run-image-saver ((platform posix-platform) child-function)
-  "Fork the saver, run CHILD-FUNCTION in the child, and reap it in the parent."
-  (let ((child-pid (posix--call ':fork nil (lambda () (sb-posix:fork)))))
-    (if (zerop child-pid)
-        (progn
-          (funcall child-function)
-          (sb-ext:exit :code 1 :abort t))
-        (multiple-value-bind (waited-pid status)
-            (posix--call ':wait nil (lambda () (sb-posix:waitpid child-pid 0)))
-          (and (= waited-pid child-pid)
-               (sb-posix:wifexited status)
-               (zerop (sb-posix:wexitstatus status))
-               t)))))
-
 
 ;;;; -- Environment --
 

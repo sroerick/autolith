@@ -404,7 +404,7 @@ of deleting them, as the Windows update path also hands off to the user."
     (and (probe-file core)
          (probe-file (launcher-context-active-manifest context))
          (launcher-manifest-header-p (launcher-context-active-manifest context)
-                                     "(:ACTIVE-IMAGE :VERSION 1")
+                                     "(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1")
          (zerop (launcher-run (launcher-core-command
                                context core "--autolith-internal-active-image-probe")
                               :output nil :error-output nil)))))

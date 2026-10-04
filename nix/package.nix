@@ -710,7 +710,7 @@ let
       directory=$1
       image_set_valid "$directory" &&
         ${pkgs.gnugrep}/bin/grep -Eq \
-          '^\(:ACTIVE-IMAGE :VERSION 1([[:space:]]|$)' \
+          '^\(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1([[:space:]]|$)' \
           "$directory/active/manifest.sexp" &&
         ${pkgs.gnugrep}/bin/grep -Eq \
           '^\(:RECOVERY-IMAGE :VERSION 2([[:space:]]|$)' \

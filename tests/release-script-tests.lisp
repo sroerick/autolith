@@ -639,7 +639,7 @@ printf 'BOOTSTRAP\\n' >> \"$AUTOLITH_TEST_LOG\"
 active=$XDG_DATA_HOME/autolith/active
 mkdir -p \"$active\"
 : > \"$active/autolith-active.core\"
-printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
+printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
 ")
     (dolist (pathname (list launcher fake-sbcl bootstrap))
       (release-script-tests--chmod "755" pathname))
@@ -1591,7 +1591,7 @@ printf 'RUNTIME=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
         (release-script-tests--write-file pathname "core"))
       (release-script-tests--write-file
        (merge-pathnames "manifest.sexp" active-root)
-       "(:ACTIVE-IMAGE :VERSION 1)\n")
+       "(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1)\n")
       (release-script-tests--write-file
        (merge-pathnames "manifest.sexp" recovery-root)
        "(:RECOVERY-IMAGE :VERSION 2)\n")
@@ -1885,7 +1885,7 @@ mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
         (release-script-tests--write-file pathname "core"))
       (release-script-tests--write-file
        (merge-pathnames "manifest.sexp" active-root)
-       "(:ACTIVE-IMAGE :VERSION 1)\n")
+       "(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1)\n")
       (release-script-tests--write-file
        (merge-pathnames "manifest.sexp" recovery-root)
        "(:RECOVERY-IMAGE :VERSION 2)\n")
@@ -1963,7 +1963,7 @@ case \" $* \" in
   *'build-active.lisp'*)
     mkdir -p \"$(dirname \"$target\")\"
     : > \"$target\"
-    printf '(:ACTIVE-IMAGE :VERSION 1)\\n' > \"$(dirname \"$target\")/manifest.sexp\"
+    printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1)\\n' > \"$(dirname \"$target\")/manifest.sexp\"
     ;;
 esac
 ")

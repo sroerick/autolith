@@ -587,13 +587,6 @@ protocol."
   (declare (ignore platform))
   nil)
 
-(defmethod platform-run-image-saver ((platform win32-platform) child-function)
-  "Refuse, since Windows cannot fork a saver that shares this heap."
-  (declare (ignore child-function))
-  (win32--unavailable
-   ':forked-image-saver
-   "Windows cannot fork a process that shares this image's heap; image saves run in a fresh process instead."))
-
 
 ;;;; -- Security --
 

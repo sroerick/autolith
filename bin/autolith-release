@@ -179,7 +179,7 @@ release_images_usable_p()
   [[ $(<"$image_marker") == "$release_tag:$release_platform" ]] || return 1
   [[ -f $active_core && -f $active_manifest ]] || return 1
   [[ -f $recovery_core && -f $recovery_manifest ]] || return 1
-  grep -Eq '^\(:ACTIVE-IMAGE :VERSION 1([[:space:]]|$)' \
+  grep -Eq '^\(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1([[:space:]]|$)' \
     "$active_manifest" || return 1
   grep -Eq '^\(:RECOVERY-IMAGE :VERSION 2([[:space:]]|$)' \
     "$recovery_manifest" || return 1
