@@ -224,7 +224,7 @@
               :title "Replay implementation instrumentation"
               :entries
               (list (image-commit--record->entry implementation-record)))
-             (self-call-with-package-unlocked
+             (call-with-package-unlocked
               implementation-package
               (lambda ()
                 (let ((symbol (find-symbol implementation-name
@@ -410,7 +410,7 @@
                *exploratory-definitions*)
       (when implementation-key
         (remhash implementation-key *exploratory-definitions*))
-      (self-call-with-package-unlocked
+      (call-with-package-unlocked
        implementation-package
        (lambda ()
          (let ((symbol (find-symbol implementation-name
@@ -549,9 +549,7 @@
          (function-snapshots
            (loop for name in definition-names
                  collect
-                 (list name
-                       (not (null (fboundp name)))
-                       (and (fboundp name) (fdefinition name)))))
+                 (list name (function-binding-snapshot name))))
          (existing-baseline-source
            (test-application-command-definition-source
             :definition-name 'test-self-command-existing
@@ -802,10 +800,7 @@
             "private replay reconstructs command metadata and behavior"))
       (application-command--registry-restore registry-snapshot)
       (dolist (snapshot function-snapshots)
-        (self--restore-function-binding
-         (first snapshot)
-         (second snapshot)
-         (third snapshot)))
+        (function-binding-restore (first snapshot) (second snapshot)))
       (dolist (target targets)
         (remhash target *exploratory-definitions*))
       (setf *image-state-initialized-p* previous-state-initialized-p
@@ -2224,7 +2219,7 @@
            (image-state-load configuration)
            (dolist (kind '(:function :setf :variable :method))
              (let* ((symbol
-                      (self-call-with-package-unlocked
+                      (call-with-package-unlocked
                        package
                        (lambda ()
                          (intern (format nil "AUTOLITH-FOREIGN-~A" (make-identifier))
@@ -2245,7 +2240,7 @@
                            (funcall symbol nil)))))
                  (unwind-protect
                       (progn
-                        (self-call-with-package-unlocked package (lambda () (eval baseline)))
+                        (call-with-package-unlocked package (lambda () (eval baseline)))
                         (self-install-definition configuration source)
                         (test-assert (eq (observe) ':replacement)
                                      "a foreign target is replaced from the Autolith reader package")
@@ -2300,7 +2295,7 @@
                                    (entry (first (image-commit-base-entries configuration))))
                               (test-assert (equal "SB-EXT" (getf entry :home-package))
                                            "direct persistence records the foreign target owner")
-                              (self-call-with-package-unlocked package (lambda () (eval baseline)))
+                              (call-with-package-unlocked package (lambda () (eval baseline)))
                               (load (image-commit-script-pathname commit))
                               (test-assert (and (eq (observe) ':persisted)
                                                 (sb-ext:package-locked-p package))
@@ -2328,7 +2323,7 @@
                             (self-discard-mutation configuration nil)
                             (test-assert (eq (observe) ':replacement)
                                          "self.set discard restores foreign variables"))))
-                   (self-call-with-package-unlocked
+                   (call-with-package-unlocked
                     package
                     (lambda ()
                       (when (fboundp symbol)
@@ -2373,7 +2368,7 @@
                    (tool-execute
                     (tool-registry-find registry "lisp" "source")
                     context
-                    (json-object "name" "self-symbol-defined-predicate"
+                    (json-object "name" "self-symbol-suggestion-texts"
                                  "target" "self"
                                  "package" "autolith"))
                    nil)
@@ -2386,7 +2381,7 @@
                    "the failure points at name search as the next step")
       (test-assert (and near-miss
                         (search "Closest defined names:" near-miss)
-                        (search "self-symbol-defined-p" near-miss))
+                        (search "self-symbol-suggestion-text" near-miss))
                    "a near miss proposes the closest defined names and accepts a lowercase package")))
   nil)
 
@@ -2407,11 +2402,11 @@
       (let ((content
               (tool-result-content
                (tool-execute tool context
-                             (json-object "query" "apropos search")))))
-        (test-assert (search "lisp-apropos-search  function  src/self/apropos.lisp"
+                             (json-object "query" "apropos render")))))
+        (test-assert (search "lisp-apropos-render  function  src/self/apropos.lisp"
                              content)
                      "a matching function lists its kind and tracked source file")
-        (test-assert (search "(query &key (package (find-package" content)
+        (test-assert (search "(matches &key query package limit configuration)" content)
                      "a matching function shows its lambda list")
         (test-assert (not (search "apropos-test-undefined-interned-name" content))
                      "an interned name without a definition is never listed"))
@@ -2420,7 +2415,7 @@
                (tool-execute tool context
                              (json-object "query" "apropos" "kind" "variable")))))
         (test-assert (and (search "*lisp-apropos-default-limit*  variable" content)
-                          (not (search "lisp-apropos-search" content)))
+                          (not (search "lisp-apropos-render" content)))
                      "a kind filter keeps only names carrying that definition kind"))
       (let ((content
               (tool-result-content
@@ -2455,9 +2450,9 @@
                             :worker nil
                             :conversation conversation))
            (tool (tool-registry-find (make-default-tool-registry) "lisp" "describe")))
-      (dolist (designator '("'self-symbol-defined-p"
-                            "#'self-symbol-defined-p"
-                            " 'autolith::self-symbol-defined-p"))
+      (dolist (designator '("'self-resolve-symbol"
+                            "#'self-resolve-symbol"
+                            " 'autolith::self-resolve-symbol"))
         (test-assert (search "Function binding: yes"
                              (tool-result-content
                               (tool-execute tool context
@@ -2468,14 +2463,14 @@
               (handler-case
                   (progn
                     (tool-execute tool context
-                                  (json-object "designator" "self-symbol-defined-predicate"
+                                  (json-object "designator" "self-resolve-symbols"
                                                "target" "self"))
                     nil)
                 (tool-error (condition)
                   (autolith-error-message condition)))))
         (test-assert (and message
-                          (search "SELF-SYMBOL-DEFINED-PREDICATE" message)
-                          (search "self-symbol-defined-p" message))
+                          (search "SELF-RESOLVE-SYMBOLS" message)
+                          (search "self-resolve-symbol" message))
                      "an undefined name fails and names the closest defined symbols"))))
   nil)
 

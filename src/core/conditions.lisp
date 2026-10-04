@@ -509,14 +509,17 @@ Codes let tests and callers discriminate failures without pinning prose.")
   (:documentation
    "A private live-image mutation commit could not be validated or published."))
 
-(define-condition self-correctable-error (autolith-error)
+(define-condition self-correctable-error (autolith-error restart-choice-available)
   ((restart-names
     :initarg :restart-names
     :reader self-correctable-error-restart-names
     :type list
     :documentation "The invokable restart names offered by the failed operation."))
   (:documentation
-   "An active-image operation failed while offering selectable restarts."))
+   "An active-image operation failed while offering selectable restarts.
+
+As a RESTART-CHOICE-AVAILABLE it carries the original condition and its
+choices, so an enclosing restart selection passes it through unchanged."))
 
 (define-condition active-image-corruption (autolith-error)
   ((original-condition

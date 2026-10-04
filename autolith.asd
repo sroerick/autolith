@@ -53,6 +53,7 @@
                #:sb-bsd-sockets
                #:sbcl-generations
                #:sbcl-workers
+               #:surgeon
                #:sexp-config
                #:sexp-store
                #:sophisticated-clipboard

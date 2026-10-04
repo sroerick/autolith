@@ -14,8 +14,7 @@
 
 NAME is accepted as written or upcased, so lowercase names resolve too."
   (let ((package (if (non-empty-string-p name)
-                     (or (find-package name)
-                         (find-package (string-upcase name)))
+                     (package-find name)
                      (find-package '#:autolith))))
     (unless package
       (error 'source-mutation-error
@@ -25,38 +24,15 @@ NAME is accepted as written or upcased, so lowercase names resolve too."
              :pathname nil))
     package))
 
-(-> self-call-with-package-unlocked (package function) t)
-(defun self-call-with-package-unlocked (package thunk)
-  "Call THUNK with PACKAGE temporarily unlocked, restoring its lock afterward."
-  (let ((locked-p (sb-ext:package-locked-p package)))
-    (unwind-protect
-         (progn
-           (when locked-p
-             (sb-ext:unlock-package package))
-           (funcall thunk))
-      (when (and locked-p (find-package (package-name package)))
-        (sb-ext:lock-package package)))))
-
 (-> self-read-form
     (string &key (:read-eval boolean) (:package package))
     t)
 (defun self-read-form
     (source &key (read-eval t) (package (find-package '#:autolith)))
-  "Read exactly one Common Lisp form from SOURCE relative to PACKAGE."
-  (self-call-with-package-unlocked
-   package
-   (lambda ()
-     (let ((*read-eval* read-eval)
-           (*package* package)
-           (end-marker (cons nil nil)))
-       (multiple-value-bind (form position)
-           (read-from-string source t nil)
-         (multiple-value-bind (extra ignored-position)
-             (read-from-string source nil end-marker :start position)
-           (declare (ignore ignored-position))
-           (unless (eq extra end-marker)
-             (error "Expected exactly one Common Lisp form.")))
-         form)))))
+  "Read exactly one Common Lisp form from SOURCE relative to PACKAGE.
+
+A source without a form, or ending inside one, signals END-OF-FILE."
+  (read-one-form source :read-eval read-eval :package package))
 
 (-> self-resolve-symbol (string &key (:package package)) symbol)
 (defun self-resolve-symbol (name &key (package (find-package '#:autolith)))
@@ -64,51 +40,7 @@ NAME is accepted as written or upcased, so lowercase names resolve too."
 
 A quoted or function-quoted symbol, as in 'name or #'name, resolves to the
 symbol itself."
-  (let* ((form (self-read-form name :read-eval nil :package package))
-         (value (if (and (consp form)
-                         (member (first form) '(quote function))
-                         (consp (rest form))
-                         (null (rest (rest form)))
-                         (symbolp (second form)))
-                    (second form)
-                    form)))
-    (unless (symbolp value)
-      (error "~S does not name a symbol." name))
-    value))
-
-(-> self-symbol-defined-p (symbol) boolean)
-(defun self-symbol-defined-p (symbol)
-  "Return true when SYMBOL names a function, macro, variable, class, or type in the active image."
-  (not (null (self-symbol-kinds symbol))))
-
-(-> self-symbol-lambda-list (symbol) t)
-(defun self-symbol-lambda-list (symbol)
-  "Return SYMBOL's function lambda list when introspection can recover it.
-
-Compiled definitions keep no lambda expression, so SBCL's recorded lambda
-list is consulted before falling back to the expression."
-  (when (and (fboundp symbol)
-             (not (special-operator-p symbol)))
-    (handler-case
-        (let ((function (symbol-function symbol)))
-          (cond
-            ((typep function 'generic-function)
-             (closer-mop:generic-function-lambda-list function))
-            (t
-             (require :sb-introspect)
-             (let ((recorded (uiop:symbol-call '#:sb-introspect
-                                               '#:function-lambda-list
-                                               function)))
-               (if (listp recorded)
-                   recorded
-                   (multiple-value-bind (expression closure-p lexical-name)
-                       (function-lambda-expression function)
-                     (declare (ignore closure-p lexical-name))
-                     (and (consp expression)
-                          (eq (first expression) 'lambda)
-                          (second expression))))))))
-      (error ()
-        nil))))
+  (resolve-symbol name :package package))
 
 (-> self-inspect-symbol (symbol) string)
 (defun self-inspect-symbol (symbol)
@@ -121,7 +53,7 @@ list is consulted before falling back to the expression."
                 "uninterned"))
     (when (fboundp symbol)
       (format stream "Function binding: yes~%Lambda list: ~S~%Documentation: ~A~%"
-              (self-symbol-lambda-list symbol)
+              (symbol-lambda-list symbol)
               (or (documentation symbol 'function) "none")))
     (when (boundp symbol)
       (format stream "Value binding: yes~%Value: ~A~%Documentation: ~A~%"
@@ -147,7 +79,7 @@ list is consulted before falling back to the expression."
          (symbol (self-resolve-symbol
                   (tool-argument arguments "designator" :required t)
                   :package package)))
-    (unless (or (self-symbol-defined-p symbol)
+    (unless (or (symbol-defined-p symbol)
                 (keywordp symbol))
       (error 'tool-error
              :message
@@ -220,28 +152,6 @@ list is consulted before falling back to the expression."
 
 ;;;; -- Restart Selection --
 
-(-> self--selectable-restarts (condition) list)
-(defun self--selectable-restarts (condition)
-  "Return (NAME . REPORT) pairs for CONDITION's invokable restarts.
-
-The ABORT restart is excluded because invoking it would unwind Autolith's own
-event loop instead of correcting the failed operation."
-  (loop for restart in (compute-restarts condition)
-        for name = (restart-name restart)
-        when (and name (not (eq name 'abort)))
-          collect (cons (symbol-name name)
-                        (princ-to-string restart))))
-
-(-> self--find-selected-restart (condition string) t)
-(defun self--find-selected-restart (condition name)
-  "Return CONDITION's first non-ABORT restart named NAME, or NIL."
-  (find-if (lambda (restart)
-             (let ((restart-name (restart-name restart)))
-               (and restart-name
-                    (not (eq restart-name 'abort))
-                    (string-equal (symbol-name restart-name) name))))
-           (compute-restarts condition)))
-
 (-> self--correctable-message (condition list) string)
 (defun self--correctable-message (condition restarts)
   "Describe CONDITION and its RESTARTS together with retry instructions."
@@ -266,30 +176,21 @@ signaling operation is still live, optionally passing the evaluated
 RESTART-VALUE-SOURCE. Without a match, a condition that offers selectable
 restarts becomes a SELF-CORRECTABLE-ERROR whose report teaches the retry
 protocol."
-  (handler-bind
-      ((error
-         (lambda (condition)
-           (unless (typep condition 'self-correctable-error)
-             (let ((restarts (self--selectable-restarts condition)))
-               (when restarts
-                 (error 'self-correctable-error
-                        :message (self--correctable-message condition
-                                                            restarts)
-                        :restart-names (mapcar #'first restarts))))))))
-    (if (non-empty-string-p restart-name)
-        (handler-bind
-            ((error
-               (lambda (condition)
-                 (let ((restart (self--find-selected-restart condition
-                                                             restart-name)))
-                   (when restart
-                     (if (non-empty-string-p restart-value-source)
-                         (invoke-restart restart
-                                         (eval (self-read-form
-                                                restart-value-source)))
-                         (invoke-restart restart)))))))
-          (funcall thunk))
-        (funcall thunk))))
+  (handler-case
+      (call-with-restart-choice
+       thunk
+       :restart-name           restart-name
+       :restart-value-function (and (non-empty-string-p restart-value-source)
+                                    (lambda ()
+                                      (eval (self-read-form restart-value-source)))))
+    (restart-choice-available (available)
+      (let ((condition (restart-choice-available-condition available))
+            (choices   (restart-choice-available-choices available)))
+        (error 'self-correctable-error
+               :message       (self--correctable-message condition choices)
+               :condition     condition
+               :choices       choices
+               :restart-names (mapcar #'first choices))))))
 
 (defmethod tool-execute ((tool self-eval-tool)
                          (context tool-context)
@@ -330,28 +231,13 @@ protocol."
 
 ;;;; -- Definition Installation --
 
-(defparameter *definition-operators*
-  '(defun defgeneric defmethod defmacro defclass defstruct define-condition
-    deftype define-compiler-macro defvar defparameter
-    define-context-contributor define-application-command)
-  "Top-level defining operators accepted by self.redefine and source persistence.")
+(defmethod definition-operator-p ((operator (eql 'define-context-contributor)))
+  "Accept context contributor definitions."
+  t)
 
-(-> definition-name-p (t) boolean)
-(defun definition-name-p (value)
-  "Return true when VALUE is a symbol or a two-part SETF function name."
-  (or (symbolp value)
-      (and (listp value)
-           (= (length value) 2)
-           (eq (first value) 'setf)
-           (symbolp (second value)))))
-
-(-> definition-form-p (t) boolean)
-(defun definition-form-p (form)
-  "Return true when FORM is one supported complete top-level definition."
-  (and (consp form)
-       (symbolp (first form))
-       (member (first form) *definition-operators* :test #'eq)
-       (definition-name-p (second form))))
+(defmethod definition-operator-p ((operator (eql 'define-application-command)))
+  "Accept application command definitions."
+  t)
 
 (defclass image-replay-skip ()
   ((definition
@@ -395,31 +281,6 @@ protocol."
 (defvar *image-replay-skips* nil
   "The IMAGE-REPLAY-SKIP records of the running image's private replay.")
 
-(-> definition-name-symbol (t) symbol)
-(defun definition-name-symbol (name)
-  "Return the symbol identifying definition NAME, unwrapping SETF names."
-  (if (consp name)
-      (second name)
-      name))
-
-(-> definition-home-package-name (list) (option string))
-(defun definition-home-package-name (definition)
-  "Return the home package name of DEFINITION's target symbol, if interned."
-  (let ((home (symbol-package (definition-name-symbol (second definition)))))
-    (when home
-      (package-name home))))
-
-(-> self-call-with-definition-unlocked (list package function) t)
-(defun self-call-with-definition-unlocked (definition package thunk)
-  "Call THUNK with the reader and target packages unlocked, restoring both locks."
-  (let ((home (symbol-package (definition-name-symbol (second definition)))))
-    (self-call-with-package-unlocked
-     package
-     (lambda ()
-       (if (and home (not (eq home package)))
-           (self-call-with-package-unlocked home thunk)
-           (funcall thunk))))))
-
 (-> definition-foreign-home-p
     (list package &key (:home-package (option string))) boolean)
 (defun definition-foreign-home-p
@@ -430,38 +291,6 @@ generic function and are not skipped merely because its ownership changed."
   (and (not (eq (first definition) 'defmethod))
        (or (null home-package)
            (not (equal (definition-home-package-name definition) home-package)))))
-
-(-> method-specializers (list) list)
-(defun method-specializers (specialized-lambda-list)
-  "Return required SPECIALIZED-LAMBDA-LIST specializers without parameter names."
-  (loop for parameter in specialized-lambda-list
-        until (member parameter lambda-list-keywords :test #'eq)
-        collect (if (consp parameter)
-                    (second parameter)
-                    t)))
-
-(-> definition-signature (list) list)
-(defun definition-signature (definition)
-  "Return the semantic source identity of one top-level DEFINITION."
-  (if (eq (first definition) 'defmethod)
-      (let* ((tail (rest (rest definition)))
-             (lambda-position (position-if #'listp tail)))
-        (unless lambda-position
-          (error "DEFMETHOD has no lambda list."))
-        (let ((qualifiers (subseq tail 0 lambda-position))
-              (specialized-lambda-list (nth lambda-position tail)))
-          (list (first definition)
-                (second definition)
-                qualifiers
-                (method-specializers specialized-lambda-list))))
-      (list (first definition) (second definition))))
-
-(-> definition-key (list) string)
-(defun definition-key (definition)
-  "Return a stable readable key for DEFINITION's semantic signature."
-  (write-to-string (definition-signature definition)
-                   :readably t
-                   :case :downcase))
 
 (-> self-previous-definition (configuration list) (option string))
 (defun self-previous-definition (configuration definition)
@@ -477,202 +306,40 @@ generic function and are not skipped merely because its ownership changed."
                       configuration
                       definition)))))
 
-(-> self--restore-function-binding (t boolean t) null)
-(defun self--restore-function-binding (name bound-p binding)
-  "Restore NAME's exact function BINDING or its prior unbound state."
-  (if bound-p
-      (setf (fdefinition name) binding)
-      (when (fboundp name)
-        (fmakunbound name)))
-  nil)
+(defmethod definition-undo-capture ((operator (eql 'define-context-contributor))
+                                    definition package &key previous-source)
+  "Restore the contributor function and its registration."
+  (declare (ignore package previous-source))
+  (let* ((name         (second definition))
+         (identifier   (context--definition-identifier name))
+         (registration (context--registration-snapshot identifier))
+         (binding      (function-binding-snapshot name)))
+    (lambda ()
+      (function-binding-restore name binding)
+      (context--registration-restore identifier registration))))
 
-(-> self--restore-value-binding (symbol boolean t) null)
-(defun self--restore-value-binding (symbol bound-p value)
-  "Restore SYMBOL's exact VALUE or its prior unbound state."
-  (if bound-p
-      (setf (symbol-value symbol) value)
-      (when (boundp symbol)
-        (makunbound symbol)))
-  nil)
-
-(-> self--restore-sbcl-info
-    (symbol &key (:category keyword) (:kind keyword) (:snapshot list))
-    null)
-(defun self--restore-sbcl-info (name &key category kind snapshot)
-  "Restore one SBCL global database entry for NAME from SNAPSHOT."
-  (if (second snapshot)
-      (setf (sb-int:info category kind name) (first snapshot))
-      (sb-int:clear-info category kind name))
-  nil)
-
-(-> self--package-function-snapshot (package) hash-table)
-(defun self--package-function-snapshot (package)
-  "Capture exact function bindings currently interned in PACKAGE."
-  (let ((snapshot (make-hash-table :test #'eq)))
-    (do-symbols (symbol package)
-      (when (eq (symbol-package symbol) package)
-        (setf (gethash symbol snapshot)
-              (list (not (null (fboundp symbol)))
-                    (and (fboundp symbol) (fdefinition symbol))))))
-    snapshot))
-
-(-> self--restore-package-functions (package hash-table) null)
-(defun self--restore-package-functions (package snapshot)
-  "Restore PACKAGE's function bindings from SNAPSHOT."
-  (do-symbols (symbol package)
-    (when (eq (symbol-package symbol) package)
-      (multiple-value-bind (state present-p)
-          (gethash symbol snapshot)
-        (if present-p
-            (self--restore-function-binding symbol
-                                            (first state)
-                                            (second state))
-            (when (fboundp symbol)
-              (fmakunbound symbol))))))
-  nil)
-
-(-> self--method-components (list package) (values t list list))
-(defun self--method-components (definition package)
-  "Return DEFINITION's generic name, qualifiers, and method specializers."
-  (let* ((tail (rest (rest definition)))
-         (lambda-position (position-if #'listp tail))
-         (qualifiers (subseq tail 0 lambda-position))
-         (lambda-list (nth lambda-position tail)))
-    (values
-     (second definition)
-     qualifiers
-     (loop for parameter in lambda-list
-           until (member parameter lambda-list-keywords :test #'eq)
-           for specializer = (and (consp parameter) (second parameter))
-           collect
-           (cond
-             ((null specializer)
-              (find-class 't))
-             ((and (consp specializer) (eq (first specializer) 'eql))
-              (closer-mop:intern-eql-specializer
-               (let ((*package* package))
-                 (eval (second specializer)))))
-             (t
-              (find-class
-               (if (symbolp specializer)
-                   specializer
-                   (let ((*package* package))
-                     (eval specializer))))))))))
-
-(-> self--find-definition-method (list package) (values t t))
-(defun self--find-definition-method (definition package)
-  "Return DEFINITION's generic function and current method, when present."
-  (multiple-value-bind (name qualifiers specializers)
-      (self--method-components definition package)
-    (let ((generic-function (and (fboundp name) (fdefinition name))))
-      (values generic-function
-              (and (typep generic-function 'generic-function)
-                   (find-method generic-function
-                                qualifiers
-                                specializers
-                                nil))))))
+(defmethod definition-undo-capture ((operator (eql 'define-application-command))
+                                    definition package &key previous-source)
+  "Restore the command function and its runtime registration."
+  (declare (ignore package previous-source))
+  (let* ((name         (second definition))
+         (registration (application-command--registration-snapshot name ':runtime))
+         (binding      (function-binding-snapshot name)))
+    (lambda ()
+      (function-binding-restore name binding)
+      (application-command--registration-restore name ':runtime registration))))
 
 (-> self--definition-undo-action (list (option string) package) function)
 (defun self--definition-undo-action (definition previous-source package)
   "Return an exact undo action for installing DEFINITION in PACKAGE."
-  (let ((operator (first definition))
-        (name (second definition)))
-    (case operator
-      ((defun defgeneric defmacro)
-       (let ((bound-p (not (null (fboundp name))))
-             (binding (and (fboundp name) (fdefinition name))))
-         (lambda ()
-           (self--restore-function-binding name bound-p binding))))
-      (define-context-contributor
-       (let* ((identifier (context--definition-identifier name))
-              (registration (context--registration-snapshot identifier))
-              (bound-p (not (null (fboundp name))))
-              (binding (and bound-p (fdefinition name))))
-         (lambda ()
-           (self--restore-function-binding name bound-p binding)
-           (context--registration-restore identifier registration))))
-      (define-application-command
-       (let ((registration
-               (application-command--registration-snapshot name ':runtime))
-             (bound-p (not (null (fboundp name))))
-             (binding (and (fboundp name) (fdefinition name))))
-         (lambda ()
-           (self--restore-function-binding name bound-p binding)
-           (application-command--registration-restore
-            name
-            ':runtime
-            registration))))
-      (define-compiler-macro
-       (let ((binding (compiler-macro-function name)))
-         (lambda ()
-           (setf (compiler-macro-function name) binding))))
-      (defmethod
-       (multiple-value-bind (generic-function method)
-           (self--find-definition-method definition package)
-         (let ((generic-function-existed-p
-                 (typep generic-function 'generic-function)))
-           (lambda ()
-             (multiple-value-bind (current-generic-function current-method)
-                 (self--find-definition-method definition package)
-               (when current-method
-                 (remove-method current-generic-function current-method))
-               (when method
-                 (add-method current-generic-function method))
-               (unless generic-function-existed-p
-                 (when (fboundp name)
-                   (fmakunbound name))))))))
-      ((defvar defparameter)
-       (let ((bound-p (boundp name))
-             (value (and (boundp name) (symbol-value name)))
-             (kind (multiple-value-list
-                    (sb-int:info :variable :kind name))))
-         (lambda ()
-           (self--restore-value-binding name bound-p value)
-           (self--restore-sbcl-info name
-                                    :category ':variable
-                                    :kind ':kind
-                                    :snapshot kind))))
-      (deftype
-       (let ((expander (multiple-value-list
-                        (sb-int:info :type :expander name)))
-             (source-location (multiple-value-list
-                               (sb-int:info :type :source-location name))))
-         (lambda ()
-           (self--restore-sbcl-info name
-                                    :category ':type
-                                    :kind ':expander
-                                    :snapshot expander)
-           (self--restore-sbcl-info name
-                                    :category ':type
-                                    :kind ':source-location
-                                    :snapshot source-location))))
-      ((defclass defstruct define-condition)
-       (let ((existing-class (find-class name nil))
-             (function-snapshot
-               (self--package-function-snapshot package)))
-         (when (and existing-class (null previous-source))
-           (error 'source-mutation-error
-                  :message
-                  "The existing class has no recoverable source, so this exploratory redefinition cannot be made safely reversible."
-                  :tool-name "self.redefine"
-                  :pathname nil))
-         (lambda ()
-           (if previous-source
-               (self--install-definition
-                (self-read-form previous-source
-                                :read-eval nil
-                                :package package)
-                previous-source
-                :package package)
-               (progn
-                 (when (find-class name nil)
-                   (setf (find-class name) nil))
-                 (self--restore-package-functions package function-snapshot))))))
-      (otherwise
-       (error 'source-mutation-error
-              :message "The definition kind has no reversible installation strategy."
-              :tool-name "self.redefine"
-              :pathname nil)))))
+  (handler-case
+      (definition-undo-capture (first definition) definition package
+                               :previous-source previous-source)
+    (definition-irreversible (condition)
+      (error 'source-mutation-error
+             :message   (surgeon-error-message condition)
+             :tool-name "self.redefine"
+             :pathname  nil))))
 
 (-> self--definition-state-undo-action
     (list (option string) package)
@@ -687,7 +354,7 @@ generic function and are not skipped merely because its ownership changed."
     (multiple-value-bind (cached-source cached-source-p)
         (gethash target *exploratory-definitions*)
       (lambda ()
-        (self-call-with-definition-unlocked definition package binding-undo)
+        (call-with-definition-unlocked definition package binding-undo)
         (if cached-source-p
             (setf (gethash target *exploratory-definitions*) cached-source)
             (remhash target *exploratory-definitions*))
@@ -713,7 +380,7 @@ generic function and are not skipped merely because its ownership changed."
 (defun self--install-definition
     (definition source &key (package (find-package '#:autolith)))
   "Compile and install parsed DEFINITION in PACKAGE, retaining complete SOURCE."
-  (self-call-with-definition-unlocked
+  (call-with-definition-unlocked
    definition package
    (lambda ()
      (let* ((*package* package)
@@ -1039,9 +706,8 @@ authoritative; entries without the record are judged by source revision."
                    :result ':installed))
             (setf (gethash identifier *exploratory-undo-actions*)
                   (lambda ()
-                    (self--restore-value-binding symbol
-                                                 previous-bound-p
-                                                 previous-value)))
+                    (value-binding-restore symbol
+                                           (list previous-bound-p previous-value))))
             (tool-success
              (format nil "~S is now ~A."
                      symbol
@@ -1063,24 +729,6 @@ authoritative; entries without the record are judged by source revision."
 
 ;;;; -- Form-Aware Source Persistence --
 
-(defclass source-form ()
-  ((form
-    :initarg :form
-    :reader source-form-form
-    :type t
-    :documentation "The parsed top-level form.")
-   (start
-    :initarg :start
-    :reader source-form-start
-    :type integer
-    :documentation "The character offset at which the form begins.")
-   (end
-    :initarg :end
-    :reader source-form-end
-    :type integer
-    :documentation "The character offset immediately after the form."))
-  (:documentation "One parsed top-level form and its exact source span."))
-
 (defclass tracked-definition ()
   ((relative-pathname
     :initarg :relative-pathname
@@ -1098,72 +746,6 @@ authoritative; entries without the record are judged by source revision."
     :type string
     :documentation "The complete tracked source text of the definition."))
   (:documentation "One tracked top-level definition exposed for safe self inspection."))
-
-(-> source--skip-block-comment (string integer) integer)
-(defun source--skip-block-comment (source start)
-  "Return the first offset after the nested block comment at START."
-  (let ((position (+ start 2))
-        (depth 1)
-        (length (length source)))
-    (loop while (and (< position length) (plusp depth))
-          do (cond
-               ((and (< (1+ position) length)
-                     (char= (char source position) #\#)
-                     (char= (char source (1+ position)) #\|))
-                (incf depth)
-                (incf position 2))
-               ((and (< (1+ position) length)
-                     (char= (char source position) #\|)
-                     (char= (char source (1+ position)) #\#))
-                (decf depth)
-                (incf position 2))
-               (t
-                (incf position))))
-    (when (plusp depth)
-      (error "Unterminated block comment in source file."))
-    position))
-
-(-> source--next-form-start (string integer) integer)
-(defun source--next-form-start (source start)
-  "Skip whitespace and comments in SOURCE beginning at START."
-  (let ((position start)
-        (length (length source)))
-    (loop
-      (loop while (and (< position length)
-                       (find (char source position)
-                             '(#\Space #\Tab #\Newline #\Return #\Page)))
-            do (incf position))
-      (cond
-        ((and (< position length) (char= (char source position) #\;))
-         (let ((newline (position #\Newline source :start position)))
-           (setf position (if newline (1+ newline) length))))
-        ((and (< (1+ position) length)
-              (char= (char source position) #\#)
-              (char= (char source (1+ position)) #\|))
-         (setf position (source--skip-block-comment source position)))
-        (t
-         (return position))))))
-
-(-> source-read-forms (string &key (:package package)) list)
-(defun source-read-forms
-    (source &key (package (find-package '#:autolith)))
-  "Read complete top-level forms and exact spans from SOURCE in PACKAGE."
-  (let ((stream (make-string-input-stream source))
-        (position 0)
-        (forms nil)
-        (*read-eval* nil)
-        (*package* package))
-    (loop
-      (setf position (source--next-form-start source position))
-      (when (>= position (length source))
-        (return (nreverse forms)))
-      (file-position stream position)
-      (let ((form (read stream t nil))
-            (start position)
-            (end (file-position stream)))
-        (push (make-instance 'source-form :form form :start start :end end)
-              forms)
-        (setf position end)))))
 
 (-> self-source--definitions
     (list &key (:root pathname)
@@ -1376,7 +958,7 @@ Files the system withholds from this image through :IF-FEATURE are left out."
       ((non-empty-string-p (tool-argument arguments "system"))
        (tool-success
         (self-render-tracked-definitions dependency-definitions symbol)))
-      ((not (self-symbol-defined-p symbol))
+      ((not (symbol-defined-p symbol))
        (error 'tool-error
               :message
               (format nil "~S has no function, variable, class, or type definition in the active image.~A Find the exact name with lisp.apropos or search.content instead of guessing."
@@ -1398,53 +980,14 @@ Files the system withholds from this image through :IF-FEATURE are left out."
          (declare (ignore values))
          (tool-success output))))))
 
-(-> source-definition-match-p (source-form list) boolean)
-(defun source-definition-match-p (source-form definition)
-  "Return true when SOURCE-FORM defines the same operator and name as DEFINITION."
-  (let ((form (source-form-form source-form)))
-    (and (definition-form-p form)
-         (equal (definition-signature form)
-                (definition-signature definition)))))
-
-(-> source-find-definition (pathname list) (values source-form string))
-(defun source-find-definition (pathname definition)
-  "Return DEFINITION's parsed source form and complete file text from PATHNAME."
-  (let* ((source (uiop:read-file-string pathname))
-         (match (find-if
-                 (lambda (source-form)
-                   (source-definition-match-p source-form definition))
-                 (source-read-forms source))))
-    (unless match
-      (error 'source-mutation-error
-             :message (format nil "No matching definition exists in ~A." pathname)
-             :tool-name "self.persist-definition"
-             :pathname pathname))
-    (values match source)))
-
-(-> source--atomic-write (pathname string) pathname)
-(defun source--atomic-write (pathname content)
-  "Atomically replace PATHNAME with CONTENT through a sibling temporary file."
-  (publish-file pathname content))
-
 (-> source-replace-definition (pathname string) (values string string))
 (defun source-replace-definition (pathname definition-source)
   "Replace one complete definition and return updated and preceding source text."
-  (let ((definition (self-read-form definition-source :read-eval nil)))
-    (unless (definition-form-p definition)
+  (handler-case
+      (surgeon:source-replace-definition pathname definition-source
+                                         :package (find-package '#:autolith))
+    ((or definition-unsupported definition-not-found) (condition)
       (error 'source-mutation-error
-             :message "The durable source is not a supported complete definition."
+             :message   (surgeon-error-message condition)
              :tool-name "self.persist-definition"
-             :pathname pathname))
-    (multiple-value-bind (match source)
-        (source-find-definition pathname definition)
-      (let ((previous-definition
-              (subseq source
-                      (source-form-start match)
-                      (source-form-end match)))
-            (updated
-              (concatenate 'string
-                           (subseq source 0 (source-form-start match))
-                           definition-source
-                           (subseq source (source-form-end match)))))
-        (source--atomic-write pathname updated)
-        (values updated previous-definition)))))
+             :pathname  pathname))))

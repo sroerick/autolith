@@ -98,6 +98,7 @@ terminal prompt          local Lisp result       finalized scrollback
 | mcparen/managed | Connection lifecycle, discovery snapshots and budgets | Configuration, authorization, tool registry and provider schema projection |
 | cl-lsp | Stdio JSON-RPC, language-server lifecycle, document synchronization and diagnostics | Trusted configuration, project selection, tool operations and edit hooks |
 | lambda-debugger | Live restart selection, recovery validation and execution, observable outcomes and typed condition metadata | Control conditions, source evaluation policy, model diagnosis and terminal renderer |
+| surgeon | Definition kinds, apropos, lambda lists, restart choice, definition signatures, exact undo capture and source form spans | Tool rendering, mutation journal, image commits, replay and the contributor and command undo methods |
 | cl-hashline | Visible-line validation, SHA-256 anchors, original-coordinate edits and revision-gated publication callbacks | JSON operations, observation state, bounded reads, temporary files and platform atomic publication |
 | setinka | Typed settings, layered sources, durable stores, listeners and dependent reconciliation | Setting definitions, provider-aware model checks, the preferences file and runtime side effects |
 | argo | JSON value model, strict RFC 8259 decoding, validated encoding and limits | Provider wire items, tool arguments and conversation replay |
@@ -332,7 +333,7 @@ Here's a rough, probably outdated map of the repository
 | Tools and workspace resources | =src/tools/=, =src/resource/=, cl-exec-sandbox, clifff                                           |
 | Readable durable state        | =src/conversation/=, =src/state/=, =src/resource/{memory,agenda}.lisp=, sexp-store                 |
 | Workers and tasks             | =src/workers/=, =src/task/=, cl-jobpond, sbcl-workers                                            |
-| Live mutation                 | =src/self/=, =src/state/{durable-mutations,image-commits}.lisp=                                  |
+| Live mutation                 | =src/self/=, =src/state/{durable-mutations,image-commits}.lisp=, surgeon                         |
 | Images and recovery           | =src/startup/active-image.lisp=, =src/state/generations.lisp=, =recovery/=, =bin/=, sbcl-generations |
 | Configuration and transfer    | =src/configuration/=, =src/localgroup/=, =src/state/updates.lisp=, sexp-config                     |
 

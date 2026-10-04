@@ -52,7 +52,7 @@ let
     "clifff" "clinedi" "clinker-transcript" "colordiff" "colorlisp" "fetch-gist"
     "idsmall" "image-daemon" "lambda-debugger" "ls-compat" "ls-flock" "mcparen" "org-templater"
     "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config" "sexp-store"
-    "sophisticated-clipboard" "structlisp"
+    "sophisticated-clipboard" "structlisp" "surgeon"
   ];
   qlotSourcesWithoutBuildMetadata =
     lib.subtractLists qlotLibrariesWithBuildMetadata (builtins.attrNames qlotGitSources);
@@ -368,6 +368,16 @@ let
     ]);
   };
 
+  surgeon = pkgs.sbcl.buildASDFSystem {
+    pname = "surgeon";
+    version = qlotVersion "surgeon";
+    src = qlotSource "surgeon";
+    lispLibs = [ lsCompat ] ++ (with pkgs.sbclPackages; [
+      closer-mop
+      serapeum
+    ]);
+  };
+
   idsmall = pkgs.sbcl.buildASDFSystem {
     pname = "idsmall";
     version = qlotVersion "idsmall";
@@ -520,6 +530,7 @@ let
       sexpStore
       sophisticatedClipboard
       structlisp
+      surgeon
     ];
     nativeBuildInputs = [ pkgs.git ];
 

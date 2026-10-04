@@ -849,6 +849,43 @@
   (:import-from #:usocket
                 #:ns-error
                 #:socket-error)
+  (:import-from #:surgeon
+                #:*definition-kinds*
+                #:call-with-definition-unlocked
+                #:call-with-package-unlocked
+                #:call-with-restart-choice
+                #:definition-form-p
+                #:definition-home-package-name
+                #:definition-irreversible
+                #:definition-key
+                #:definition-name-symbol
+                #:definition-not-found
+                #:definition-operator-p
+                #:definition-signature
+                #:definition-undo-capture
+                #:definition-unsupported
+                #:function-binding-restore
+                #:function-binding-snapshot
+                #:package-apropos
+                #:package-find
+                #:package-symbol-suggestions
+                #:read-one-form
+                #:resolve-symbol
+                #:restart-choice-available
+                #:restart-choice-available-choices
+                #:restart-choice-available-condition
+                #:source-form
+                #:source-form-end
+                #:source-form-form
+                #:source-form-start
+                #:source-read-forms
+                #:surgeon-error-message
+                #:symbol-defined-p
+                #:symbol-definition-pathname
+                #:symbol-documentation-line
+                #:symbol-label
+                #:symbol-lambda-list
+                #:value-binding-restore)
   (:import-from #:sbcl-workers
                 #:+minimum-sbcl-worker-core-size+
                 #:+pristine-sbcl-worker-image-identifier+
