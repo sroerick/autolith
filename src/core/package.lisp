@@ -716,6 +716,28 @@
                 #:random-data
                 #:update-mac)
   (:import-from #:mcparen
+                #:mcp-environment-binding
+                #:mcp-environment-binding-target
+                #:mcp-environment-binding-source
+                #:mcp-transport-configuration
+                #:mcp-stdio-transport-configuration
+                #:mcp-stdio-configuration-command
+                #:mcp-stdio-configuration-arguments
+                #:mcp-stdio-configuration-directory
+                #:mcp-stdio-configuration-environment-bindings
+                #:mcp-http-transport-configuration
+                #:mcp-http-configuration-url
+                #:mcp-http-configuration-header-bindings
+                #:mcp-http-configuration-connect-timeout-seconds
+                #:*mcp-stdio-command-maximum-characters*
+                #:*mcp-stdio-argument-maximum-characters*
+                #:*mcp-stdio-maximum-arguments*
+                #:*mcp-stdio-directory-maximum-characters*
+                #:*mcp-environment-name-maximum-characters*
+                #:*mcp-stdio-maximum-environment-bindings*
+                #:*mcp-http-url-maximum-characters*
+                #:*mcp-http-header-name-maximum-characters*
+                #:*mcp-http-maximum-header-bindings*
                 #:make-mcp-client
                 #:make-mcp-stdio-transport
                 #:make-mcp-streamable-http-transport
@@ -831,10 +853,6 @@
                 #:rgba-image
                 #:write-png-file)
   (:import-from #:quri
-                #:ip-addr-p
-                #:ip-addr=
-                #:ipv4-addr-p
-                #:ipv6-addr-p
                 #:uri
                 #:uri-host
                 #:uri-path

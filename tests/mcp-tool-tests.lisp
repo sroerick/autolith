@@ -1776,9 +1776,6 @@
                (test-assert
                 (and
                  failure
-                 (search
-                  "oversized schema string"
-                  (autolith-error-message failure))
                  (eq (mcp-server-runtime-state input-runtime) :failed)
                  (null (mcp-server-runtime-tools input-runtime)))
                 "MCP input schemas remain subject to structural bounds"))))
@@ -2794,7 +2791,7 @@
      :configuration server
      :registration-source ':runtime
      :provider-namespace
-     (mcp-tools--identifier-base name :prefix "mcp__")
+     (gethash name (mcp-tools--identifier-map (list name) :prefix "mcp__"))
      :client
      (make-mcp-client
       transport
@@ -3051,7 +3048,24 @@
                                  0)
                                 "type")
                                "string"))
-                         "provider projection detaches mutable JSON strings")))))
+                         "provider projection detaches mutable JSON strings"))))
+                   (flet ((server-failure-p (invalid)
+                            (handler-case
+                                (progn
+                                  (mcp-tools--provider-schema runtime invalid)
+                                  nil)
+                              (mcp-server-startup-error (condition)
+                                (and
+                                 (string= (mcp-server-startup-error-server-name condition)
+                                          (mcp-server-runtime-name runtime))
+                                 (stringp (mcp-server-startup-error-cause condition)))))))
+                     (test-assert
+                      (server-failure-p (json-object "required" ""))
+                      "schema failures become sanitized server-scoped startup failures")
+                     (let ((*mcp-maximum-tool-schema-nodes* 1))
+                       (test-assert
+                        (server-failure-p (json-object "type" "object"))
+                        "schema projection applies the configured retention bounds"))))
              (mcp-manager-close manager)))
       (platform-delete-directory-tree
        *platform*
@@ -3257,15 +3271,11 @@
                  (openai-compatible--decode-wire-tool-name wire-name)
                (test-assert
                 (and (<= (length namespace)
-                         *mcp-provider-identifier-limit*)
+                         cl-llm-provider-api:*provider-chat-completions-tool-identifier-limit*)
                      (<= (length name)
-                         *mcp-provider-identifier-limit*)
+                         cl-llm-provider-api:*provider-chat-completions-tool-identifier-limit*)
                      (uiop:string-prefix-p "mcp__braiins_" namespace)
                      (uiop:string-prefix-p "list_docs_" name)
-                     (= (length (mcp-tools--identifier-hash "braiins-docs"))
-                        16)
-                     (= (length (mcp-tools--identifier-hash "list_docs"))
-                        16)
                      (<= (length wire-name)
                          *openai-compatible-wire-tool-name-maximum-length*)
                      (string= decoded-namespace namespace)
