@@ -416,6 +416,8 @@
                 #:rlm-views-render
                 #:sse-read-line-characters
                 #:subscription-provider
+                #:gemini-generate-content-provider
+                #:provider-gemini-stream-response
                 #:turn-completion
                 #:provider--call-with-transport-normalization
                 #:provider-signal-http-failure

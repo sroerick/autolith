@@ -78,7 +78,8 @@
   (:documentation "A numeric project number was supplied where a project ID is required."))
 
 (defclass gemini-code-assist-provider
-    (session-preserving-provider-mixin subscription-provider)
+    (session-preserving-provider-mixin subscription-provider
+     gemini-generate-content-provider)
   ((endpoint
     :initarg :endpoint
     :initform *gemini-code-assist-endpoint*
@@ -142,11 +143,6 @@
   (declare (ignore provider))
   ':gemini-code-assist)
 
-(defmethod provider-output-ceiling-p ((provider gemini-code-assist-provider))
-  "Gemini generationConfig accepts maxOutputTokens."
-  (declare (ignore provider))
-  t)
-
 (defmethod provider-reconfiguration-initargs append
     ((provider gemini-code-assist-provider))
   "Preserve Code Assist setup state and endpoint across reconfiguration."
@@ -195,13 +191,6 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
 (defun gemini-code-assist--operation-url (provider operation)
   "Return the long-running OPERATION URL."
   (format nil "~A/~A" (gemini-code-assist-provider-endpoint provider) operation))
-
-(defmethod provider-retryable-status-p
-    ((provider gemini-code-assist-provider) (status integer) headers)
-  "Retry the additional transient HTTP statuses used by Gemini Code Assist."
-  (or (call-next-method)
-      (= status 499)
-      (<= 500 status 599)))
 
 (-> gemini-code-assist--condition-string (t) (option string))
 (defun gemini-code-assist--condition-string (value)
@@ -299,31 +288,25 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
     json-object)
 (defun gemini-code-assist--nonstream-request
     (provider credentials stage request-function)
-  "Run one setup RPC with Gemini CLI's bounded transient retry behavior."
-  (loop for attempt from 1 to *gemini-code-assist-nonstream-maximum-attempts*
-        do (handler-case
-               (multiple-value-bind (body status headers)
-                   (funcall request-function)
-                 (cond
-                   ((<= 200 status 299)
-                    (return-from gemini-code-assist--nonstream-request
-                      (gemini-code-assist--decode-json-response body stage)))
-                   ((and (provider-retryable-status-p provider status headers)
-                         (< attempt *gemini-code-assist-nonstream-maximum-attempts*))
-                    (sleep *gemini-code-assist-nonstream-retry-delay*))
-                   (t
-                    (provider--signal-http-status-failure
-                     provider status :headers headers :raw-body body))))
-             (provider-retryable-error (condition)
-               (if (< attempt *gemini-code-assist-nonstream-maximum-attempts*)
-                   (sleep *gemini-code-assist-nonstream-retry-delay*)
-                   (error condition)))))
-  (error 'gemini-code-assist-setup-error
-         :message "Gemini Code Assist setup exhausted its retry budget."
-         :stage stage
-         :status nil
-         :request-id nil
-         :response nil))
+  "Run one setup RPC with Gemini CLI's bounded transient retry behavior.
+
+A retryable HTTP status or transport failure is retried after
+*GEMINI-CODE-ASSIST-NONSTREAM-RETRY-DELAY* seconds, up to
+*GEMINI-CODE-ASSIST-NONSTREAM-MAXIMUM-ATTEMPTS* attempts; the last failure
+propagates."
+  (declare (ignore credentials))
+  (call-with-bounded-retries
+   (lambda ()
+     (multiple-value-bind (body status headers) (funcall request-function)
+       (if (<= 200 status 299)
+           (gemini-code-assist--decode-json-response body stage)
+           (provider--signal-http-status-failure
+            provider status :headers headers :raw-body body))))
+   (lambda (event) (declare (ignore event)) nil)
+   :maximum-retries (1- *gemini-code-assist-nonstream-maximum-attempts*)
+   :delay-function (lambda (retry-number condition)
+                     (declare (ignore retry-number condition))
+                     *gemini-code-assist-nonstream-retry-delay*)))
 
 (-> gemini-code-assist--post
     (gemini-code-assist-provider oauth-credentials non-empty-string keyword json-object)
@@ -477,187 +460,17 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
   provider)
 
 
-;;;; -- Request Conversion --
-
-(-> gemini-code-assist--wire-name (json-object) string)
-(defun gemini-code-assist--wire-name (item)
-  "Return ITEM's flat Gemini function name."
-  (let ((namespace (json-get item "namespace"))
-        (name (json-get item "name")))
-    (if (non-empty-string-p namespace)
-        (provider-wire-function-name--encode namespace name)
-        name)))
-
-(-> gemini-code-assist--decode-arguments (t) json-object)
-(defun gemini-code-assist--decode-arguments (arguments)
-  "Return function ARGUMENTS as a Gemini JSON object."
-  (cond
-    ((json-object-p arguments) arguments)
-    ((stringp arguments)
-     (let ((decoded (handler-case (json-decode arguments) (error () nil))))
-       (if (json-object-p decoded)
-           decoded
-           (json-object "value" arguments))))
-    (t
-     (json-object))))
-
-(-> gemini-code-assist--image-part (json-object) json-object)
-(defun gemini-code-assist--image-part (part)
-  "Translate one portable input_image PART into a Gemini inlineData part.
-
-Gemini takes an image inline as its MIME type and base64 data, which the
-portable data URL carries. An image that is not a base64 data URL cannot be
-sent, so it signals GEMINI-CODE-ASSIST-ERROR instead of leaving the request."
-  (let* ((image-url (json-get part "image_url"))
-         (url (if (json-object-p image-url) (json-get image-url "url") image-url))
-         (marker (and (stringp url) (search ";base64," url))))
-    (unless (and marker
-                 (uiop:string-prefix-p "data:" url)
-                 (> marker (length "data:")))
-      (error 'gemini-code-assist-error
-             :message "Gemini Code Assist can only send images given as base64 data URLs."))
-    (json-object "inlineData"
-                 (json-object "mimeType" (subseq url (length "data:") marker)
-                              "data" (subseq url (+ marker (length ";base64,")))))))
-
-(-> gemini-code-assist--text-parts (t) vector)
-(defun gemini-code-assist--text-parts (content)
-  "Translate portable message CONTENT into Gemini text and inline image parts."
-  (coerce
-   (cond
-     ((stringp content) (list (json-object "text" content)))
-     ((vectorp content)
-      (loop for part across content
-            when (json-object-p part)
-              append
-              (cond
-                ((non-empty-string-p (json-get part "text"))
-                 (list (json-object "text" (json-get part "text"))))
-                ((and (json-string= (json-get part "type") "output_text")
-                      (stringp (json-get part "text")))
-                 (list (json-object "text" (json-get part "text"))))
-                ((and (json-string= (json-get part "type") "input_text")
-                      (stringp (json-get part "text")))
-                 (list (json-object "text" (json-get part "text"))))
-                ((json-string= (json-get part "type") "input_image")
-                 (list (gemini-code-assist--image-part part)))
-                (t nil))))
-     (t (list (json-object "text" (bounded-string content :limit 2000)))))
-   'vector))
-
-(-> gemini-code-assist--tool-result-response (t) json-object)
-(defun gemini-code-assist--tool-result-response (output)
-  "Translate portable tool OUTPUT into Gemini functionResponse.response."
-  (cond
-    ((json-object-p output) output)
-    ((stringp output)
-     (let ((decoded (handler-case (json-decode output) (error () nil))))
-       (if (json-object-p decoded)
-           decoded
-           (json-object "output" output))))
-    (t (json-object "output" output))))
-
-(-> gemini-code-assist--content-items (list) vector)
-(defun gemini-code-assist--content-items (items)
-  "Translate portable conversation ITEMS into Gemini contents."
-  (let ((contents nil)
-        (call-names (make-hash-table :test #'equal)))
-    (dolist (item items)
-      (when (json-object-p item)
-        (cond
-          ((json-string= (json-get item "type") "message")
-           (let ((role (json-get item "role")))
-             (when (json-string-member-p role '("user" "assistant"))
-               (push (json-object
-                      "role" (if (string= role "assistant") "model" "user")
-                      "parts" (gemini-code-assist--text-parts
-                               (json-get item "content")))
-                     contents))))
-          ((function-call-item-p item)
-           (let ((name (gemini-code-assist--wire-name item)))
-             (setf (gethash (json-get item "call_id") call-names) name)
-             (push
-              (json-object
-               "role" "model"
-               "parts"
-               (json-array
-                (json-object
-                 "functionCall"
-                 (json-object "name" name
-                              "args" (gemini-code-assist--decode-arguments
-                                      (json-get item "arguments"))))))
-              contents)))
-          ((json-string= (json-get item "type") "function_call_output")
-           (let ((name (or (gethash (json-get item "call_id") call-names)
-                           (json-get item "name")
-                           "unknown_function")))
-             (push
-              (json-object
-               "role" "user"
-               "parts"
-               (json-array
-                (json-object
-                 "functionResponse"
-                 (json-object
-                  "name" name
-                  "response" (gemini-code-assist--tool-result-response
-                              (json-get item "output"))))))
-              contents)))
-          ((json-string= (json-get item "type") "reasoning_content")
-           (push
-            (json-object
-             "role" "model"
-             "parts"
-             (json-array
-              (json-object "text" (or (json-get item "content") "")
-                           "thought" t)))
-            contents)))))
-    (coerce (nreverse contents) 'vector)))
-
-(-> gemini-code-assist--context-content (list) (option json-object))
-(defun gemini-code-assist--context-content (texts)
-  "Return volatile nonempty TEXTS as one trailing Gemini user content."
-  (let ((text
-          (format nil "~{~A~^~%~%~}"
-                  (remove-if-not #'non-empty-string-p texts))))
-    (when (non-empty-string-p text)
-      (json-object "role" "user"
-                   "parts" (json-array (json-object "text" text))))))
-
-(-> gemini-code-assist--function-declarations (vector) vector)
-(defun gemini-code-assist--function-declarations (tool-namespaces)
-  "Flatten Autolith tools into Gemini function declarations."
-  (coerce
-   (loop for entry across tool-namespaces
-         append
-         (cond
-           ((and (json-object-p entry)
-                 (json-string= (json-get entry "type") "namespace")
-                 (non-empty-string-p (json-get entry "name"))
-                 (vectorp (json-get entry "tools")))
-            (loop for tool across (json-get entry "tools")
-                  when (json-object-p tool)
-                    collect
-                    (json-object
-                     "name" (provider-wire-function-name--encode
-                             (json-get entry "name") (json-get tool "name"))
-                     "description" (json-get tool "description")
-                     "parameters" (json-get tool "parameters"))))
-           ((and (json-object-p entry)
-                 (json-string= (json-get entry "type") "function"))
-            (list
-             (json-object "name" (json-get entry "name")
-                          "description" (json-get entry "description")
-                          "parameters" (json-get entry "parameters"))))
-           (t nil)))
-   'vector))
+;;;; -- Request Projection --
 
 (defmethod provider-request-object
     ((provider gemini-code-assist-provider)
      (conversation conversation)
      (tool-namespaces vector)
      &key goal-context compaction-p)
-  "Build one Code Assist streamGenerateContent request."
+  "Project history and prompts through the shared GenerateContent encoding.
+
+Code Assist wraps that request with its model, project, and prompt identifiers
+and adds the session to it. Return the request and its context delivery."
   (let* ((configuration (provider-configuration provider))
          (effective-tools
            (if compaction-p
@@ -668,48 +481,25 @@ sent, so it signals GEMINI-CODE-ASSIST-ERROR instead of leaving the request."
              (context-resolve-request configuration conversation effective-tools
                                       :goal-context goal-context
                                       :compaction-p compaction-p)))
-         (system-text
-           (format nil "~{~A~^~%~%~}"
-                   (remove-if-not
-                    #'non-empty-string-p
-                    (list (system-prompt configuration)
-                          (and compaction-p *compaction-instructions*)))))
-         (contents
-           (gemini-code-assist--content-items
-            (conversation-input-items-for-family
-             conversation (provider-family provider)
-             :include-ephemeral-p (not compaction-p))))
-         (context-content
-           (unless compaction-p
-             (gemini-code-assist--context-content
-              (list goal-context
-                    (and delivery (context-delivery-rendered delivery))))))
-         (declarations
-           (gemini-code-assist--function-declarations effective-tools))
-         (inner
-           (json-object
-            "contents"
-            (if context-content
-                (concatenate 'vector contents (vector context-content))
-                contents)
-            "systemInstruction"
-            (json-object "role" "user"
-                         "parts" (json-array (json-object "text" system-text)))
-            "session_id" (provider-session-id provider)))
-         (generation (json-object)))
-    (when (plusp (length declarations))
-      (setf (gethash "tools" inner)
-            (json-array (json-object "functionDeclarations" declarations))))
-    (when (and *provider-maximum-output-tokens*
-               (provider-output-ceiling-p provider))
-      (setf (gethash "maxOutputTokens" generation)
-            *provider-maximum-output-tokens*))
-    (let ((effort (config :reasoning-effort configuration)))
-      (unless (string= effort "none")
-        (setf (gethash "thinkingConfig" generation)
-              (json-object "includeThoughts" t))))
-    (when (plusp (hash-table-count generation))
-      (setf (gethash "generationConfig" inner) generation))
+         (projection
+           (make-instance
+            'cl-llm-provider-api:wire-request
+            :model (gemini-code-assist-model-name (config :model configuration))
+            :items (conversation-input-items-for-family
+                    conversation (provider-family provider)
+                    :include-ephemeral-p (not compaction-p))
+            :prefix (list (system-prompt configuration)
+                          (and compaction-p *compaction-instructions*))
+            :suffix (unless compaction-p
+                      (list goal-context
+                            (and delivery (context-delivery-rendered delivery))))
+            :options (list :maximum-output-tokens *provider-maximum-output-tokens*
+                           :include-thoughts-p
+                           (not (string= (config :reasoning-effort configuration)
+                                         "none")))))
+         (inner (provider-request-object provider projection
+                                         (provider-wire-tools provider effective-tools))))
+    (setf (gethash "session_id" inner) (provider-session-id provider))
     (values
      (json-object
       "model" (gemini-code-assist-model-name
@@ -746,166 +536,8 @@ sent, so it signals GEMINI-CODE-ASSIST-ERROR instead of leaving the request."
       :connect-timeout 30
       :read-timeout 300))))
 
-(-> gemini-code-assist--normalize-call
-    (gemini-code-assist-provider json-object integer t) json-object)
-(defun gemini-code-assist--normalize-call (provider function-call index headers)
-  "Return one portable function-call item from FUNCTION-CALL."
-  (let* ((wire-name (json-get function-call "name"))
-         (call-id (or (json-get function-call "id")
-                      (format nil "gemini-call-~D-~A" index (make-identifier))))
-         (item
-           (json-object
-            "type" "function_call"
-            "call_id" call-id
-            "name" wire-name
-            "arguments" (json-encode (or (json-get function-call "args")
-                                         (json-object))))))
-    (multiple-value-bind (namespace name)
-        (provider-wire-function-name--decode wire-name)
-      (when (and namespace name)
-        (setf (gethash "namespace" item) namespace
-              (gethash "name" item) name)))
-    (when (provider--response-request-id headers)
-      (setf (gethash "request_id" item)
-            (provider--response-request-id headers)))
-    (provider-normalize-output-item provider item)))
-
-(-> gemini-code-assist--usage (json-object) json-object)
-(defun gemini-code-assist--usage (metadata)
-  "Translate Gemini usage metadata to portable usage counters."
-  (let ((usage (json-object)))
-    (dolist (mapping '(("promptTokenCount" . "input_tokens")
-                       ("candidatesTokenCount" . "output_tokens")
-                       ("totalTokenCount" . "total_tokens")
-                       ("cachedContentTokenCount" . "cached_input_tokens")
-                       ("thoughtsTokenCount" . "reasoning_tokens")))
-      (let ((value (json-get metadata (first mapping))))
-        (when (typep value '(integer 0))
-          (setf (gethash (rest mapping) usage) value))))
-    usage))
-
-
-(defmethod provider-consume-stream
-    ((provider gemini-code-assist-provider) stream headers event-callback)
-  "Consume Code Assist's GenerateContent SSE dialect into a provider result."
-  (let ((response-id nil)
-        (usage nil)
-        (finish-reason nil)
-        (text-stream (make-string-output-stream))
-        (reasoning-stream (make-string-output-stream))
-        (calls nil)
-        (call-index 0)
-        (completed-p nil))
-    (loop until completed-p
-          for data = (provider--read-sse-data stream headers)
-          do (cond
-               ((eq data *sse-end-of-stream*)
-                (provider--signal-stream-interruption
-                 headers
-                 "The provider stream closed before a validated finish reason."))
-               ((string= data "[DONE]")
-                (provider--signal-stream-interruption
-                 headers
-                 "The provider stream ended before a validated finish reason."))
-               (t
-                (let* ((event (provider--decode-sse-data data headers))
-                       (error-object (and (json-object-p event) (json-get event "error"))))
-           (when (json-object-p error-object)
-             (provider--signal-event-failure
-              event
-              :type "error"
-              :data data
-              :headers headers
-              :response-id response-id))
-           (when (json-object-p event)
-             (let ((trace (json-get event "traceId"))
-                   (response (json-get event "response")))
-               (when (non-empty-string-p trace)
-                 (setf response-id trace))
-               (when (json-object-p response)
-                 (let ((metadata (json-get response "usageMetadata")))
-                   (when (json-object-p metadata)
-                     (setf usage (gemini-code-assist--usage metadata))))
-                 (let ((candidates (json-get response "candidates")))
-                   (when (vectorp candidates)
-                     (loop for candidate across candidates
-                           when (json-object-p candidate)
-                             do (let ((finish (json-get candidate "finishReason"))
-                                      (content (json-get candidate "content")))
-                                  (when finish
-                                    (unless (non-empty-string-p finish)
-                                      (provider--signal-invalid-terminal-reason
-                                       finish headers :response-id response-id))
-                                    (cond
-                                      ((member finish
-                                               '("MAX_TOKENS"
-                                                 "MODEL_CONTEXT_WINDOW_EXCEEDED")
-                                               :test #'string=)
-                                       (provider--signal-incomplete-terminal
-                                        finish headers
-                                        :response-id response-id))
-                                      ((string= finish "STOP")
-                                       (setf finish-reason finish
-                                             completed-p t))
-                                      (t
-                                       (provider--signal-invalid-terminal-reason
-                                        finish headers
-                                        :response-id response-id))))
-                                  (when (json-object-p content)
-                                    (let ((parts (json-get content "parts")))
-                                      (when (vectorp parts)
-                                        (loop for part across parts
-                                              when (json-object-p part)
-                                                do (let ((text (json-get part "text"))
-                                                         (function-call
-                                                           (json-get part
-                                                                     "functionCall")))
-                                                     (when (stringp text)
-                                                       (if (json-get part "thought")
-                                                           (progn
-                                                             (write-string text reasoning-stream)
-                                                             (funcall event-callback
-                                                                      (make-instance
-                                                                       'reasoning-delta-event
-                                                                       :text text)))
-                                                           (progn
-                                                             (write-string text text-stream)
-                                                             (funcall event-callback
-                                                                      (make-instance
-                                                                       'assistant-delta-event
-                                                                       :text text)))))
-                                                     (when (json-object-p function-call)
-                                                      (push
-                                                       (gemini-code-assist--normalize-call
-                                                        provider function-call
-                                                        (incf call-index) headers)
-                                                       calls))))))))))))))))))
-    (let ((items nil)
-          (reasoning (get-output-stream-string reasoning-stream))
-          (text (get-output-stream-string text-stream)))
-      (when (plusp (length reasoning))
-        (push (json-object "type" "reasoning_content" "content" reasoning) items))
-      (when (plusp (length text))
-        (push (json-object "type" "message" "role" "assistant"
-                           "content"
-                           (json-array (json-object "type" "output_text"
-                                                   "text" text)))
-              items))
-      (dolist (call (nreverse calls))
-        (push call items))
-      (setf items (nreverse items))
-      (dolist (item items)
-        (funcall event-callback (make-instance 'provider-item-event :item item)))
-      (let ((turn-completion (if calls ':continue ':end)))
-        (funcall event-callback
-                 (make-instance 'provider-completed-event
-                                :response-id response-id
-                                :usage usage
-                                :turn-completion turn-completion))
-        (make-instance 'provider-result
-                       :response-id response-id
-                       :output-items items
-                       :tool-calls (remove-if-not #'function-call-item-p items)
-                       :usage usage
-                       :turn-state nil
-                       :turn-completion turn-completion)))))
+(defmethod provider-gemini-stream-response
+    ((provider gemini-code-assist-provider) event)
+  "Unwrap one Code Assist stream EVENT into its response and trace identifier."
+  (declare (ignore provider))
+  (values (json-get event "response") (json-get event "traceId")))
