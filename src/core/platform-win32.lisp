@@ -181,9 +181,6 @@
 (defparameter *win32-standard-output-handle* #xFFFFFFF5
   "STD_OUTPUT_HANDLE as the unsigned argument GetStdHandle takes.")
 
-(defparameter *win32-enable-echo-input* #x4
-  "ENABLE_ECHO_INPUT in a console input mode.")
-
 (defparameter *win32-filetime-epoch-offset* 9435484800
   "Seconds from the FILETIME epoch of 1601 to the universal-time epoch of 1900.")
 
@@ -903,30 +900,6 @@ can omit. Bounded retries cover handles released just after a child process exit
   (when token
     (when (zerop (win32--set-console-mode (first token) (rest token)))
       (win32--fail ':terminal nil)))
-  nil)
-
-(defmethod platform-interactive-descriptor-p ((platform win32-platform)
-                                              descriptor)
-  "Treat DESCRIPTOR as interactive when it is a console handle."
-  (and (integerp descriptor)
-       (not (minusp descriptor))
-       (not (null (win32--console-mode descriptor)))))
-
-(defmethod platform-disable-input-echo ((platform win32-platform) descriptor)
-  "Clear ENABLE_ECHO_INPUT on console DESCRIPTOR and return the previous mode."
-  (let ((mode (win32--console-mode descriptor)))
-    (unless mode
-      (win32--fail ':terminal nil))
-    (when (zerop (win32--set-console-mode
-                  descriptor (logandc2 mode *win32-enable-echo-input*)))
-      (win32--fail ':terminal nil))
-    mode))
-
-(defmethod platform-restore-input-echo ((platform win32-platform)
-                                        descriptor state)
-  "Reinstall console mode STATE on DESCRIPTOR."
-  (when (zerop (win32--set-console-mode descriptor state))
-    (win32--fail ':terminal nil))
   nil)
 
 (-> win32--console-window-size () (option cons))

@@ -182,54 +182,35 @@
 (defparameter *api-key-output-styled-p* nil
   "Whether API-key prompts use trusted semantic terminal styling.")
 
-(-> api-key--strip-bracketed-paste (string) string)
-(defun api-key--strip-bracketed-paste (text)
-  "Remove one terminal bracketed-paste wrapper from TEXT."
-  (let* ((escape (code-char 27))
-         (start  (format nil "~C[200~~" escape))
-         (end    (format nil "~C[201~~" escape)))
-    (if (and (uiop:string-prefix-p start text)
-             (uiop:string-suffix-p text end)
-             (>= (length text) (+ (length start) (length end))))
-        (subseq text (length start) (- (length text) (length end)))
-        text)))
-
 (-> api-key--input-file-descriptor (stream (option integer)) (option integer))
 (defun api-key--input-file-descriptor (input configured)
   "Return INPUT's configured or direct file descriptor."
   (or configured
       (ignore-errors (sb-sys:fd-stream-fd input))))
 
-(-> api-key--interactive-file-descriptor-p (integer) boolean)
-(defun api-key--interactive-file-descriptor-p (file-descriptor)
-  "Return true when FILE-DESCRIPTOR names an interactive terminal."
-  (platform-interactive-descriptor-p *platform* file-descriptor))
+(-> api-key--read-concealed (stream stream (option integer)) (option string))
+(defun api-key--read-concealed (input output configured-descriptor)
+  "Read one API-key line from INPUT through clinedi with terminal echo off.
 
-(-> api-key--hidden-input-mode (stream (option integer)) (option cons))
-(defun api-key--hidden-input-mode (input configured-descriptor)
-  "Hide terminal echo for INPUT's known descriptor and return the mode to restore."
-  (let ((descriptor
-          (api-key--input-file-descriptor input configured-descriptor)))
-    (when (and (null descriptor)
-               (not *api-key-input-echo-disabled-p*))
+The read fails closed: without a known descriptor, input is read only when the
+bound transport already suppresses echo, and a terminal that cannot be
+concealed signals AUTHENTICATION-ERROR before anything is read."
+  (let ((descriptor (api-key--input-file-descriptor input configured-descriptor)))
+    (when (and (null descriptor) (not *api-key-input-echo-disabled-p*))
       (error 'authentication-error
              :message
              "Could not identify the input descriptor for API-key entry; no key was read."))
-    (when (and descriptor
-               (api-key--interactive-file-descriptor-p descriptor))
-      (handler-case
-          (cons descriptor
-                (platform-disable-input-echo *platform* descriptor))
-        (error ()
-          (error 'authentication-error
-                 :message
-                 "Could not disable terminal echo for API-key entry; no key was read."))))))
-
-(-> api-key--restore-input-mode (cons) null)
-(defun api-key--restore-input-mode (saved-mode)
-  "Restore one terminal mode returned by API-KEY--HIDDEN-INPUT-MODE."
-  (platform-restore-input-echo *platform* (first saved-mode) (rest saved-mode))
-  nil)
+    (handler-case
+        (clinedi:terminal-read-concealed-line
+         (stream-terminal-create :input-stream input
+                                 :output-stream output
+                                 :input-file-descriptor (or descriptor -1)))
+      (clinedi:terminal-error (condition)
+        (if (eq (clinedi:terminal-error-operation condition) ':conceal)
+            (error 'authentication-error
+                   :message
+                   "Could not disable terminal echo for API-key entry; no key was read.")
+            (error condition))))))
 
 (-> api-key--write-prompt-span (stream terminal-style string) null)
 (defun api-key--write-prompt-span (stream style text)
@@ -280,15 +261,10 @@
   (api-key--write-prompt-span stream ':brand "╰─ ")
   (api-key--write-prompt-span stream ':user "API key › ")
   (finish-output stream)
-  (let ((saved-mode
-          (api-key--hidden-input-mode input input-file-descriptor)))
-    (unwind-protect
-         (let ((value (read-line input nil nil)))
-           (and value (api-key--strip-bracketed-paste value)))
-      (when saved-mode
-        (api-key--restore-input-mode saved-mode))
-      (terpri stream)
-      (finish-output stream))))
+  (unwind-protect
+       (api-key--read-concealed input stream input-file-descriptor)
+    (terpri stream)
+    (finish-output stream)))
 
 
 ;;;; -- API-Key Credential Manager --

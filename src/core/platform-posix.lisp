@@ -241,32 +241,6 @@
 
 ;;;; -- Terminal and Shell --
 
-(defmethod platform-interactive-descriptor-p ((platform posix-platform)
-                                              descriptor)
-  "Probe DESCRIPTOR with ISATTY."
-  (and (not (minusp descriptor))
-       (let ((result (sb-unix:unix-isatty descriptor)))
-         (and result (plusp result) t))))
-
-(defmethod platform-disable-input-echo ((platform posix-platform) descriptor)
-  "Clear the ECHO flag in DESCRIPTOR's terminal attributes."
-  (posix--call ':terminal nil
-               (lambda ()
-                 (let ((saved (sb-posix:tcgetattr descriptor))
-                       (hidden (sb-posix:tcgetattr descriptor)))
-                   (setf (sb-posix:termios-lflag hidden)
-                         (logandc2 (sb-posix:termios-lflag hidden) sb-posix:echo))
-                   (sb-posix:tcsetattr descriptor sb-posix:tcsanow hidden)
-                   saved))))
-
-(defmethod platform-restore-input-echo ((platform posix-platform)
-                                        descriptor state)
-  "Reinstall the terminal attributes STATE saved from DESCRIPTOR."
-  (posix--call ':terminal nil
-               (lambda ()
-                 (sb-posix:tcsetattr descriptor sb-posix:tcsanow state)))
-  nil)
-
 (defmethod platform-watch-terminal-resize ((platform posix-platform) function)
   "Install FUNCTION as the SIGWINCH handler."
   (sb-sys:enable-interrupt sb-unix:sigwinch

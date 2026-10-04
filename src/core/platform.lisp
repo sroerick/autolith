@@ -345,21 +345,6 @@ such a file is refused there while POSIX consults only the directory."))
 
 ;;;; -- Terminal and Shell --
 
-(defgeneric platform-interactive-descriptor-p (platform descriptor)
-  (:documentation
-   "Return true when file DESCRIPTOR is attached to an interactive terminal."))
-
-(defgeneric platform-disable-input-echo (platform descriptor)
-  (:documentation
-   "Stop echoing input typed on terminal DESCRIPTOR.
-
-Return the state PLATFORM-RESTORE-INPUT-ECHO needs. Signal PLATFORM-ERROR with
-operation :TERMINAL when DESCRIPTOR's mode cannot be changed."))
-
-(defgeneric platform-restore-input-echo (platform descriptor state)
-  (:documentation
-   "Restore terminal DESCRIPTOR to STATE returned by PLATFORM-DISABLE-INPUT-ECHO."))
-
 (defgeneric platform-terminal-enable-fullscreen (platform)
   (:documentation "Enable native VT output and return an opaque restoration token."))
 

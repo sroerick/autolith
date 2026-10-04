@@ -194,12 +194,13 @@
   (let ((restored nil))
     (test-call-with-function-replacements
      (list
-      (list 'api-key--hidden-input-mode
-            (lambda (input configured-descriptor)
-              (declare (ignore input configured-descriptor))
+      (list 'clinedi:terminal-disable-input-echo
+            (lambda (terminal)
+              (declare (ignore terminal))
               (cons 7 ':saved-mode)))
-      (list 'api-key--restore-input-mode
-            (lambda (saved-mode)
+      (list 'clinedi:terminal-restore-input-echo
+            (lambda (terminal saved-mode)
+              (declare (ignore terminal))
               (setf restored saved-mode)
               nil)))
      (lambda ()
@@ -208,6 +209,7 @@
          (api-key-read-hidden
           "Example"
           :input (make-string-input-stream (format nil "restored-key~%"))
+          :input-file-descriptor 7
           :stream (make-string-output-stream))
          "restored-key")
         "API-key entry returns the entered key when concealment succeeds")))
@@ -218,12 +220,13 @@
         (restored nil))
     (test-call-with-function-replacements
      (list
-      (list 'api-key--hidden-input-mode
-            (lambda (input configured-descriptor)
-              (declare (ignore input configured-descriptor))
+      (list 'clinedi:terminal-disable-input-echo
+            (lambda (terminal)
+              (declare (ignore terminal))
               (cons 8 ':saved-mode)))
-      (list 'api-key--restore-input-mode
-            (lambda (saved-mode)
+      (list 'clinedi:terminal-restore-input-echo
+            (lambda (terminal saved-mode)
+              (declare (ignore terminal))
               (incf restore-count)
               (setf restored saved-mode)
               nil)))
@@ -234,6 +237,7 @@
               (api-key-read-hidden
                "Example"
                :input (make-instance 'authentication-test-error-input-stream)
+               :input-file-descriptor 8
                :stream (make-string-output-stream))
               nil)
           (simple-error ()
@@ -246,11 +250,12 @@
   (let ((input (make-string-input-stream (format nil "must-not-be-read~%"))))
     (test-call-with-function-replacements
      (list
-      (list 'api-key--hidden-input-mode
-            (lambda (ignored configured-descriptor)
-              (declare (ignore ignored configured-descriptor))
-              (error 'authentication-error
-                     :message "synthetic concealment failure"))))
+      (list 'clinedi:terminal-disable-input-echo
+            (lambda (terminal)
+              (declare (ignore terminal))
+              (error 'clinedi:terminal-error
+                     :message "synthetic concealment failure"
+                     :operation ':conceal))))
      (lambda ()
        (test-assert
         (handler-case
@@ -258,6 +263,7 @@
               (api-key-read-hidden
                "Example"
                :input input
+               :input-file-descriptor 9
                :stream (make-string-output-stream))
               nil)
           (authentication-error ()
@@ -316,18 +322,17 @@
          (test-assert
           (not (interactive-stream-p input))
           "the descriptor test uses a noninteractive input wrapper")
-         (test-assert
-          (api-key--interactive-file-descriptor-p descriptor)
-          "API-key entry recognizes the wrapped TTY descriptor")
-         (let* ((before (test-fixture-terminal-input-mode *platform* descriptor))
+         (let* ((terminal (stream-terminal-create :input-stream input
+                                                  :input-file-descriptor descriptor))
+                (before (test-fixture-terminal-input-mode *platform* descriptor))
                 (before-echo-p (test-fixture-terminal-echo-p *platform* descriptor))
-                (saved-mode (api-key--hidden-input-mode input descriptor))
+                (saved-mode (clinedi:terminal-disable-input-echo terminal))
                 (during-echo-p (test-fixture-terminal-echo-p *platform* descriptor)))
            (unwind-protect
                 (test-assert
-                 (and before-echo-p (not during-echo-p))
+                 (and saved-mode before-echo-p (not during-echo-p))
                  "API-key concealment clears ECHO on the actual TTY")
-             (api-key--restore-input-mode saved-mode))
+             (clinedi:terminal-restore-input-echo terminal saved-mode))
            (test-assert
             (= (test-fixture-terminal-input-mode *platform* descriptor) before)
             "API-key concealment restores the actual TTY mode"))
