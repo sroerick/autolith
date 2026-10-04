@@ -85,9 +85,6 @@ predicate hand-roll percent encoding while quri is already a dependency.
   repository; switching it means adding ls-compat as a cl-skills dependency),
   and =handoff.lisp= 219-226 keeps its three-line check because it reads the
   resolved pathname afterwards.
-- Locating the pinned fff library (=tools/search.lisp= 50-114): clifff.
-- A unified manager protocol over one worker versus a pool
-  (=workers/lisp.lisp= 200-333): sbcl-workers.
 
 * Synthesis
 
