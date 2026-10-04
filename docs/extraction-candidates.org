@@ -4,11 +4,12 @@
 ** Layered source-tagged registry (new library, or structlisp)
 =src/application/command.lisp= 492-746. Ordered registration layers keyed by
 source and name, shadowing, an effective index with collision checks,
-snapshot/restore, and remove-by-source. The same shape is written at least four
-times: commands, =agent/context.lisp= 241 and 403, =provider/registry.lisp=
-148-178 and 444-531, and the MCP registry; =startup/user-init.lisp= 87-90 calls
-all four remove-by-source functions in a row. Cut: the extension transaction
-macro, =configuration-error=, and the command validation hook.
+snapshot/restore, and remove-by-source. The same shape is written three times:
+commands, =agent/context.lisp= 241 and 403, and the MCP registry. Providers
+moved to =cl-llm-provider-api/registry= on 2026-10-04, whose layering a shared
+library could adopt too; =startup/user-init.lisp= calls every remove-by-source
+function in a row. Cut: the extension transaction macro,
+=configuration-error=, and the command validation hook.
 
 ** Bounded, sanitising, throttled capture streams (new library, or ls-compat)
 2026-10-03: the two copies are one. =bounded-output-stream= in
@@ -83,24 +84,6 @@ Cut: =image-input-error=, platform permission and truename calls,
 =make-identifier=, artifact-root and durable-record policy, Codex limits as
 parameters. Pasted-path unquoting and =file://= handling (559-600) could go to
 clinedi.
-
-** Provider and model registry with discovery cache (cl-llm-provider-api/registry)
-=src/provider/registry.lisp= whole file and =openai-compatible.lisp= 169-337.
-Layered builtin, site, user and runtime sources with precedence, discovery
-under a per-registration lock, merged declared and discovered models, cache,
-snapshot and restore. The library already declares a
-=model-provider-registration= slot holding an object only Autolith defines.
-Cut: =config=, the default window and effort tables, the legacy
-=*supported-models*= refresh, =*extension-registration-source*=,
-=configuration-error=, and the snapshot cache path (inject a sexp-store-backed
-cache function).
-
-** Retry policy aware of streamed output (cl-llm-provider-api engine)
-=src/provider/client.lisp= 883-1013 (separate retry cap once output streamed,
-=provider-stream-abandoned=, jittered delays), 1015-1056 (refresh once after
-401), 725-751 (SSE inactivity deadline, which belongs in =/dexador=). Built
-directly on the library's bounded retries and event classes. Cut: Autolith
-wording and =authentication-error= as a hook.
 
 ** Structured answers from model text and JSON Schema import (cl-llm-provider-api/contracts)
 =src/inference/frame.lisp= 192-239 (tolerant JSON extraction from prose or
