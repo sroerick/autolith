@@ -47,9 +47,11 @@
        'dexador:post
        (lambda (&rest arguments)
          (declare (ignore arguments))
-         (json-encode
-          (json-object "access_token" "new-access"
-                       "refresh_token" "new-refresh")))))
+         (values (json-encode
+                  (json-object "access_token" "new-access"
+                               "refresh_token" "new-refresh"))
+                 200
+                 nil))))
      (lambda ()
        (multiple-value-bind (refreshed publish-p)
            (credential-manager-refresh-exchange

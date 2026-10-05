@@ -225,7 +225,30 @@ The file belongs to another tool, so a symbolic link to it is followed."
   ()
   (:documentation "Autolith's product-specific credential manager base."))
 
-(defclass chatgpt-credential-manager (credential-manager)
+(defclass oauth-credential-manager (credential-manager refresh-grant-credential-manager)
+  ()
+  (:documentation "An Autolith credential manager rotating OAuth tokens with the refresh grant."))
+
+(defmethod credential-manager-refresh-request :around
+    ((manager oauth-credential-manager) &key url headers content)
+  "Bound one refresh exchange by the provider response deadline and read streamed error bodies."
+  (declare (ignore url headers content))
+  (handler-case
+      (multiple-value-bind (body status response-headers)
+          (provider-call-with-response-deadline 60 (lambda () (call-next-method)))
+        (values (if (stringp body)
+                    body
+                    (or (provider--error-body-text body) ""))
+                status
+                response-headers))
+    (sb-sys:deadline-timeout ()
+      (error 'token-refresh-failed
+             :message (format nil "~A OAuth token refresh exceeded its response deadline."
+                              (credential-manager-provider-label manager))
+             :status nil
+             :response nil))))
+
+(defclass chatgpt-credential-manager (oauth-credential-manager)
   ()
   (:documentation "The ChatGPT OAuth credential manager behind the Codex provider."))
 
@@ -251,128 +274,30 @@ The file belongs to another tool, so a symbolic link to it is followed."
                                     'codex-bootstrap-credential-source
                                     :pathname (config :codex-auth-path configuration))))
 
-(-> oauth-refresh-response-credentials
-    (credential-manager oauth-credentials string)
-    oauth-credentials)
-(defun oauth-refresh-response-credentials (manager credentials body)
-  "Validate refresh BODY and return account-continuous Autolith credentials."
-  (handler-case
-      (let ((response (json-decode body)))
-        (unless (json-object-p response)
-          (error "The OAuth refresh root is not an object."))
-        (let* ((access-token (json-get response "access_token"))
-               (response-id-token (json-get response "id_token"))
-               (id-token (or response-id-token
-                             (oauth-credentials-id-token credentials)))
-               (rotated-refresh-token
-                 (or (json-get response "refresh_token")
-                     (oauth-credentials-refresh-token credentials))))
-          (unless (and (non-empty-string-p access-token)
-                       (or (null response-id-token)
-                           (non-empty-string-p response-id-token))
-                       (non-empty-string-p rotated-refresh-token))
-            (error "The OAuth refresh response omitted required fields."))
-          (let* ((previous-account
-                   (oauth-credentials-account-id credentials))
-                 (returned-accounts
-                   (remove nil
-                           (list (and response-id-token
-                                      (jwt-account-id response-id-token))
-                                 (jwt-account-id access-token)))))
-            (when (some (lambda (account)
-                          (not (string= account previous-account)))
-                        returned-accounts)
-              (error 'token-refresh-failed
-                     :message "The OAuth refresh response changed ChatGPT accounts."
-                     :status nil
-                     :response nil))
-            (make-instance
-             'oauth-credentials
-             :access-token access-token
-             :refresh-token rotated-refresh-token
-             :id-token id-token
-             :account-id previous-account
-             :expires-at (jwt-expiration access-token)
-             :source-path
-             (credential-source-pathname
-              (credential-manager-primary-source manager))))))
-    (token-refresh-failed (condition)
-      (error condition))
-    (error ()
-      (error 'token-refresh-failed
-             :message "The OAuth refresh response was malformed."
-             :status nil
-             :response nil))))
+(defmethod credential-manager-token-endpoint ((manager chatgpt-credential-manager))
+  "Refresh ChatGPT credentials at OpenAI's OAuth token endpoint."
+  (declare (ignore manager))
+  *openai-oauth-token-endpoint*)
 
-(-> credential-manager--refresh-token-reuse-recovery
-    (credential-manager string (option string))
-    (option oauth-credentials))
+(defmethod credential-manager-client-id ((manager chatgpt-credential-manager))
+  "Refresh as the first-party Codex OAuth client."
+  (declare (ignore manager))
+  *openai-oauth-client-id*)
 
-(defun credential-manager--refresh-token-reuse-recovery
-    (manager attempted-refresh-token code)
-  "Recover an already-published rotation after OpenAI rejects a reused token."
-  (when (and code (string= code "refresh_token_reused"))
-    (cl-rfc8628:credential-manager-newer-rotation manager attempted-refresh-token)))
+(defmethod credential-manager-refresh-content-type ((manager chatgpt-credential-manager))
+  "Send OpenAI's token endpoint a JSON refresh request."
+  (declare (ignore manager))
+  *refresh-json-content-type*)
 
-(defmethod credential-manager-refresh-exchange
-    ((manager chatgpt-credential-manager)
-     (credentials oauth-credentials)
-     (refresh-token string))
-  "Rotate REFRESH-TOKEN at OpenAI, recovering when a sibling already rotated it."
-  (handler-case
-      (let* ((request (json-object
-                       "client_id" *openai-oauth-client-id*
-                       "grant_type" "refresh_token"
-                       "refresh_token" refresh-token))
-             (body
-               (provider-call-with-response-deadline
-                60
-                (lambda ()
-                  (dexador:post
-                   *openai-oauth-token-endpoint*
-                   :headers '(("Content-Type" . "application/json")
-                              ("Accept" . "application/json"))
-                   :content (json-encode request)
-                   :force-string t
-                   :connect-timeout 30
-                   :read-timeout 60)))))
-        (values (oauth-refresh-response-credentials manager credentials body)
-                t))
-    (sb-sys:deadline-timeout ()
-      (error 'token-refresh-failed
-             :message "OAuth token refresh exceeded its response deadline."
-             :status nil
-             :response nil))
-    (http-request-failed (condition)
-      (let* ((body (provider--error-body-text (response-body condition)))
-             (raw-code (oauth-error-code body))
-             (code
-               (and
-                raw-code
-                (let ((secrets
-                        (oauth-credentials-secret-values credentials)))
-                  (redact-exact-string-values
-                   raw-code
-                   secrets
-                   (safe-redaction-marker
-                    "[OAUTH CREDENTIAL REDACTED]"
-                    secrets)))))
-             (newer-primary
-               (credential-manager--refresh-token-reuse-recovery
-                manager refresh-token code)))
-          (if newer-primary
-              (values newer-primary nil)
-            (error 'token-refresh-failed
-                   :message (format nil "OAuth token refresh failed~@[ (~A)~]." code)
-                   :status (response-status condition)
-                   :response code))))
-    (authentication-error (condition)
-      (error condition))
-    (error ()
-      (error 'token-refresh-failed
-             :message "OAuth token refresh could not be completed."
-             :status nil
-             :response nil))))
+(defmethod credential-manager-refreshed-account-ids
+    ((manager chatgpt-credential-manager) (document hash-table))
+  "Return the ChatGPT accounts claimed by DOCUMENT's OpenID and access tokens."
+  (declare (ignore manager))
+  (loop for key in '("id_token" "access_token")
+        for token = (json-get document key)
+        for account-id = (and (non-empty-string-p token) (jwt-account-id token))
+        when account-id
+          collect account-id))
 
 (-> call-with-credentials
     (credential-manager function &key (:force-refresh boolean))

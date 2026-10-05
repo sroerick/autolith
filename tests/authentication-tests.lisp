@@ -623,7 +623,7 @@
                                    :source-path
                                    (credential-source-pathname primary-source)))
                   (valid
-                    (oauth-refresh-response-credentials
+                    (credential-manager-refresh-response-credentials
                      manager
                      renewable
                      (json-encode
@@ -639,7 +639,7 @@
                (test-assert
                 (handler-case
                     (progn
-                      (oauth-refresh-response-credentials manager renewable body)
+                      (credential-manager-refresh-response-credentials manager renewable body)
                       nil)
                   (token-refresh-failed ()
                     t))
@@ -656,7 +656,7 @@
                  (test-assert
                   (handler-case
                       (progn
-                        (oauth-refresh-response-credentials
+                        (credential-manager-refresh-response-credentials
                          manager renewable (json-encode response))
                         nil)
                     (token-refresh-failed ()
