@@ -692,130 +692,27 @@ name. Path completions apply when no command prefix matches."
               title query match-count)
       title))
 
-(-> terminal-ui--choice-tally (list) string)
-(defun terminal-ui--choice-tally (entry)
-  "Return ENTRY's optional tally column text."
-  (let ((tally (getf entry :tally)))
-    (if (stringp tally)
-        tally
-        "")))
-
-
-(-> terminal-ui--choice-description-spans (list boolean integer) list)
-(defun terminal-ui--choice-description-spans (entry selected-p maximum-width)
-  "Return ENTRY's selection-aware description spans clipped to MAXIMUM-WIDTH."
-  (let ((default-style (if selected-p ':plain ':dim)))
-    (terminal--clip-spans
-     (loop for span in (or (getf entry :description-spans)
-                           (list (terminal-span ':plain
-                                                (getf entry :description))))
-           collect
-           (terminal-span
-            (if (eq (terminal-span-style span) ':plain)
-                default-style
-                (terminal-span-style span))
-            (terminal-span-text span)))
-     maximum-width)))
-
-
 (-> terminal-ui--choice-rows (selector integer) list)
 (defun terminal-ui--choice-rows (selector row-width)
   "Return styled candidate rows and nonselectable group headings.
 
-Column widths follow the rows currently in view, so descriptions start
-*TERMINAL-UI-CHOICE-COLUMN-GAP* cells after the widest visible label. When any
-visible candidate carries a non-empty :TALLY string, rows render three columns:
-name, tally, and description."
-  (multiple-value-bind (index-rows arrangement-widths)
-      (selector-arrange selector
-                        row-width
-                        :width-function
-                        (lambda (entry)
-                          (text-cell-width
-                           (terminal-completion-label entry))))
-    (declare (ignore arrangement-widths))
-    (let* ((visible-entries
-             (loop for index-row in index-rows
-                   collect (nth (first index-row) (selector-items selector))))
-           (tally-p
-             (loop for entry in visible-entries
-                   thereis (plusp (length (terminal-ui--choice-tally entry)))))
-           (cell-rows
-             (loop for entry in visible-entries
-                   collect
-                   (if tally-p
-                       (list (terminal-completion-label entry)
-                             (terminal-ui--choice-tally entry)
-                             (or (getf entry :description) ""))
-                       (list (terminal-completion-label entry)
-                             (or (getf entry :description) "")))))
-           (gap (make-string *terminal-ui-choice-column-gap*
-                             :initial-element #\Space))
-           (column-widths
-             (layout-column-widths cell-rows
-                                   (max 0 (- row-width 2))
-                                   :gap-width *terminal-ui-choice-column-gap*
-                                   :minimum-widths
-                                   (if tally-p
-                                       '(1 0 0)
-                                       '(1 0))))
-           (label-width (or (first column-widths) 0))
-           (tally-width (if tally-p (or (second column-widths) 0) 0))
-           (description-width
-             (if tally-p
-                 (or (third column-widths) 0)
-                 (or (second column-widths) 0))))
-      (let ((previous-group nil))
-        (loop for index-row in index-rows
-              for index = (first index-row)
-              for entry = (nth index (selector-items selector))
-              for selected-p = (= index (selector-selection selector))
-              for group = (getf entry :group)
-              append
-              (prog1
-                  (append
-                   (when (and group (not (equal group previous-group)))
-                     (append
-                      (when previous-group (list nil))
-                      (list
-                       (terminal--clip-spans
-                        (list (terminal-span ':strong
-                                             (format nil "  ~A" group)))
-                        row-width))))
-                   (list
-                    (terminal--clip-spans
-                     (append
-                      (list (terminal-span (if selected-p
-                                               :brand
-                                               :dim)
-                                           (if selected-p
-                                               "▸ "
-                                               "  "))
-                            (terminal-span :user
-                                           (layout-fit-text
-                                            (terminal-completion-label entry)
-                                            label-width)))
-                      (when tally-p
-                        (list
-                         (terminal-span ':plain
-                                        (if (plusp tally-width)
-                                            gap
-                                            ""))
-                         (terminal-span
-                          (if selected-p ':plain ':dim)
-                          (layout-fit-text
-                           (terminal-ui--choice-tally entry)
-                           tally-width))))
-                      (append
-                       (list
-                        (terminal-span ':plain
-                                       (if (plusp description-width)
-                                           gap
-                                           "")))
-                       (terminal-ui--choice-description-spans
-                        entry selected-p description-width)))
-                     row-width)))
-                (setf previous-group group)))))))
+Descriptions start *TERMINAL-UI-CHOICE-COLUMN-GAP* cells after the widest
+visible label, and a :TALLY column appears when any visible candidate carries a
+non-empty tally string."
+  (termdown:selector-table-rows
+   selector row-width
+   :label-function #'terminal-completion-label
+   :group-function (lambda (entry) (getf entry :group))
+   :column-functions
+   (list (lambda (entry)
+           (let ((tally (getf entry :tally)))
+             (if (stringp tally) tally "")))
+         (lambda (entry)
+           (or (getf entry :description-spans)
+               (getf entry :description)
+               "")))
+   :gap-width *terminal-ui-choice-column-gap*
+   :label-role ':user))
 
 
 (-> terminal-ui--editor-history-navigating-p (line-editor) boolean)
