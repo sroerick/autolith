@@ -190,6 +190,19 @@
                 #:credential-manager-credential-description
                 #:credential-manager-refreshable-p
                 #:credential-manager-refresh-exchange
+                #:credential-manager-call-with-refresh-lock
+                #:credential-manager-validate-credentials
+                #:refresh-grant-credential-manager
+                #:credential-manager-token-endpoint
+                #:credential-manager-client-id
+                #:credential-manager-refresh-parameters
+                #:credential-manager-refresh-headers
+                #:credential-manager-refresh-content-type
+                #:credential-manager-refresh-request
+                #:credential-manager-refreshed-account-ids
+                #:credential-manager-validate-refresh-response
+                #:credential-manager-refresh-response-credentials
+                #:*refresh-json-content-type*
                 #:credential-manager-import-bootstrap
                 #:credential-manager-load
                 #:credential-manager-refresh
