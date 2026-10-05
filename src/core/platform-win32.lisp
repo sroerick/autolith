@@ -412,7 +412,9 @@ The suspended initial thread is the Windows startup gate. The job owns every
 child before any user code runs. Kill-on-close covers abandonment; a successful
 handoff explicitly releases ownership without terminating the detached session."
   (declare (ignore platform))
-  (let ((launcher-pid-pathname (image-daemon:handoff-ticket-sibling ticket ':launcher-pid))
+  (let ((launcher-pid-pathname
+          (and ticket
+               (image-daemon:handoff-ticket-sibling ticket ':launcher-pid)))
         (handles nil)
         (process-handle 0)
         (thread-handle 0)
@@ -469,11 +471,12 @@ handoff explicitly releases ownership without terminating the detached session."
                                                    :handle process-handle
                                                    :job-handle job-handle
                                                    :process-id pid)))
-                      (with-open-file (stream launcher-pid-pathname
-                                              :direction ':output
-                                              :if-exists ':supersede)
-                        (format stream "~D~%" pid))
-                      (platform-make-private *platform* launcher-pid-pathname)
+                      (when launcher-pid-pathname
+                        (with-open-file (stream launcher-pid-pathname
+                                                :direction ':output
+                                                :if-exists ':supersede)
+                          (format stream "~D~%" pid))
+                        (platform-make-private *platform* launcher-pid-pathname))
                       (when (= (win32--resume-thread thread-handle) #xFFFFFFFF)
                         (win32--fail ':launch nil))
                       (setf completed-p t)
