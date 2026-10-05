@@ -108,8 +108,8 @@
   :version "git-f9eea22421272362e1b99a48cc8f2705127b5ff2"))
 ("cl-termdown" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-termdown.git" :ref "681f4bcf636b15761119f5dc57691b1cdf1eb376")
-  :version "git-681f4bcf636b15761119f5dc57691b1cdf1eb376"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-termdown.git" :ref "76a1d82d72b7b14cf2863f5ce54b186795552972")
+  :version "git-76a1d82d72b7b14cf2863f5ce54b186795552972"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-exec-sandbox.git" :ref "76478d0c0e78bbd4e374953af12a2188630d794d")
