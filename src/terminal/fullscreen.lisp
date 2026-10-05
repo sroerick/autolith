@@ -234,7 +234,8 @@ row that still overruns instead of scrolling."
        :width            (max 1 (terminal-columns terminal))
        :cursor-row       cursor-row
        :cursor-column    cursor-column
-       :cursor-visible-p (fullscreen-terminal-ui-cursor-visible-p ui))))
+       :cursor-visible-p (and (fullscreen-terminal-ui-cursor-visible-p ui)
+                              (not (terminal-ui-boot-waiting-p ui))))))
   nil)
 
 (-> terminal-ui-fullscreen-scroll (fullscreen-terminal-ui integer) null)

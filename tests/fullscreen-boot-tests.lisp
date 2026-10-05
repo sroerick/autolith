@@ -65,6 +65,40 @@
   nil)
 
 
+(-> test-fullscreen-boot-cursor-lifecycle () null)
+(defun test-fullscreen-boot-cursor-lifecycle ()
+  "Hide the input cursor during boot and restore it on normal and interrupted handoff."
+  (let ((terminal (make-instance 'queued-recording-terminal :columns 80 :rows 24)))
+    (with-terminal-ui (ui (fullscreen-test--ui terminal))
+      (flet ((cursor-visible-p ()
+               (let* ((output (recording-terminal-output terminal))
+                      (shown (search (format nil "~C[?25h" #\Escape) output :from-end t))
+                      (hidden (search (format nil "~C[?25l" #\Escape) output :from-end t)))
+                 (and shown (or (null hidden) (> shown hidden)) t))))
+        (let ((visibility nil))
+          (terminal-ui-boot-sequence
+           ui :duration 0 :linger-p t
+              :wait-function
+              (lambda (seconds)
+                (declare (ignore seconds))
+                (push (cursor-visible-p) visibility)
+                (when (> (length visibility) (length *terminal-ui-boot-sequence-phases*))
+                  (queued-recording-terminal-enqueue terminal '(:insert " ")))))
+          (test-assert (and (= (length visibility)
+                              (1+ (length *terminal-ui-boot-sequence-phases*)))
+                            (notany #'identity visibility))
+                       "boot animation and the Space wait hide the input cursor")
+          (test-assert (cursor-visible-p) "the composer handoff restores the input cursor"))
+        (handler-case
+            (terminal-ui-boot-sequence
+             ui :duration 0
+                :wait-function (lambda (seconds)
+                                 (declare (ignore seconds))
+                                 (error "Expected boot interruption.")))
+          (simple-error () nil))
+        (test-assert (cursor-visible-p) "boot interruption restores the input cursor"))))
+  nil)
+
 (-> test-fullscreen-boot-sequence () null)
 (defun test-fullscreen-boot-sequence ()
   "Keep boot frames visible through refresh, then restore deferred transcript output."
