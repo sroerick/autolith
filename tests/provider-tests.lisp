@@ -2027,8 +2027,11 @@
                 :method ':post))))
      (lambda ()
        (multiple-value-bind (body status headers)
-           (nous-authentication--request
-            :method ':post
+           (credential-manager-refresh-request
+            (make-instance 'grok-credential-manager
+                           :primary-source
+                           (make-instance 'autolith-credential-source
+                                          :pathname #P"/tmp/grok-auth.sexp"))
             :url "https://provider.invalid/oauth"
             :headers nil
             :content "")
@@ -2037,7 +2040,7 @@
           (and (= status 500)
                (search "synthetic" body)
                (test-failing-close-stream-close-abort-p stream))
-          "Nous OAuth drains and abort-closes a streamed error body")))))
+          "OAuth refresh drains and abort-closes a streamed error body")))))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (manager
@@ -2118,13 +2121,7 @@
                            :url "https://provider.invalid/oauth" :content ""))
                         (lambda ()
                           (gemini-oauth--request
-                           :url "https://provider.invalid/oauth" :content ""))
-                        (lambda ()
-                          (nous-authentication--request
-                           :method ':post
-                           :url "https://provider.invalid/oauth"
-                           :headers nil
-                           :content ""))))
+                           :url "https://provider.invalid/oauth" :content ""))))
                 (test-assert (signals-type-p thunk 'authentication-error)
                              "authentication response deadlines map to typed failures"))
               (test-assert
@@ -2133,7 +2130,7 @@
                   (credential-manager-refresh-exchange
                    grok-manager credentials "deadline-refresh"))
                 'token-refresh-failed)
-               "Grok refresh deadlines map to a typed token failure"))))
+               "OAuth refresh deadlines map to a typed token failure"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))

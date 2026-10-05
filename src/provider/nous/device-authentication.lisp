@@ -53,13 +53,11 @@
      (credentials oauth-credentials))
   "Publish Nous CREDENTIALS while holding the process-shared rotation lock."
   (declare (ignore client))
-  (let* ((source (credential-manager-primary-source manager))
-         (pathname (credential-source-pathname source)))
-    (nous-authentication--call-with-store-lock
-     pathname
-     (lambda ()
-       (credential-manager-accept-account manager credentials :allow-change t)
-       (credential-source-save source credentials)))))
+  (credential-manager-call-with-refresh-lock
+   manager
+   (lambda ()
+     (credential-manager-accept-account manager credentials :allow-change t)
+     (credential-source-save (credential-manager-primary-source manager) credentials))))
 
 (-> nous-device-authentication-client-create
     (&key

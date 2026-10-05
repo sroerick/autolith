@@ -7,12 +7,13 @@
 ;;; one state root, and always reloads the latest credential record while the
 ;;; filesystem lock is held.
 
-(defclass nous-credential-manager (credential-manager)
+(defclass nous-credential-manager (oauth-credential-manager)
   ((refresh-request-function
     :initarg :refresh-request-function
+    :initform nil
     :reader nous-credential-manager-refresh-request-function
-    :type function
-    :documentation "The injected HTTP request function used for token refresh."))
+    :type (option function)
+    :documentation "An injected HTTP request function replacing the refresh transport, if any."))
   (:documentation "The OAuth credential manager for Nous Research inference."))
 
 
@@ -122,11 +123,9 @@
   "run autolith auth nous")
 
 (-> nous-credential-manager-create
-    (configuration &key (:refresh-request-function function))
+    (configuration &key (:refresh-request-function (option function)))
     nous-credential-manager)
-(defun nous-credential-manager-create
-    (configuration &key
-                     (refresh-request-function #'nous-authentication--request))
+(defun nous-credential-manager-create (configuration &key refresh-request-function)
   "Create a Nous credential manager for CONFIGURATION's private state root."
   (make-instance
    'nous-credential-manager
@@ -136,241 +135,73 @@
     :pathname (configuration-nous-auth-path configuration))
    :refresh-request-function refresh-request-function))
 
+(defmethod credential-manager-call-with-refresh-lock
+    ((manager nous-credential-manager) (function function))
+  "Serialize Nous rotation and publication across processes sharing the state root."
+  (nous-authentication--call-with-store-lock
+   (credential-source-pathname (credential-manager-primary-source manager))
+   function))
+
+(defmethod credential-manager-validate-credentials
+    ((manager nous-credential-manager) (credentials oauth-credentials))
+  "Require stored Nous credentials to carry the inference scope for their account."
+  (nous-authentication--validate-stored-credentials manager credentials))
+
 (defmethod credential-manager-load ((manager nous-credential-manager))
   "Load only Autolith-owned Nous credentials under the shared store lock."
-  (let* ((source (credential-manager-primary-source manager))
-         (pathname (credential-source-pathname source)))
-    (nous-authentication--call-with-store-lock
-     pathname
-     (lambda ()
-       (let ((credentials (credential-source-load source)))
-         (unless credentials
-           (error 'credentials-unavailable
-                  :message
-                  (format nil "No Nous Research OAuth credentials are available; ~A."
-                          (credential-manager-login-hint manager))
-                  :searched-paths (list pathname)))
-         (credential-manager-accept-account
-          manager
-          (nous-authentication--validate-stored-credentials
-           manager
-           credentials)))))))
+  (credential-manager-call-with-refresh-lock manager (lambda () (call-next-method))))
 
 
 ;;;; -- Refresh Exchange --
 
-(-> nous-authentication--request
-    (&key (:method keyword)
-          (:url string)
-          (:headers list)
-          (:content string))
-    (values string integer t))
-(defun nous-authentication--request (&key method url headers content)
-  "Perform one Nous OAuth HTTP request and return body, status, and headers."
-  (unless (eq method ':post)
-    (error 'authentication-error
-           :message "Nous OAuth transport supports only HTTP POST requests."))
-  (handler-case
-      (multiple-value-bind (body status response-headers)
-          (provider-call-with-response-deadline
-           60
-           (lambda ()
-             (dexador:post
-              url
-              :headers headers
-              :content content
-              :force-string t
-              :keep-alive nil
-              :connect-timeout 30
-              :read-timeout 60)))
-        (values body status response-headers))
-    (sb-sys:deadline-timeout ()
-      (error 'authentication-error
-             :message "Nous OAuth exceeded its response deadline."))
-    (http-request-failed (condition)
-      (values (or (provider--error-body-text (response-body condition)) "")
-              (response-status condition)
-              (response-headers condition)))))
+(defmethod credential-manager-token-endpoint ((manager nous-credential-manager))
+  "Refresh Nous credentials at the portal's OAuth token endpoint."
+  (declare (ignore manager))
+  (concatenate 'string (nous-portal-url) "/api/oauth/token"))
 
-(-> nous-authentication--credential-version-different-p
-    (oauth-credentials oauth-credentials)
-    boolean)
-(defun nous-authentication--credential-version-different-p (left right)
-  "Return true when LEFT and RIGHT represent different token rotations."
-  (if (or (not (string= (oauth-credentials-access-token left)
-                        (oauth-credentials-access-token right)))
-          (not (equal (oauth-credentials-refresh-token left)
-                      (oauth-credentials-refresh-token right))))
-      t
-      nil))
+(defmethod credential-manager-client-id ((manager nous-credential-manager))
+  "Refresh as the Hermes CLI OAuth client."
+  (declare (ignore manager))
+  *nous-oauth-client-id*)
 
-(-> nous-refresh-response-credentials
-    (nous-credential-manager oauth-credentials string)
-    oauth-credentials)
-(defun nous-refresh-response-credentials (manager credentials body)
-  "Validate refresh BODY and return account-continuous Nous credentials."
-  (handler-case
-      (let ((response (json-decode body)))
-        (unless (json-object-p response)
-          (error "The Nous OAuth refresh root is not an object."))
-        (let* ((access-token (json-get response "access_token"))
-               (refresh-token (json-get response "refresh_token"))
-               (id-token (json-get response "id_token"))
-               (expires-in (json-get response "expires_in"))
-               (previous-refresh-token
-                 (oauth-credentials-refresh-token credentials)))
-          (unless (and (non-empty-string-p access-token)
-                       (non-empty-string-p refresh-token)
-                       (not (string= refresh-token previous-refresh-token))
-                       (or (null id-token) (non-empty-string-p id-token)))
-            (error "The Nous OAuth refresh response omitted rotated credentials."))
-          (unless (nous-authentication--access-token-scope-p
-                   access-token
-                   *nous-oauth-scope*)
-            (error 'token-refresh-failed
-                   :message
-                   "The refreshed Nous access token lacks the inference:invoke scope."
-                   :status nil
-                   :response nil))
-          (let ((account-id
-                  (nous-authentication--access-token-account-id access-token))
-                (previous-account
-                  (oauth-credentials-account-id credentials)))
-            (unless (non-empty-string-p account-id)
-              (error "The refreshed Nous access token omitted its subject."))
-            (unless (string= account-id previous-account)
-              (error 'token-refresh-failed
-                     :message "The Nous OAuth refresh response changed accounts."
-                     :status nil
-                     :response nil))
-            (make-instance
-             'oauth-credentials
-             :access-token access-token
-             :refresh-token refresh-token
-             :id-token id-token
-             :account-id account-id
-             :expires-at
-             (or (and (integerp expires-in)
-                      (plusp expires-in)
-                      (+ (get-universal-time) expires-in))
-                 (jwt-expiration access-token))
-             :source-path
-             (credential-source-pathname
-              (credential-manager-primary-source manager))))))
-    (token-refresh-failed (condition)
-      (error condition))
-    (error ()
+(defmethod credential-manager-refresh-parameters
+    ((manager nous-credential-manager) (refresh-token string))
+  "Keep the refresh token out of the form, since Nous reads it from a header."
+  (remove "refresh_token" (call-next-method) :key #'first :test #'string=))
+
+(defmethod credential-manager-refresh-headers
+    ((manager nous-credential-manager) (refresh-token string))
+  "Send the single-use refresh token in the header Nous reads it from."
+  (declare (ignore manager))
+  (list (cons "x-nous-refresh-token" refresh-token)))
+
+(defmethod credential-manager-refresh-request
+    ((manager nous-credential-manager) &key url headers content)
+  "POST through the injected request function when one replaces the transport."
+  (let ((function (nous-credential-manager-refresh-request-function manager)))
+    (if function
+        (funcall function :method ':post :url url :headers headers :content content)
+        (call-next-method))))
+
+(defmethod credential-manager-validate-refresh-response
+    ((manager nous-credential-manager) (document hash-table) (credentials oauth-credentials))
+  "Require a rotated single-use refresh token and a scoped access JWT naming its subject."
+  (declare (ignore manager))
+  (let ((access-token (json-get document "access_token"))
+        (refresh-token (json-get document "refresh_token")))
+    (unless (and (non-empty-string-p refresh-token)
+                 (not (string= refresh-token (oauth-credentials-refresh-token credentials))))
       (error 'token-refresh-failed
-             :message "The Nous OAuth refresh response was malformed."
+             :message "The Nous OAuth refresh response omitted rotated credentials."
+             :status nil
+             :response nil))
+    (unless (nous-authentication--access-token-scope-p access-token *nous-oauth-scope*)
+      (error 'token-refresh-failed
+             :message "The refreshed Nous access token lacks the inference:invoke scope."
+             :status nil
+             :response nil))
+    (unless (non-empty-string-p (nous-authentication--access-token-account-id access-token))
+      (error 'token-refresh-failed
+             :message "The refreshed Nous access token omitted its subject."
              :status nil
              :response nil))))
-
-(-> nous-authentication--redacted-error-code
-    (string oauth-credentials)
-    (option string))
-(defun nous-authentication--redacted-error-code (body credentials)
-  "Return BODY's bounded OAuth error code without credential material."
-  (let ((code (oauth-error-code body))
-        (secrets (oauth-credentials-secret-values credentials)))
-    (and code
-         (redact-exact-string-values
-          code
-          secrets
-          (safe-redaction-marker "[OAUTH CREDENTIAL REDACTED]" secrets)))))
-
-(defmethod credential-manager-refresh-exchange
-    ((manager nous-credential-manager)
-     (credentials oauth-credentials)
-     (refresh-token string))
-  "Rotate Nous credentials atomically across processes sharing the state root."
-  (declare (ignore refresh-token))
-  (let* ((source (credential-manager-primary-source manager))
-         (pathname (credential-source-pathname source)))
-    (nous-authentication--call-with-store-lock
-     pathname
-     (lambda ()
-       (let ((latest (credential-source-load source)))
-         (when (and latest
-                    (nous-authentication--credential-version-different-p
-                     latest
-                     credentials))
-           (return-from credential-manager-refresh-exchange
-             (values
-              (credential-manager-accept-account
-               manager
-               (nous-authentication--validate-stored-credentials manager latest))
-              nil)))
-         (let* ((effective (or latest credentials))
-                (effective-refresh-token
-                  (oauth-credentials-refresh-token effective)))
-           (unless (non-empty-string-p effective-refresh-token)
-             (error 'token-refresh-failed
-                    :message
-                    (format nil "These Nous credentials cannot refresh; ~A."
-                            (credential-manager-login-hint manager))
-                    :status nil
-                    :response nil))
-           (multiple-value-bind (body status response-headers)
-               (handler-case
-                   (funcall
-                    (nous-credential-manager-refresh-request-function manager)
-                    :method ':post
-                    :url (concatenate 'string
-                                      (nous-portal-url)
-                                      "/api/oauth/token")
-                    :headers
-                    (list
-                     (cons "x-nous-refresh-token" effective-refresh-token)
-                     (cons "Content-Type" "application/x-www-form-urlencoded")
-                     (cons "Accept" "application/json")
-                     (cons "User-Agent" (provider-user-agent)))
-                    :content
-                    (url-encode-params
-                     (list
-                      (cons "grant_type" "refresh_token")
-                      (cons "client_id" *nous-oauth-client-id*))))
-                 (authentication-error (condition)
-                   (error condition))
-                 (error ()
-                   (error 'token-refresh-failed
-                          :message "Nous OAuth token refresh could not be completed."
-                          :status nil
-                          :response nil)))
-             (declare (ignore response-headers))
-             (unless (and (stringp body) (integerp status))
-               (error 'token-refresh-failed
-                      :message "The Nous OAuth refresh transport returned an invalid response."
-                      :status nil
-                      :response nil))
-             (if (<= 200 status 299)
-                 (let ((refreshed
-                         (credential-manager-accept-account
-                          manager
-                          (nous-refresh-response-credentials
-                           manager
-                           effective
-                           body))))
-                   (credential-source-save source refreshed)
-                   (values refreshed nil))
-                 (let* ((code
-                          (nous-authentication--redacted-error-code body effective))
-                        (newer (credential-source-load source)))
-                   (if (and newer
-                            (nous-authentication--credential-version-different-p
-                             newer
-                             effective))
-                       (values
-                        (credential-manager-accept-account
-                         manager
-                         (nous-authentication--validate-stored-credentials
-                          manager
-                          newer))
-                        nil)
-                       (error 'token-refresh-failed
-                              :message
-                              (format nil
-                                      "Nous OAuth token refresh failed~@[ (~A)~]; ~A."
-                                      code
-                                      (credential-manager-login-hint manager))
-                              :status status
-                              :response code)))))))))))

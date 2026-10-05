@@ -147,7 +147,7 @@
     (unwind-protect
          (progn
            (let ((refreshed
-                   (nous-refresh-response-credentials
+                   (credential-manager-refresh-response-credentials
                     manager
                     old
                     (json-encode
@@ -181,7 +181,7 @@
              (test-assert
               (handler-case
                   (progn
-                    (nous-refresh-response-credentials manager old body)
+                    (credential-manager-refresh-response-credentials manager old body)
                     nil)
                 (token-refresh-failed ()
                   t))
