@@ -339,6 +339,28 @@ configuration can be created before executable user initialization loads."
       (format nil "Unsupported reasoning effort ~S for model ~A. The choices are ~{~A~^, ~}."
               effort model efforts))))
 
+(-> configuration--openrouter-provider-routing-problem (t t) (option string))
+(defun configuration--openrouter-provider-routing-problem (value configuration)
+  "Return why VALUE is not a JSON map of wire models to provider preference objects."
+  (declare (ignore configuration))
+  (cond
+    ((and (stringp value) (zerop (length value)))
+     nil)
+    ((not (stringp value))
+     "OpenRouter provider routing must be a JSON string.")
+    (t
+     (handler-case
+         (let ((routing (json-decode value)))
+           (if (json-object-p routing)
+               (loop for model being the hash-keys of routing using (hash-value preferences)
+                     when (or (not (non-empty-string-p model))
+                              (not (json-object-p preferences)))
+                       return (format nil "OpenRouter routing entry ~S must name a model and a provider preference object."
+                                      model))
+               "OpenRouter provider routing must be a JSON object keyed by model name."))
+       (json-error ()
+         "OpenRouter provider routing must be valid JSON.")))))
+
 (defparameter *default-context-window* 272000
   "The conservative context window assumed for unknown models.")
 

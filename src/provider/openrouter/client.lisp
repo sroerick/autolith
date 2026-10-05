@@ -130,28 +130,42 @@
   "Check if MODEL-ID supports reasoning; assumes yes unless known otherwise."
   (not (gethash model-id *openrouter-models-without-reasoning*)))
 
+(-> openrouter--provider-preferences (non-empty-string configuration) (option json-object))
+(defun openrouter--provider-preferences (wire-model configuration)
+  "Return WIRE-MODEL's configured provider preferences, falling back to the wildcard."
+  (let ((text (config :openrouter-provider-routing configuration)))
+    (unless (zerop (length text))
+      (let ((routing (json-decode text)))
+        (or (json-get routing wire-model)
+            (json-get routing "*"))))))
+
 (defmethod provider-request-object :around
     ((provider openrouter-chat-completions-provider)
      (conversation conversation)
      (tool-namespaces vector)
      &key goal-context compaction-p)
-  "Translate the namespaced model and normalized reasoning controls for OpenRouter."
+  "Translate the namespaced model, reasoning, and provider preferences for OpenRouter."
   (multiple-value-bind (request delivery)
       (call-next-method provider conversation tool-namespaces
                         :goal-context goal-context
                         :compaction-p compaction-p)
     (let* ((model (json-get request "model"))
+           (wire-model (openrouter--wire-model-name model))
            (effort
             (openrouter--reasoning-effort
              (config :reasoning-effort
               (provider-configuration provider))))
            (model-supports-reasoning-p
             (openrouter--model-supports-reasoning-p model)))
-      (setf (gethash "model" request)
-            (openrouter--wire-model-name model))
+      (setf (gethash "model" request) wire-model)
       (when (and effort model-supports-reasoning-p)
         (setf (gethash "reasoning" request)
-              (json-object "effort" effort))))
+              (json-object "effort" effort)))
+      (let ((preferences
+              (openrouter--provider-preferences
+               wire-model (provider-configuration provider))))
+        (when preferences
+          (setf (gethash "provider" request) preferences))))
     (values request delivery)))
 
 (defmethod provider-authenticate

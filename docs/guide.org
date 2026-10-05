@@ -1023,6 +1023,20 @@ precedence over Autolith's private OpenRouter key. Authenticate with
 =AUTOLITH_OPENROUTER_MODELS_ENDPOINT= override the chat and discovery endpoints
 independently.
 
+Set =:openrouter-provider-routing= to a JSON map of wire model names to
+OpenRouter provider preference objects. Omit the local =openrouter/= prefix
+from model keys. Use =*= for models without their own entry. For example:
+
+#+BEGIN_SRC lisp
+(setf (config :openrouter-provider-routing)
+      "{\"deepseek/deepseek-v4.1-flash\":{\"order\":[\"baseten\",\"together\"],\"allow_fallbacks\":true}}")
+#+END_SRC
+
+You can also supply this JSON through =AUTOLITH_OPENROUTER_PROVIDER_ROUTING=.
+Supply an empty string to use OpenRouter's normal routing.
+Provider preference fields are sent as supplied, including =order=,
+=allow_fallbacks=, =only=, =ignore=, =sort=, and =max_price=.
+
 ** Commands
 
 #+BEGIN_SRC lisp

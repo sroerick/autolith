@@ -251,6 +251,92 @@
      "the built-in OpenRouter registration declares discovery behavior")
     nil))
 
+(-> test-openrouter-routing-validation () null)
+(defun test-openrouter-routing-validation ()
+  "Validate routing through the setting boundary, including every model entry."
+  (with-test-environment (("AUTOLITH_OPENROUTER_PROVIDER_ROUTING" nil))
+    (with-test-configuration (configuration)
+      (dolist (text '("" "{}" "{\"*\":{}}"
+                      "{\"openai/gpt-5-mini\":{\"order\":[\"baseten\"],\"allow_fallbacks\":false}}"))
+        (setf (config :openrouter-provider-routing configuration) text)
+        (test-assert (string= text (config :openrouter-provider-routing configuration))
+                     "valid routing is stored in the configuration"))
+      (dolist (text '("[]" "null" "true" "not json" "   "
+                      "{\"openai/gpt-5-mini\":\"skip\"}"
+                      "{\"openai/gpt-5-mini\":null}"
+                      "{\"*\":[]}" "{\"\":{}}"))
+        (test-assert
+         (handler-case
+             (progn (setf (config :openrouter-provider-routing configuration) text) nil)
+           (setting-error () t))
+         "invalid routing is rejected before a request is built"))))
+  nil)
+
+(-> test-openrouter-provider-routing () null)
+(defun test-openrouter-provider-routing ()
+  "Select and serialize provider preferences at the OpenRouter request boundary."
+  (with-test-environment (("AUTOLITH_OPENROUTER_PROVIDER_ROUTING" nil))
+    (with-test-configuration (configuration)
+      (setf (configuration-validation-deferred-p configuration) t
+            (config :model configuration) (openrouter--model-name "openai/gpt-5-mini"))
+      (let* ((provider (openrouter-provider-create configuration))
+             (conversation (conversation-create configuration))
+             (first-preferences (json-object "order" (json-array "baseten" "together")
+                                             "allow_fallbacks" (json-boolean t)))
+             (second-preferences (json-object "order" (json-array "relace")
+                                              "allow_fallbacks" (json-boolean nil)))
+             (wildcard-preferences (json-object "sort" "throughput"
+                                                "max_price" (json-object "prompt" 2)))
+             (empty-preferences (json-object)))
+        (conversation-append-user-message conversation "Route this request.")
+        (test-assert
+         (not (nth-value 1 (gethash "provider" (provider-request-object provider conversation (json-array)))))
+         "unconfigured requests omit provider routing")
+        (setf (config :openrouter-provider-routing configuration)
+              (json-encode (json-object "openai/gpt-5-mini" first-preferences
+                                        "vendor/other-model" second-preferences
+                                        "vendor/default-routing" empty-preferences
+                                        "*" wildcard-preferences)))
+        (dolist (case (list (list "openai/gpt-5-mini" first-preferences)
+                           (list "vendor/other-model" second-preferences)
+                           (list "vendor/unlisted" wildcard-preferences)
+                           (list "vendor/default-routing" empty-preferences)))
+          (setf (config :model configuration) (openrouter--model-name (first case)))
+          (let ((request (json-decode
+                          (json-encode (provider-request-object provider conversation (json-array))))))
+            (test-assert (equalp (second case) (gethash "provider" request))
+                         "the wire request preserves the selected object, including booleans and nested fields"))))))
+  nil)
+
+(-> test-openrouter-routing-environment () null)
+(defun test-openrouter-routing-environment ()
+  "Load and validate routing supplied through the process environment."
+  (with-test-configuration (configuration)
+    (labels ((load-configuration ()
+               "Load environment settings using the isolated configuration roots."
+               (configuration-create
+                :durable-p nil
+                :defer-provider-validation-p t
+                :config-root (config :config-root configuration)
+                :site-config-root nil
+                :data-root (config :data-root configuration)
+                :state-root (config :state-root configuration)
+                :cache-root (config :cache-root configuration))))
+      (with-test-environment (("AUTOLITH_OPENROUTER_PROVIDER_ROUTING"
+                               "{\"*\":{\"order\":[\"baseten\"]}}"))
+        (test-assert
+         (equalp #("baseten")
+                 (json-get (openrouter--provider-preferences
+                            "vendor/model" (load-configuration)) "order"))
+         "environment routing is available to the request builder"))
+      (with-test-environment (("AUTOLITH_OPENROUTER_PROVIDER_ROUTING" "{\"*\":\"skip\"}"))
+        (test-assert
+         (handler-case
+             (progn (load-configuration) nil)
+           (setting-error () t))
+         "invalid environment routing is rejected at configuration loading"))))
+  nil)
+
 (-> test-openrouter-provider () null)
 (defun test-openrouter-provider ()
   "Run the offline OpenRouter provider tests."

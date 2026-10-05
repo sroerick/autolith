@@ -303,7 +303,10 @@
   opencode-provider-test--builtin-registration)
 
 (define-test-suite openrouter-provider
-  test-openrouter-provider)
+  test-openrouter-provider
+  test-openrouter-routing-validation
+  test-openrouter-provider-routing
+  test-openrouter-routing-environment)
 
 (define-test-suite mistral-provider
   test-mistral-provider)

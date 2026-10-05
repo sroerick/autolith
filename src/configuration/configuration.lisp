@@ -216,6 +216,15 @@ exist yet, and is only put in directory form."
              (declare (ignore configuration))
              *default-reasoning-effort*))
 
+(define-setting :openrouter-provider-routing (string-setting)
+  :label "OpenRouter provider routing"
+  :group :model
+  :documentation "OpenRouter provider preferences as a JSON object keyed by wire model name, with an optional wildcard entry for other models."
+  :scope :durable
+  :environment "AUTOLITH_OPENROUTER_PROVIDER_ROUTING"
+  :validator 'configuration--openrouter-provider-routing-problem
+  :default "")
+
 (define-setting :codex-fast-mode-p (boolean-setting)
   :label "Codex Fast mode"
   :group :model
