@@ -24,8 +24,6 @@ library is still open. Cut: only =bounded-string= and =sanitize-text=, both
 already from clinedi.
 
 ** Smaller items
-- Grouped multi-column picker rows (=ui.lisp= 696-820) are the natural renderer
-  for clinedi's =selector-arrange=.
 - Path completion under a root with dotfile and =..= policy
   (=path-completion.lisp=): only if clinedi grows a completion protocol.
 - Terminal-backed Gray streams for provider authentication (=commands.lisp=
