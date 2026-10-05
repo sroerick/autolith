@@ -31,27 +31,6 @@ already from clinedi.
 - Terminal-backed Gray streams for provider authentication (=commands.lisp=
   1852-1985) minus the relay lock check.
 
-* Provider, conversation and inference
-
-Compared against the library versions Autolith pins through qlot, not the
-older checkouts under =~/common-lisp=: the pinned cl-llm-provider-api already
-has a =/wire= system (Responses with deferred tool search, Chat Completions,
-Anthropic Messages, Gemini GenerateContent, SSE, contracts) and the pinned
-cl-rfc8628 has a managed credential manager, JWT helpers, redaction, browser
-opening and request helpers.
-
-** Token refresh repeated across providers, partly copying cl-rfc8628
-Refresh exchanges in chatgpt (289-410), =grok/authentication.lisp= 110-221,
-=nous/authentication.lisp= 207-376 and gemini 383-404; token POST helpers in
-chatgpt 346-375, gemini 256-282, nous 162-193; token-document validation in
-chatgpt 377-421 and gemini 284-319. Four copies of the RFC 6749 refresh grant
-differing only in endpoint, client, headers and account-id extraction. The
-Nous request helper copies =device-authentication-request= adding a deadline,
-and the document helpers copy =device-authentication-json-request=. The Nous
-cross-process refresh lock that reloads under the lock and adopts a newer
-rotation (nous 19-41, 281-376) applies to any rotating refresh token and
-belongs in =managed-credential-manager= as a lock hook.
-
 * Tools, resources, workers, tasks and the rest
 
 Checked against the pinned versions in =.qlot/dists=, not the older checkouts.
