@@ -139,7 +139,7 @@
                           :source-path
                           (credential-source-pathname primary-source))))
     (let ((valid
-            (grok-refresh-response-credentials
+            (credential-manager-refresh-response-credentials
              manager
              renewable
              (json-encode
@@ -161,7 +161,7 @@
               (<= 890 (- expires-at (get-universal-time)) 910)))
        "Grok refresh maps expires_in onto an absolute expiration"))
     (let ((rotationless
-            (grok-refresh-response-credentials
+            (credential-manager-refresh-response-credentials
              manager
              renewable
              (json-encode (json-object "access_token" "new-access")))))
@@ -172,7 +172,7 @@
       (test-assert
        (handler-case
            (progn
-             (grok-refresh-response-credentials manager renewable body)
+             (credential-manager-refresh-response-credentials manager renewable body)
              nil)
          (token-refresh-failed ()
            t))
@@ -180,7 +180,7 @@
     (test-assert
      (handler-case
          (progn
-           (grok-refresh-response-credentials
+           (credential-manager-refresh-response-credentials
             manager
             renewable
             (json-encode
