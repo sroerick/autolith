@@ -23,7 +23,7 @@
   ()
   (:documentation "Autolith's private Gemini OAuth credential source."))
 
-(defclass gemini-credential-manager (credential-manager)
+(defclass gemini-credential-manager (oauth-credential-manager)
   ()
   (:documentation "The Google OAuth credential manager for Gemini subscriptions."))
 
@@ -147,18 +147,14 @@
    (gemini-oauth--client :request-function request-function :token-parameters nil)
    :endpoint endpoint :parameters parameters :stage stage))
 
-(defun gemini-oauth--credentials-from-document (manager document &key previous)
-  "Validate DOCUMENT and return persisted Gemini credentials."
+(defun gemini-oauth--credentials-from-document (manager document)
+  "Validate login token DOCUMENT and return persisted Gemini credentials."
   (let* ((access-token (json-get document "access_token"))
-         (refresh-token (or (json-get document "refresh_token")
-                            (and previous
-                                 (oauth-credentials-refresh-token previous))))
-         (id-token (or (json-get document "id_token")
-                       (and previous (oauth-credentials-id-token previous))))
+         (refresh-token (json-get document "refresh_token"))
+         (id-token (json-get document "id_token"))
          (expires-in (json-get document "expires_in"))
          (account-id
            (or (and (non-empty-string-p id-token) (jwt-subject id-token))
-               (and previous (oauth-credentials-account-id previous))
                "google-main-account")))
     (unless (and (non-empty-string-p access-token)
                  (non-empty-string-p refresh-token)
@@ -192,24 +188,23 @@
      (browser-authentication-exchange-code
       client :code code :verifier verifier :redirect-uri redirect-uri))))
 
-(defmethod credential-manager-refresh-exchange
-    ((manager gemini-credential-manager)
-     (credentials oauth-credentials) (refresh-token string))
-  "Refresh Gemini credentials with Google's installed-app OAuth endpoint."
-  (let* ((client-secret (gemini-oauth-client-secret))
-         (parameters
-           (append (list (cons "client_id" (gemini-oauth-client-id))
-                         (cons "grant_type" "refresh_token")
-                         (cons "refresh_token" refresh-token))
-                   (when client-secret
-                     (list (cons "client_secret" client-secret)))))
-         (document
-           (gemini-oauth--token-document #'gemini-oauth--request
-                                         *gemini-oauth-token-endpoint*
-                                         parameters ':refresh)))
-    (values (gemini-oauth--credentials-from-document
-             manager document :previous credentials)
-            t)))
+(defmethod credential-manager-token-endpoint ((manager gemini-credential-manager))
+  "Refresh Gemini credentials at Google's installed-app OAuth token endpoint."
+  (declare (ignore manager))
+  *gemini-oauth-token-endpoint*)
+
+(defmethod credential-manager-client-id ((manager gemini-credential-manager))
+  "Refresh as the configured Gemini installed-app client."
+  (declare (ignore manager))
+  (gemini-oauth-client-id))
+
+(defmethod credential-manager-refresh-parameters
+    ((manager gemini-credential-manager) (refresh-token string))
+  "Add the installed-app client secret when one is configured."
+  (let ((client-secret (gemini-oauth-client-secret)))
+    (append (call-next-method)
+            (when client-secret
+              (list (cons "client_secret" client-secret))))))
 
 
 ;;;; -- Public Login Flow --
