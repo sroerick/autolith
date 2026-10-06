@@ -75,6 +75,50 @@
     (write-byte 42 stream))
   (generation-core-pathname generation))
 
+(-> test-checkpoint-source-check-diagnostics () null)
+(defun test-checkpoint-source-check-diagnostics ()
+  "Verify successful source checks and bounded diagnostics for validation failures."
+  (with-test-configuration (configuration)
+    (dolist (status '(0 7 :launch-failure))
+      (test-call-with-function-replacements
+       (list
+        (list 'self-git-command
+              (lambda (active-configuration arguments)
+                (declare (ignore active-configuration))
+                (if (string= (first arguments) "status") "" "fixture-commit")))
+        (list 'uiop:run-program
+              (lambda (&rest arguments)
+                (declare (ignore arguments))
+                (when (eq status ':launch-failure)
+                  (error "Synthetic checker launch failure."))
+                (values (concatenate 'string "Early checker output."
+                                     (make-string 20000 :initial-element #\.)
+                                     "Important checker failure.")
+                        nil status))))
+       (lambda ()
+         (handler-case
+             (let ((commit (checkpoint--source-snapshot configuration)))
+               (test-assert
+                (and (eql status 0) (string= commit "fixture-commit"))
+                "a successful checker returns the revalidated source commit"))
+           (checkpoint-error (condition)
+             (let ((message (princ-to-string condition)))
+               (test-assert
+                (and (not (eql status 0))
+                     (eq (checkpoint-error-stage condition) ':validation)
+                     (equal (checkpoint-error-pathname condition)
+                            (config :source-root configuration)))
+                "checker failures carry the validation stage and source path")
+               (if (eq status ':launch-failure)
+                   (test-assert (search "Synthetic checker launch failure." message)
+                                "checker launch failures retain their cause")
+                   (test-assert
+                    (and (search "Important checker failure." message)
+                         (not (search "Early checker output." message))
+                         (< (length message) 17000))
+                    "a failed check reports the bounded tail containing its diagnostics")))))))))
+  nil)
+
 (-> test-checkpoint-source-precheck-order () null)
 (defun test-checkpoint-source-precheck-order ()
   "Test source validation precedes quiescence and fork preparation uses it."

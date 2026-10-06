@@ -346,16 +346,25 @@ structured type and message survive the round trip."
               '(#\Space #\Tab #\Newline #\Return)
               (self-git-command configuration '("rev-parse" "HEAD")))))
     (let ((before (clean-commit)))
-      (handler-case
-          (uiop:run-program
-           (platform-source-check-command
-           *platform* (config :source-root configuration))
-           :directory (config :source-root configuration)
-           :output ':string
-           :error-output ':output)
-        (error (condition)
+      (multiple-value-bind (output ignored status)
+          (handler-case
+              (uiop:run-program
+               (platform-source-check-command
+                *platform* (config :source-root configuration))
+               :directory (config :source-root configuration)
+               :output ':string
+               :error-output ':output
+               :ignore-error-status t)
+            (error (condition)
+              (error 'checkpoint-error
+                     :message (format nil "The repository check failed: ~A" condition)
+                     :stage ':validation
+                     :pathname (config :source-root configuration))))
+        (declare (ignore ignored))
+        (unless (zerop status)
           (error 'checkpoint-error
-                 :message (format nil "The repository check failed: ~A" condition)
+                 :message (format nil "The repository check failed (exit ~D):~%~A"
+                                  status (subseq output (max 0 (- (length output) 16384))))
                  :stage ':validation
                  :pathname (config :source-root configuration))))
       (let ((after (clean-commit)))
