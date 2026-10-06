@@ -125,93 +125,103 @@
 
 (-> test-check-load-test-system-lock () null)
 (defun test-check-load-test-system-lock ()
-  "Test the checkout-scoped test-system lock across concurrent loads and failure."
-  (with-test-configuration (configuration root)
-    (declare (ignore configuration))
-    (let* ((source-root (merge-pathnames "checkout/" root))
-           (lock-path (merge-pathnames ".qlot/test-load.lock" source-root))
-           (state-lock (make-lock "check test-system loader state"))
-           (state-condition (make-condition-variable))
-           (first-entered-p nil)
-           (release-first-p nil)
-           (active 0)
-           (maximum-active 0)
-           (calls 0)
-           (errors nil)
-           (threads nil))
-      (ensure-directories-exist lock-path)
-      (unwind-protect
-           (test-call-with-function-replacements
-            (list
-             (list 'asdf:load-system
-                   (lambda (system &rest arguments)
-                     (declare (ignore arguments))
-                     (when (eq system :autolith/tests)
-                       (with-lock-held (state-lock)
-                         (incf calls)
-                         (incf active)
-                         (setf maximum-active (max maximum-active active))
-                          (let ((first-p (= calls 1)))
-                            (when first-p
-                              (setf first-entered-p t)
-                              (condition-notify state-condition))
-                            (unwind-protect
-                                 (when first-p
-                                   (loop until release-first-p
-                                         do (unless (condition-wait state-condition state-lock
-                                                                    :timeout 10)
-                                              (error 'test-fixture-error))))
-                              (decf active))
-                            (when first-p
-                              (error 'test-fixture-error))))))))
-            (lambda ()
-              (labels ((load-test-system ()
-                         (handler-case
-                             (test-check--call "CHECK--LOAD-TEST-SYSTEM" source-root)
-                           (error (condition)
-                             (with-lock-held (state-lock)
-                               (push condition errors)))))
-                       (join-bounded (thread)
-                          (loop repeat 1000 while (thread-alive-p thread)
-                               do (sleep 0.01))
-                         (when (thread-alive-p thread)
-                           (destroy-thread thread))
-                         (join-thread thread)))
-                (setf threads
-                      (list (make-thread #'load-test-system :name "check loader one")))
-                (with-lock-held (state-lock)
-                  (loop until first-entered-p
-                        do (unless (condition-wait state-condition state-lock
-                                                    :timeout 10)
-                             (error 'test-fixture-error))))
-                (push (make-thread #'load-test-system :name "check loader two") threads)
-                (sleep 0.05)
-                (with-lock-held (state-lock)
-                  (setf release-first-p t)
-                  (condition-notify state-condition))
-                (dolist (thread threads)
-                  (join-bounded thread))
-                (test-assert (= maximum-active 1)
-                             "concurrent test-system callbacks never overlap")
-                (test-assert (= calls 2)
-                             "both concurrent loaders reach the mocked test-system load")
-                (test-assert (= (length errors) 1)
-                             "the first callback failure propagates without losing the lock")
-                (test-assert (typep (first errors) 'test-fixture-error)
-                             "callback conditions propagate through the loader helper")
-                (test-assert (probe-file lock-path)
-                             "the lock file belongs to the requested source checkout"))))
-        (with-lock-held (state-lock)
-          (setf release-first-p t)
-          (condition-notify state-condition))
-        (dolist (thread threads)
-          (when (thread-alive-p thread)
-            (loop repeat 1000 while (thread-alive-p thread)
-                  do (sleep 0.01))
-            (when (thread-alive-p thread)
-              (destroy-thread thread)))
-          (join-thread thread))))
-  nil))
+  "Test cache-scoped loader serialization, callback failure, and checkout fallback."
+  (dolist (cache-p '(nil t))
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let* ((source-root (merge-pathnames "checkout/" root))
+             (cache-root (when cache-p (merge-pathnames "asdf-cache/" root)))
+             (lock-path (merge-pathnames "test-load.lock"
+                                         (or cache-root
+                                             (merge-pathnames ".qlot/" source-root))))
+             (state-lock (make-lock "check test-system loader state"))
+             (state-condition (make-condition-variable))
+             (first-entered-p nil)
+             (release-first-p nil)
+             (active 0)
+             (maximum-active 0)
+             (calls 0)
+             (errors nil)
+             (threads nil))
+        (ensure-directories-exist lock-path)
+        (with-test-environment (("AUTOLITH_ASDF_CACHE"
+                                (when cache-root (uiop:native-namestring cache-root))))
+          (unwind-protect
+               (test-call-with-function-replacements
+                (list
+                 (list 'asdf:load-system
+                       (lambda (system &rest arguments)
+                         (declare (ignore arguments))
+                         (when (eq system :autolith/tests)
+                           (with-lock-held (state-lock)
+                             (incf calls)
+                             (incf active)
+                             (setf maximum-active (max maximum-active active))
+                             (let ((first-p (= calls 1)))
+                               (when first-p
+                                 (setf first-entered-p t)
+                                 (condition-notify state-condition))
+                               (unwind-protect
+                                    (when first-p
+                                      (loop until release-first-p
+                                            do (unless (condition-wait state-condition state-lock
+                                                                       :timeout 10)
+                                                 (error 'test-fixture-error))))
+                                 (decf active))
+                               (when first-p
+                                 (error 'test-fixture-error))))))))
+                (lambda ()
+                  (labels ((load-test-system ()
+                             (handler-case
+                                 (test-check--call "CHECK--LOAD-TEST-SYSTEM" source-root)
+                               (error (condition)
+                                 (with-lock-held (state-lock)
+                                   (push condition errors)))))
+
+                           (join-bounded (thread)
+                             (loop repeat 1000 while (thread-alive-p thread)
+                                   do (sleep 0.01))
+                             (when (thread-alive-p thread)
+                               (destroy-thread thread))
+                             (join-thread thread)))
+                    (setf threads
+                          (list (make-thread #'load-test-system :name "check loader one")))
+                    (with-lock-held (state-lock)
+                      (loop until first-entered-p
+                            do (unless (condition-wait state-condition state-lock
+                                                       :timeout 10)
+                                 (error 'test-fixture-error))))
+                    (push (make-thread #'load-test-system :name "check loader two") threads)
+                    (sleep 0.05)
+                    (with-lock-held (state-lock)
+                      (setf release-first-p t)
+                      (condition-notify state-condition))
+                    (dolist (thread threads)
+                      (join-bounded thread))
+                    (test-assert (= maximum-active 1)
+                                 "concurrent test-system callbacks never overlap")
+                    (test-assert (= calls 2)
+                                 "both concurrent loaders reach the mocked test-system load")
+                    (test-assert (= (length errors) 1)
+                                 "the first callback failure propagates without losing the lock")
+                    (test-assert (typep (first errors) 'test-fixture-error)
+                                 "callback conditions propagate through the loader helper")
+                    (test-assert (probe-file lock-path)
+                                 "the loader creates its lock in the shared cache directory")
+                    (when cache-p
+                      (test-assert (not (probe-file source-root))
+                                   "an explicit cache requires no writes to the source checkout")))))
+            (with-lock-held (state-lock)
+              (setf release-first-p t)
+              (condition-notify state-condition))
+            (dolist (thread threads)
+              (when (thread-alive-p thread)
+                (loop repeat 1000 while (thread-alive-p thread)
+                      do (sleep 0.01))
+                (when (thread-alive-p thread)
+                  (destroy-thread thread)))
+              (join-thread thread)))))))
+  nil)
 
 (-> test-check-command-selection () null)
 (defun test-check-command-selection ()

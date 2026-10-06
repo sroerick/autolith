@@ -442,11 +442,17 @@ configurations read; launchers under test keep their own core selection."
     (format t "~&Recovery checks passed.~%")
     t))
 
+(defun check--test-load-lock-pathname (source-root)
+  "Return the shared test-loader lock in the writable FASL-cache directory."
+  (merge-pathnames "test-load.lock"
+                   (or (autolith-script-environment-directory "AUTOLITH_ASDF_CACHE")
+                       (merge-pathnames ".qlot/" source-root))))
+
 (defun check--load-test-system (source-root)
-  "Load the test system while holding this checkout's shared FASL-cache lock."
+  "Load the test system while holding the shared FASL-cache lock."
   (asdf:load-system :ls-flock)
   (uiop:symbol-call '#:ls-flock '#:call-with-file-lock
-                    (merge-pathnames ".qlot/test-load.lock" source-root)
+                    (check--test-load-lock-pathname source-root)
                     (lambda () (asdf:load-system :autolith/tests))))
 
 (defun check--load-tests (source-root &key build-sandbox)
