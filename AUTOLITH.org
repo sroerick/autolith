@@ -18,6 +18,19 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Active-image internal symbol reader
+
+- Problem: Single-colon =autolith:= references failed for internal symbols during
+  active-image inspection.
+- Behavior: Read self-tool forms in =AUTOLITH= and invoke the reader's continuation
+  for internal =AUTOLITH:= references.
+- Scope and location: tracked =src/self/tools.lisp=. Live mutation
+  =33dc0dd8-da5f-44ae-bbfd-8beaad4cceb4= is exploratory.
+- Verification: the self.eval boundary test and live reader exercise passed,
+  including the internal prompt-cache accessor.
+- Removal condition: discard the exploratory override after booting the tracked
+  definition.
+
 ** Child assignment scope
 
 - Problem: The child prompt prohibited work outside the initial workspace,

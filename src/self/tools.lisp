@@ -31,8 +31,18 @@ NAME is accepted as written or upcased, so lowercase names resolve too."
     (source &key (read-eval t) (package (find-package '#:autolith)))
   "Read exactly one Common Lisp form from SOURCE relative to PACKAGE.
 
+Accept AUTOLITH: references to internal symbols using the reader's continuation.
 A source without a form, or ending inside one, signals END-OF-FILE."
-  (read-one-form source :read-eval read-eval :package package))
+  (handler-bind
+      ((package-error
+         (lambda (condition)
+           (when (and (typep condition 'reader-error)
+                      (eq (find-package (package-error-package condition))
+                          (find-package '#:autolith)))
+             (let ((restart (find-restart 'continue condition)))
+               (when restart
+                 (invoke-restart restart)))))))
+    (read-one-form source :read-eval read-eval :package package)))
 
 (-> self-resolve-symbol (string &key (:package package)) symbol)
 (defun self-resolve-symbol (name &key (package (find-package '#:autolith)))

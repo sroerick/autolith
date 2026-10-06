@@ -835,6 +835,13 @@
                                                         arguments)))
                        context)))
              (declare (ignorable eval-tool))
+              (test-assert
+               (tool-result-success-p
+                (run "forms"
+                     (vector "(assert (eq *package* (find-package \"AUTOLITH\")))"
+                             "(assert (fboundp 'application-prompt-cache-request-model))"
+                             "(assert (eq 'autolith:application-prompt-cache-request-model 'autolith::application-prompt-cache-request-model))")))
+               "self.eval reads and evaluates internal symbols in AUTOLITH")
              (let ((result (run "forms"
                                 (vector "(cerror \"Keep going anyway.\" \"Deliberate stop.\")"))))
                (test-assert (not (tool-result-success-p result))
@@ -871,6 +878,21 @@
                (test-assert (and (tool-result-success-p late)
                                  (search "42" (tool-result-content late)))
                             "a later form uses a package an earlier form created"))
+              (unwind-protect
+                   (progn
+                     (test-assert
+                      (tool-result-success-p
+                       (run "forms"
+                            (vector "(defpackage #:self-eval-private (:use #:cl))"
+                                    "(defun self-eval-private::answer () 42)"
+                                    "(assert (= (self-eval-private::answer) 42))")))
+                      "explicit internal qualification works in foreign packages")
+                     (test-assert
+                      (not (tool-result-success-p
+                            (run "forms" (vector "(self-eval-private:answer)"))))
+                      "foreign packages require exports for single-colon references"))
+                (when (find-package '#:self-eval-private)
+                  (delete-package '#:self-eval-private)))
              (let ((failed (run "forms" (vector "1" "(error \"second form failed\")" "3"))))
                (test-assert (and (not (tool-result-success-p failed))
                                  (search "Form 2 of 3 failed: second form failed"
