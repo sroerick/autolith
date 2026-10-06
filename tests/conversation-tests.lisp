@@ -1349,31 +1349,31 @@
 (-> test-conversation-child-project-setup () null)
 (defun test-conversation-child-project-setup ()
   "Test fresh children load Autolith through the locked project setup."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (home (merge-pathnames "isolated-home/" root)))
-    (unwind-protect
-         (progn
-           (ensure-directories-exist (merge-pathnames "placeholder" home))
-           (multiple-value-bind (status output)
-               (test-conversation--run-child-form
-                "(uiop:quit 0)"
-                :environment
-                (list (format nil "HOME=~A" (namestring home))
-                      (format nil "XDG_CONFIG_HOME=~A"
-                              (namestring (merge-pathnames "config/" home)))
-                      ;; Share compiled files, not the isolated child's source registry.
-                      (format nil "XDG_CACHE_HOME=~A"
-                              (namestring (uiop:xdg-cache-home)))
-                      "CL_SOURCE_REGISTRY="))
-             (test-assert
-              (zerop status)
-              (format nil
-                      "the clean child loads locked Autolith dependencies:~%~A"
-                      output))))
-      (platform-delete-directory-tree *platform* root
-                                      :validate t
-                                      :if-does-not-exist ':ignore)))
+  (with-test-environment (("CL_SOURCE_REGISTRY" nil))
+    (let* ((configuration (test-configuration))
+           (root (test-configuration-root configuration))
+           (home (merge-pathnames "isolated-home/" root)))
+      (unwind-protect
+           (progn
+             (ensure-directories-exist (merge-pathnames "placeholder" home))
+             (multiple-value-bind (status output)
+                 (test-conversation--run-child-form
+                  "(uiop:quit 0)"
+                  :environment
+                  (list (format nil "HOME=~A" (namestring home))
+                        (format nil "XDG_CONFIG_HOME=~A"
+                                (namestring (merge-pathnames "config/" home)))
+                        ;; Share compiled files with the isolated child.
+                        (format nil "XDG_CACHE_HOME=~A"
+                                (namestring (uiop:xdg-cache-home)))))
+               (test-assert
+                (zerop status)
+                (format nil
+                        "the clean child loads locked Autolith dependencies:~%~A"
+                        output))))
+        (platform-delete-directory-tree *platform* root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-conversation--call-with-child-lease/fork

@@ -841,9 +841,11 @@ pkgs.writeShellApplication {
 
     # The packaged source repository is root-owned in /nix/store. Permit Git
     # provenance reads without weakening safe.directory globally.
-    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_COUNT=2
     export GIT_CONFIG_KEY_0=safe.directory
     export GIT_CONFIG_VALUE_0="${autolithSystem}"
+    export GIT_CONFIG_KEY_1=safe.directory
+    export GIT_CONFIG_VALUE_1="${autolithSystem}/.git"
     export GIT_OPTIONAL_LOCKS=0
 
     # Keep Nix-managed image and ASDF state separate from source installs while
