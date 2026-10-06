@@ -263,3 +263,6 @@ Autolith is ISC licensed. See [[file:LICENSE][LICENSE]].
 - [[https://github.com/kleisli-io/kli][kli]]
 - [[https://pricklypear.rocks/][pricklypear]]
 - [[https://github.com/DeadMeme5441/fractal-engine][fractal-engine]]
+- [[https://github.com/sm-th/oh-my-lisp][oh-my-lisp]]
+- [[https://github.com/ghuntley/jiti][jiti]]
+- [[https://github.com/1hachem/lisptc][lisptc]]
