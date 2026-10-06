@@ -374,8 +374,9 @@ configurations read; launchers under test keep their own core selection."
 (defun check--run-recovery (&key source-root temporary-root quicklisp-setup jobs timeout)
   "Run the pristine probe, listing, and fallback checks with bounded processes."
   (let* ((data-root (autolith-application-root :data))
-         (core (merge-pathnames "recovery/autolith-recovery.core" data-root))
-         (manifest-path (merge-pathnames "recovery/manifest.sexp" data-root))
+         (core (pathname (or (uiop:getenv "AUTOLITH_RECOVERY_CORE")
+                             (merge-pathnames "recovery/autolith-recovery.core" data-root))))
+         (manifest-path (merge-pathnames "manifest.sexp" core))
          (temporary-home (merge-pathnames "home/" temporary-root))
          (command (list (or (uiop:getenv "AUTOLITH_SBCL") "sbcl")
                         "--noinform" "--core" (namestring core)

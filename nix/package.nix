@@ -781,6 +781,8 @@ let
       "$stage/recovery/autolith-recovery.core"
     "$AUTOLITH_SBCL" --script "${autolithSystem}/script/build-active.lisp" \
       "$stage/active/autolith-active.core"
+    "$AUTOLITH_SBCL" --script "${autolithSystem}/script/relocate-image-manifests.lisp" \
+      "$stage" "$final"
     printf '%s\n' "$expected_identity" > "$stage/identity"
     image_set_valid "$stage"
     chmod u+w "$stage/active/autolith-active.core" \

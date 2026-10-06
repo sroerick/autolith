@@ -791,9 +791,16 @@
                            "an authorized shell command runs inside the sandbox")
                           (test-assert (probe-file inside)
                                        "the command sandbox permits workspace writes")
-                          (test-assert
-                           (not (probe-file outside))
-                           "the command sandbox rejects writes outside the workspace"))
+                          (let* ((home (platform-truename *platform* (user-homedir-pathname)))
+                                 (temporary-home-p
+                                   (and (test-fixture-available-p *platform* ':posix-shell)
+                                        (or (uiop:subpathp home (platform-truename *platform* #p"/tmp/"))
+                                            (uiop:subpathp
+                                             home
+                                             (platform-truename *platform* (uiop:temporary-directory)))))))
+                            (test-assert
+                             (eq (not (null (probe-file outside))) (not (null temporary-home-p)))
+                             "the sandbox permits temporary roots and rejects other host writes")))
                         (test-withheld ':command-sandbox
                                        "sandboxed shell commands"))
                  (when (probe-file outside)

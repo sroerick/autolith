@@ -2947,8 +2947,10 @@ esac
       (let* ((source-directory (symbol-function 'asdf:system-source-directory))
              (source-root (asdf:system-source-directory :autolith))
              (library-root (merge-pathnames "sandbox-library/" root))
-             (helper (merge-pathnames "build/cl-exec-sandbox-helper" library-root)))
+             (helper (merge-pathnames "build/cl-exec-sandbox-helper" library-root))
+             (process-group (merge-pathnames "build/cl-exec-sandbox-process-group" library-root)))
         (release-script-tests--write-file helper "fixture helper")
+        (release-script-tests--write-file process-group "fixture process-group helper")
         (test-call-with-function-replacements
          (list
           (list 'asdf:system-source-directory
@@ -2961,24 +2963,20 @@ esac
             (equal
              (platform-truename *platform* (release-archive--sandbox-helper source-root))
              (platform-truename *platform* helper))
-            "sandbox helper lookup uses the locked ASDF dependency"))))
+            "sandbox helper lookup uses the locked ASDF dependency")
+           (test-assert
+            (equal
+             (platform-truename *platform* (release-archive--process-group-helper source-root))
+             (platform-truename *platform* process-group))
+            "process-group helper lookup uses the locked ASDF dependency"))))
       (test-assert (null (release-archive--process-group-helper missing))
                    "process-group helper lookup is silent for an unrelated source root")
-      (test-assert
-       (equal
-        (truename (release-archive--process-group-helper
-                   (asdf:system-source-directory :autolith)))
-        (truename
-         (merge-pathnames
-          "build/cl-exec-sandbox-process-group"
-          (asdf:system-source-directory :cl-exec-sandbox))))
-       "process-group helper lookup uses the locked ASDF dependency")
       (with-test-environment
           (("AUTOLITH_RELEASE_PROCESS_GROUP_HELPER"
             (namestring (merge-pathnames "release-record" root))))
         (test-assert
-         (equal (truename (release-archive--process-group-helper missing))
-                (truename (merge-pathnames "release-record" root)))
+         (equal (platform-truename *platform* (release-archive--process-group-helper missing))
+                (platform-truename *platform* (merge-pathnames "release-record" root)))
          "process-group helper lookup honours its environment override")))
   (let* ((bin (merge-pathnames "sha256-only/" root))
          (empty (merge-pathnames "no-digest/" root))
@@ -3459,6 +3457,74 @@ esac
                    (not (find #\Return model))))
             models)
      "models emits one plain identifier per line"))
+  nil)
+
+(-> test-image-manifest-relocation () null)
+(defun test-image-manifest-relocation ()
+  "Verify published core paths, preserved metadata, and prepublication validation."
+  (with-test-configuration (configuration)
+    (let* ((root (test-configuration-root configuration))
+           (stage (merge-pathnames "stage/" root))
+           (destination (merge-pathnames "published/" root))
+           (active (merge-pathnames "active/manifest.sexp" stage))
+           (recovery (merge-pathnames "recovery/manifest.sexp" stage))
+           (active-record
+             (list ':sbcl-generations-image-manifest :version 1
+                   :core (namestring (merge-pathnames "active/autolith-active.core" stage))
+                   :source '(:commit "fixture" :files ("a.lisp" "b.lisp"))))
+           (recovery-record
+             (list ':recovery-image :version 2
+                   :core (namestring (merge-pathnames "recovery/autolith-recovery.core" stage))
+                   :implementation "SBCL" :source '(:commit "fixture")))
+           (command
+             (list (lisp-worker-sbcl-command) "--noinform" "--no-sysinit" "--no-userinit"
+                   "--disable-debugger" "--script"
+                   (namestring (asdf:system-relative-pathname
+                                :autolith "script/relocate-image-manifests.lisp"))
+                   (namestring stage) (namestring destination))))
+      (labels ((write-record (pathname record)
+                 "Replace PATHNAME with a readable fixture RECORD."
+                 (when (probe-file pathname)
+                   (delete-file pathname))
+                 (release-script-tests--write-file
+                  pathname (with-standard-io-syntax (prin1-to-string record))))
+
+               (run ()
+                 "Run the publication script and return its status."
+                 (nth-value 2 (uiop:run-program command :output ':string
+                                                       :error-output ':string
+                                                       :ignore-error-status t))))
+        (dolist (invalid (list (cons ':wrong-tag (rest recovery-record))
+                              (list ':recovery-image :version 99 :core "wrong.core")
+                              (list ':recovery-image :version 2 :core "wrong.core")))
+          (write-record active active-record)
+          (write-record recovery invalid)
+          (test-assert (not (zerop (run))) "invalid staged manifests fail publication")
+          (test-assert
+           (equal active-record (read-one-form (uiop:read-file-string active) :read-eval nil))
+           "validate both manifests before changing either"))
+        (dolist (invalid (list "(:recovery-image :version 2) (:extra)"
+                              "#.(error \"Reader evaluation is forbidden\")"))
+          (write-record active active-record)
+          (release-script-tests--write-file recovery invalid)
+          (test-assert (not (zerop (run))) "reject multiple forms and reader evaluation")
+          (test-assert
+           (equal active-record (read-one-form (uiop:read-file-string active) :read-eval nil))
+           "invalid manifest syntax fails before changing paths"))
+        (write-record active active-record)
+        (write-record recovery recovery-record)
+        (dolist (pathname (list active recovery))
+          (release-script-tests--chmod "444" pathname))
+        (test-assert (zerop (run)) "replace read-only manifests before directory publication")
+        (loop for pathname in (list active recovery)
+              for original in (list active-record recovery-record)
+              for relative in '("active/autolith-active.core" "recovery/autolith-recovery.core")
+              for expected = (copy-tree original)
+              do (setf (getf (rest expected) :core)
+                       (namestring (merge-pathnames relative destination)))
+                 (test-assert
+                  (equal expected (read-one-form (uiop:read-file-string pathname) :read-eval nil))
+                  "publish the final core path and preserve all other manifest fields")))))
   nil)
 
 (-> test-release-scripts () null)

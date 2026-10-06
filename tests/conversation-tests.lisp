@@ -1365,7 +1365,7 @@
                       ;; Share compiled files, not the isolated child's source registry.
                       (format nil "XDG_CACHE_HOME=~A"
                               (namestring (uiop:xdg-cache-home)))
-                      "CL_SOURCE_REGISTRY=(:source-registry :ignore-inherited-configuration)"))
+                      "CL_SOURCE_REGISTRY="))
              (test-assert
               (zerop status)
               (format nil

@@ -224,9 +224,9 @@
                           "(:request :id 7 :operation :source :arguments (:name ~
                            \"CL:MAPCAR\" :kind \"function\"))~%"))
                (uiop:run-program
-                (append (list "env"
-                              "-u"
-                              "AUTOLITH_SBCL_SOURCE_ROOT")
+                (append (list "env")
+                        (unless (non-empty-string-p (uiop:getenv "AUTOLITH_NIX_SOURCE_ROOT"))
+                          (list "-u" "AUTOLITH_SBCL_SOURCE_ROOT"))
                         (test-active-core-environment)
                         (list (namestring launcher)
                               "--worker"))
