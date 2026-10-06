@@ -32,6 +32,50 @@
      "Anthropic treats its overload status as retryable"))
   nil)
 
+(-> anthropic-provider-test--tool-schemas () null)
+(defun anthropic-provider-test--tool-schemas ()
+  "Project the default tool registry for Messages and enforce search arguments locally."
+  (with-test-configuration (configuration)
+    (setf (config :model configuration) "claude-haiku-4-5-20251001")
+    (let* ((provider (anthropic-provider-create configuration))
+           (registry (make-default-tool-registry :configuration configuration))
+           (conversation (conversation-create configuration))
+           (search-tool (tool-registry-find registry "search" "content"))
+           (canonical (json-encode (tool-parameters search-tool)))
+           (context (make-instance 'tool-context
+                                   :configuration configuration
+                                   :conversation conversation
+                                   :registry registry
+                                   :worker nil))
+           (request (json-decode
+                     (json-encode
+                      (provider-request-object
+                       provider conversation (tool-registry-provider-schemas registry)))))
+           (tools (json-get request "tools")))
+      (test-assert
+       (and (plusp (length tools))
+            (every (lambda (tool)
+                     (let ((schema (json-get tool "input_schema")))
+                       (and (json-string= (json-get schema "type") "object")
+                            (notany (lambda (keyword)
+                                      (nth-value 1 (gethash keyword schema)))
+                                    '("oneOf" "allOf" "anyOf")))))
+                   tools))
+       "the complete default toolset has Anthropic-compatible root schemas")
+      (test-assert
+       (and (gethash "oneOf" (tool-parameters search-tool))
+            (string= canonical (json-encode (tool-parameters search-tool))))
+       "search retains its canonical mutually exclusive argument schema")
+      (dolist (arguments '("{}" "{\"query\":\"needle\",\"patterns\":[\"needle\"]}"))
+        (let ((result (tool-registry-execute-call
+                       registry
+                       (json-object "namespace" "search" "name" "content"
+                                    "arguments" arguments)
+                       context)))
+          (test-assert (not (tool-result-success-p result))
+                       "dispatch rejects neither or both search inputs after wire projection")))))
+  nil)
+
 (-> anthropic-provider-test--credential-source () null)
 (defun anthropic-provider-test--credential-source ()
   "Test Anthropic credential precedence at the provider boundary."

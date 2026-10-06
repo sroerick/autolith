@@ -274,6 +274,7 @@
 
 (define-test-suite anthropic-provider
   anthropic-provider-test--selection
+  anthropic-provider-test--tool-schemas
   anthropic-provider-test--credential-source
   anthropic-provider-test--ephemeral-cache-boundary
   anthropic-provider-test--inherited-reference-order
