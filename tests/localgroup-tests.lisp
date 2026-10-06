@@ -417,6 +417,254 @@
                                              ':ignore)))
   nil)
 
+(-> test-localgroup-checkpoint-reconnect-transition () null)
+(defun test-localgroup-checkpoint-reconnect-transition ()
+  "Test repeated checkpoint reconnects over real controller and observer sockets."
+  (with-test-configuration (configuration root)
+    (let* ((relay (localgroup-terminal-create nil))
+           (application (make-instance 'application
+                                       :configuration configuration
+                                       :conversation (conversation-create configuration)
+                                       :ui (terminal-ui-create :terminal relay)))
+           (controller (make-instance 'application-input-controller
+                                      :application application :main-thread (current-thread)))
+           (outputs (list (make-string-output-stream) (make-string-output-stream)))
+           (threads nil))
+      (setf (application-input-controller application) controller)
+      (unwind-protect
+           (test-call-with-function-replacements
+            (list (list 'stream-terminal-create
+                        (lambda (&rest arguments)
+                          (declare (ignore arguments))
+                          (make-instance 'recording-terminal :columns 80)))
+                  (list 'terminal--terminal-mode-or-nil (lambda (terminal) (declare (ignore terminal)) t))
+                  (list 'terminal-input-ready-p (lambda (terminal) (declare (ignore terminal)) nil))
+                  (list 'platform-watch-terminal-resize
+                        (lambda (&rest arguments) (declare (ignore arguments)) nil))
+                  (list 'application-sync-window-title
+                        (lambda (application) (declare (ignore application)) nil)))
+            (lambda ()
+              (configuration-ensure-directories configuration)
+              (terminal-start relay)
+              (let* ((session (localgroup-start application))
+                     (pathname (image-daemon:daemon-runtime-registry-pathname session))
+                     (entry (cons pathname (localgroup--registry-record session))))
+                (loop for mode in '(:control :read-only)
+                      for output in outputs
+                      do (let ((client-mode mode)
+                               (client-output output))
+                           (push (make-thread
+                                  (lambda ()
+                                    (let ((*standard-output* client-output))
+                                      (localgroup-attach-record configuration entry client-mode)))
+                                  :name "Checkpoint test client")
+                                 threads)))
+                (dotimes (iteration 2)
+                  (test-assert
+                   (task-tests--wait-until
+                    (lambda ()
+                      (with-lock-held ((image-daemon:relay-lock relay))
+                        (and (image-daemon:relay-controller relay)
+                             (= (length (image-daemon:relay-observers relay)) 1))))
+                    10)
+                   "controller and observer attach before each checkpoint")
+                  (let ((image-daemon:*relay-history-character-limit* 8))
+                    (terminal--write relay (format nil "old-~D" iteration))
+                    (test-assert
+                     (eq (handler-case
+                             (application-call-with-localgroup-quiesced
+                              application
+                              (lambda ()
+                                (test-assert (null (application-localgroup-session application))
+                                             "the endpoint is absent in the saver context")
+                                (terminal--write relay (format nil "gap-~D" iteration))
+                                (sleep 0.15)
+                                (when (= iteration 1)
+                                  (error 'localgroup-error :message "Synthetic save failure."
+                                                          :operation ':checkpoint))
+                                ':saved))
+                           (localgroup-error () ':failed))
+                         (if (zerop iteration) ':saved ':failed))
+                     "checkpoint success and failure restore the parent endpoint"))
+                  (test-assert
+                   (task-tests--wait-until
+                    (lambda ()
+                      (with-lock-held ((image-daemon:relay-lock relay))
+                        (and (image-daemon:relay-controller relay)
+                             (= (length (image-daemon:relay-observers relay)) 1))))
+                    10)
+                   "both clients reconnect to the parent endpoint")
+                  (setf session (application-localgroup-session application))
+                  (test-assert
+                   (equal (localgroup--wait-for-checkpoint-entry
+                           entry (localgroup-session-checkpoint-reconnect-id session))
+                          (cons pathname (localgroup--registry-record session)))
+                   "the persistent transition accepts another authenticated observer")
+                  (terminal--write relay (format nil "new-~D" iteration)))
+                (image-daemon:relay-finish relay :status 0 :message "done")
+                (dolist (thread threads)
+                  (test-assert
+                   (equal (sb-thread:join-thread thread :timeout 10 :default ':timeout)
+                          '(:status 0 :message "done"))
+                   "the reconnected client receives the normal application exit"))
+                (setf threads nil)
+                (dolist (output outputs)
+                  (let ((text (get-output-stream-string output)))
+                    (dolist (marker '("old-0" "gap-0" "new-0" "old-1" "gap-1" "new-1"))
+                      (let ((position (search marker text)))
+                        (test-assert
+                         (and position (null (search marker text :start2 (1+ position))))
+                         "each client receives queued, reconnect and live output exactly once")))))
+                (localgroup-stop application)
+                (test-assert (null (image-daemon:daemon-registry-read pathname))
+                             "stopping a checkpoint endpoint removes its extended registry record"))))
+        (when threads
+          (image-daemon:relay-finish relay :status 1)
+          (dolist (thread threads) (image-daemon:daemon-stop-thread thread)))
+        (localgroup-stop application)
+        (application-input-controller-stop controller)
+        (terminal-ui-stop (application-ui application))
+        (application-release-conversation-lease application)
+        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
+  nil)
+
+(-> test-localgroup-checkpoint-reconnect-boundaries () null)
+(defun test-localgroup-checkpoint-reconnect-boundaries ()
+  "Test bounded identity/authentication rejection and ordinary attachment endings."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (application controller)
+        (test-localgroup--application configuration)
+      (unwind-protect
+           (let* ((session (localgroup-start application :checkpoint-reconnect-id "expected"))
+                  (record (localgroup--registry-record session))
+                  (entry (cons (image-daemon:daemon-runtime-registry-pathname session) record))
+                  (*localgroup-handoff-start-timeout-seconds* 0.1))
+             (dolist (change (list (list :checkpoint-reconnect-id "stale")
+                                  (list :session-id "different")
+                                  (list :token "different")
+                                  (list :created-at (1+ (image-daemon:daemon-runtime-created-at session)))
+                                  (list :missing nil)
+                                  (list :authentication "invalid")))
+               (let ((candidate (copy-list record))
+                     (old-entry entry))
+                 (case (first change)
+                   (:missing
+                    (setf candidate nil))
+                   (:authentication
+                    (setf (getf (rest candidate) :token) (second change)
+                          old-entry (cons (first entry) (copy-list candidate))))
+                   (otherwise
+                    (setf (getf (rest candidate) (first change)) (second change))))
+                 (test-call-with-function-replacements
+                  (list (list 'image-daemon:daemon-registry-read
+                              (lambda (pathname) (declare (ignore pathname)) candidate)))
+                  (lambda ()
+                    (let ((start (get-internal-real-time)))
+                      (test-assert
+                       (handler-case (progn (localgroup--wait-for-checkpoint-entry old-entry "expected") nil)
+                         (localgroup-error () t))
+                       "a missing, mismatched or unauthenticated endpoint is rejected")
+                      (test-assert (< (/ (- (get-internal-real-time) start)
+                                        internal-time-units-per-second)
+                                     1)
+                                   "endpoint rejection has a bounded wait")))))))
+        (localgroup-stop application)
+        (application-input-controller-stop controller)
+        (application-release-conversation-lease application))))
+  (test-call-with-function-replacements
+   (list (list 'terminal-input-ready-p (lambda (terminal) (declare (ignore terminal)) nil))
+         (list 'localgroup--wait-for-checkpoint-entry
+               (lambda (&rest arguments) (declare (ignore arguments))
+                 (error "An ordinary attachment end must not reconnect"))))
+   (lambda ()
+     (dolist (packet '(nil (:detached) (:revoked) (:exit :status 76 :message "restart")))
+       (let* ((wire (if packet (image-daemon:daemon-packet-string packet) ""))
+              (output (make-string-output-stream))
+              (*standard-output* output)
+              (socket (make-instance 'sb-bsd-sockets:inet-socket :type ':stream :protocol ':tcp))
+              (result (unwind-protect
+                           (localgroup--attach-terminal-loop
+                            (make-string-input-stream wire)
+                            (make-instance 'recording-terminal :columns 80) ':control :socket socket)
+                        (sb-bsd-sockets:socket-close socket))))
+         (test-assert (equal result (when (eq (first packet) ':exit) (rest packet)))
+                      "EOF, detach, revocation and application exit end reception directly")
+         (test-call-with-function-replacements
+          (list (list 'localgroup--attach-record-once
+                      (lambda (&rest arguments) (declare (ignore arguments)) result)))
+          (lambda ()
+            (test-assert (equal (localgroup-attach-record nil '("unused") ':control) result)
+                         "the outer attachment loop does not wait after ordinary endings")))))))
+  nil)
+
+(-> test-localgroup-checkpoint-source-precheck-order () null)
+(defun test-localgroup-checkpoint-source-precheck-order ()
+  "Test a source-validation failure leaves the attached client connected."
+  (with-test-configuration (configuration root)
+    (let* ((application nil)
+           (controller nil)
+           (session nil)
+           (socket nil)
+           (stream nil)
+           (quiesce-count 0))
+      (unwind-protect
+           (progn
+             (configuration-ensure-directories configuration)
+             (multiple-value-setq (application controller)
+               (test-localgroup--application configuration))
+              (setf (application-ui application)
+                    (terminal-ui-create :terminal (localgroup-terminal-create nil)))
+             (terminal-ui-start (application-ui application))
+             (setf session (localgroup-start application))
+             (multiple-value-setq (socket stream)
+               (test-localgroup--attach session ':control))
+             (let ((*checkpoint-thread-quiescer*
+                     (lambda (function)
+                       (declare (ignore function))
+                       (incf quiesce-count)
+                       (error "The quiescer must not run after precheck failure")))
+                   (backend (checkpoint-backend-create configuration nil)))
+               (test-assert
+                (handler-case
+                    (test-call-with-function-replacements
+                     (list
+                      (list
+                       'checkpoint--source-snapshot
+                       (lambda (active-configuration)
+                         (declare (ignore active-configuration))
+                         (error 'checkpoint-error
+                                :message "Synthetic source check failure."
+                                :stage ':validation
+                                :pathname nil))))
+                     (lambda ()
+                       (checkpoint-create backend)))
+                  (checkpoint-error (condition)
+                    (and (eq (checkpoint-error-stage condition) ':validation)
+                         (search "Synthetic source check failure."
+                                 (autolith-error-message condition)))))
+                "source-check failure is reported before session quiescence")
+               (test-assert (zerop quiesce-count)
+                "source-check failure does not invoke session quiescence")
+               (test-assert (eq (application-localgroup-session application) session)
+                "source-check failure preserves the active localgroup session"))
+              (terminal--write (localgroup--terminal session) "after-source-failure")
+              (loop for response = (test-localgroup--read-packet stream)
+                    when (and (eq (first response) ':output)
+                              (search "after-source-failure" (second response)))
+                      do (test-assert t "the original socket receives output after failure")
+                         (return)))
+        (when stream (ignore-errors (close stream)))
+        (when (and socket (null stream))
+          (ignore-errors (sb-bsd-sockets:socket-close socket)))
+        (when application (localgroup-stop application))
+        (when controller (application-input-controller-stop controller))
+        (when application (ignore-errors (terminal-ui-stop (application-ui application))))
+        (when application (application-release-conversation-lease application))
+        (platform-delete-directory-tree *platform* root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
+  nil)
+
 (-> test-localgroup-detached-terminal-lifecycle () null)
 
 (defun test-localgroup-detached-terminal-lifecycle ()

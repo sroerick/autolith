@@ -472,21 +472,30 @@ HEADER-P renders field labels rather than status values."
   nil)
 
 (defun localgroup--attach-terminal-loop (socket-stream terminal mode &key socket)
-  "Run the attachment loop, restoring client screen ownership even after connection loss.
-
-Return the session's exit plist when it ended the attachment while exiting."
-  (let ((output (make-mode-tracking-output-stream *standard-output*)))
+  "Relay terminal I/O; return an application exit or explicit checkpoint transition."
+  (let ((output (make-mode-tracking-output-stream *standard-output*))
+        (reconnect nil))
     (unwind-protect
-         (image-daemon:daemon-attach-client-run
-          socket-stream :mode mode :socket socket :output-stream output
-          :input-ready-function (lambda () (terminal-input-ready-p terminal))
-          :read-event-function (lambda () (terminal-read-event terminal))
-          :resize-function
-          (lambda ()
-            (when *terminal-resize-pending-p*
-              (setf *terminal-resize-pending-p* nil)
-              (multiple-value-bind (rows columns) (terminal-current-size)
-                (list :rows rows :columns columns :styled-p (terminal-environment-styling-p))))))
+         (let ((exit
+                 (image-daemon:daemon-attach-client-run
+                  socket-stream :mode mode :socket socket :output-stream output
+                  :input-ready-function (lambda () (terminal-input-ready-p terminal))
+                  :read-event-function (lambda () (terminal-read-event terminal))
+                  :packet-function
+                  (lambda (packet)
+                    (when (and (eq (first packet) ':checkpoint-reconnect)
+                               (non-empty-string-p (getf (rest packet) :id))
+                               (typep (getf (rest packet) :history-position) '(integer 0)))
+                      (setf reconnect packet)
+                      t))
+                  :resize-function
+                  (lambda ()
+                    (when *terminal-resize-pending-p*
+                      (setf *terminal-resize-pending-p* nil)
+                      (multiple-value-bind (rows columns) (terminal-current-size)
+                        (list :rows rows :columns columns
+                              :styled-p (terminal-environment-styling-p))))))))
+           (or reconnect exit))
       (mode-tracking-output-stream-restore output))))
 
 (-> localgroup--wait-for-handoff-entry
@@ -517,11 +526,51 @@ Return the session's exit plist when it ended the attachment while exiting."
               ':attach :session-id session-id))
      (sleep 0.05))))
 
-(defun localgroup-attach-record (configuration entry mode)
-  "Attach the current interactive terminal to endpoint ENTRY with MODE.
+(-> localgroup--wait-for-checkpoint-entry (cons string) cons)
+(defun localgroup--wait-for-checkpoint-entry (entry reconnect-id)
+  "Wait boundedly for ENTRY's authenticated endpoint for RECONNECT-ID."
+  (let* ((pathname (first entry))
+         (old-record (rest entry))
+         (session-id (localgroup--record-session-id old-record))
+         (token (localgroup--record-token old-record))
+         (deadline (+ (get-internal-real-time)
+                      (* *localgroup-handoff-start-timeout-seconds*
+                         internal-time-units-per-second))))
+    (loop
+      (let ((record (image-daemon:daemon-registry-read pathname)))
+        (when (and record
+                   (equal (getf (rest record) :checkpoint-reconnect-id) reconnect-id)
+                   (string= (localgroup--record-session-id record) session-id)
+                   (string= (localgroup--record-token record) token)
+                   (= (getf (rest record) :created-at) (getf (rest old-record) :created-at))
+                   (handler-case
+                       (let ((image-daemon:*daemon-connect-timeout-seconds*
+                               (min image-daemon:*daemon-connect-timeout-seconds*
+                                    (max 0.001 (/ (- deadline (get-internal-real-time))
+                                                  (* 2 internal-time-units-per-second))))))
+                         (eq (first (daemon-call (localgroup--record-port record) token ':status)) ':ok))
+                     (error () nil)))
+          (return (cons pathname record))))
+      (when (>= (get-internal-real-time) deadline)
+        (error 'localgroup-error :message "The checkpoint endpoint did not become ready."
+                                :operation ':attach :session-id session-id))
+      (sleep 0.05))))
 
-Return the session's (:STATUS STATUS :MESSAGE MESSAGE) exit when it ended the
-attachment by exiting toward its launcher, and NIL after a detach or disconnect."
+(defun localgroup-attach-record (configuration entry mode)
+  "Attach the terminal, following explicit checkpoint transitions in the same mode.
+
+Return an application exit plist, or NIL after a detach or connection loss."
+  (let ((history-position nil))
+    (loop
+      (let ((result (localgroup--attach-record-once configuration entry mode
+                                                   :history-position history-position)))
+        (unless (eq (first result) ':checkpoint-reconnect)
+          (return result))
+        (setf entry (localgroup--wait-for-checkpoint-entry entry (getf (rest result) :id))
+              history-position (getf (rest result) :history-position))))))
+
+(defun localgroup--attach-record-once (configuration entry mode &key history-position)
+  "Run one attachment and release terminal ownership before any reconnect."
   (let* ((record (rest entry))
          (socket nil)
          (socket-stream nil)
@@ -563,7 +612,7 @@ attachment by exiting toward its launcher, and NIL after a detach or disconnect.
                (close socket-stream)
                (setf socket-stream nil
                      socket nil)
-               (return-from localgroup-attach-record
+               (return-from localgroup--attach-record-once
                  (localgroup-attach-record configuration
                                            (localgroup--wait-for-handoff-entry
                                             configuration session-id token old-pid)
@@ -571,7 +620,12 @@ attachment by exiting toward its launcher, and NIL after a detach or disconnect.
             ((and response (eq (first response) ':attached))
              (let ((history (getf (rest response) :history)))
                (when (stringp history)
-                 (write-string history *standard-output*)
+                 (write-string history *standard-output*
+                               :start (if history-position
+                                          (min (length history)
+                                               (max 0 (- history-position
+                                                         (getf (rest response) :history-start 0))))
+                                          0))
                  (finish-output *standard-output*))))
             (t
              (error 'localgroup-error :message

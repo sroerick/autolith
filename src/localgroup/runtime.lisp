@@ -13,6 +13,12 @@
     :accessor localgroup-session-paused-p
     :type boolean
     :documentation "Whether queued primary work must wait for explicit input.")
+   (checkpoint-reconnect-id
+    :initarg :checkpoint-reconnect-id
+    :initform nil
+    :accessor localgroup-session-checkpoint-reconnect-id
+    :type (option string)
+    :documentation "The checkpoint transition that created this endpoint.")
    (handoff-mode
     :initform nil
     :accessor localgroup-session-handoff-mode
@@ -54,8 +60,11 @@
 
 (-> localgroup--registry-record (localgroup-session) list)
 (defun localgroup--registry-record (session)
-  "Return SESSION's private endpoint discovery record."
-  (image-daemon:daemon-runtime-record session))
+  "Return SESSION's authenticated discovery record."
+  (append (image-daemon:daemon-runtime-record session)
+          (when (localgroup-session-checkpoint-reconnect-id session)
+            (list :checkpoint-reconnect-id
+                  (localgroup-session-checkpoint-reconnect-id session)))))
 
 (defun localgroup--publish-registry (session)
   "Publish SESSION's authenticated discovery record."
@@ -430,9 +439,11 @@ forced shutdown does; the conversation stays resumable."
       (return-from localgroup--serve-attachment nil))
     (let ((attachment (image-daemon:attachment-create socket stream mode)))
       (labels ((attach ()
-                 (image-daemon:relay-attach
-                  terminal attachment :rows rows :columns columns :styled-p styled-p
-                  :session-id (image-daemon:daemon-runtime-identifier session))))
+                 (with-lock-held ((image-daemon:daemon-runtime-lock session))
+                   (unless (image-daemon:daemon-runtime-stopping-p session)
+                     (image-daemon:relay-attach
+                      terminal attachment :rows rows :columns columns :styled-p styled-p
+                      :session-id (image-daemon:daemon-runtime-identifier session))))))
         (unwind-protect
              (let ((attached-p
                      (if (eq mode ':read-only)
@@ -559,7 +570,7 @@ already disconnected costs nothing."
              (format nil "Unknown localgroup operation ~S." operation))))))
 
 (defun localgroup-start
-    (application &key token created-at detached-explicitly-p)
+    (application &key token created-at detached-explicitly-p checkpoint-reconnect-id)
   "Publish APPLICATION's active conversation with its product startup choreography."
   (let* ((restart-p (not (null token)))
          (startup-values (and *localgroup-startup-record* (rest *localgroup-startup-record*)))
@@ -578,7 +589,8 @@ already disconnected costs nothing."
                   :initargs (list :application application
                                   :detached-explicitly-p
                                   (or detached-explicitly-p
-                                      (localgroup--initially-detached-p startup-values)))
+                                      (localgroup--initially-detached-p startup-values))
+                                  :checkpoint-reconnect-id checkpoint-reconnect-id)
                   :request-function #'localgroup--handle-request
                   :error-function (lambda (condition)
                                     (format *error-output*
@@ -595,6 +607,7 @@ already disconnected costs nothing."
                      (application-input-controller-condition-variable controller)))))))
            (unless restart-p (localgroup-handoff-assert-startup-active))
            (image-daemon:daemon-runtime-start session)
+           (localgroup--publish-registry session)
            (setf completed-p t)
            (when (and (not restart-p) (localgroup--attach-expected-p startup-values))
              (setf (localgroup-session-attach-watchdog-thread session)
@@ -620,5 +633,6 @@ already disconnected costs nothing."
       (with-lock-held ((image-daemon:daemon-runtime-lock session))
         (setf (image-daemon:daemon-runtime-stopping-p session) t))
       (image-daemon:daemon-stop-thread (localgroup-session-attach-watchdog-thread session))
-      (image-daemon:daemon-runtime-stop session)))
+      (image-daemon:daemon-runtime-stop session)
+      (localgroup--delete-owned-registry session)))
   nil)

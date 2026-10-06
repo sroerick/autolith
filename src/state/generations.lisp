@@ -447,11 +447,6 @@ quiescence, metadata, and probe hooks."
        :probe-runner (generation-core-probe-runner-create)
        :around-function
        (lambda (thunk)
-         (when *credentials-in-request-scope*
-           (error 'checkpoint-error
-                  :message "A checkpoint cannot run inside a credential request scope."
-                  :stage ':validation
-                  :pathname nil))
          (if *checkpoint-thread-quiescer*
              (let ((quiescer *checkpoint-thread-quiescer*))
                (funcall quiescer
@@ -461,6 +456,11 @@ quiescence, metadata, and probe hooks."
              (funcall thunk)))
        :precheck-function
        (lambda ()
+         (when *credentials-in-request-scope*
+           (error 'checkpoint-error
+                  :message "A checkpoint cannot run inside a credential request scope."
+                  :stage ':validation
+                  :pathname nil))
          (checkpoint--source-snapshot configuration))
        :fork-guard-function
        (lambda (thunk)

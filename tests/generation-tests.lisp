@@ -75,6 +75,62 @@
     (write-byte 42 stream))
   (generation-core-pathname generation))
 
+(-> test-checkpoint-source-precheck-order () null)
+(defun test-checkpoint-source-precheck-order ()
+  "Test source validation precedes quiescence and fork preparation uses it."
+  (with-platform-capability (':forked-image-saver "checkpoint source validation")
+    (with-test-configuration (configuration)
+      (let ((quiesced-p nil)
+            (prechecked-p nil)
+            (precheck-quiesced-p nil)
+            (validate-quiesced-p nil)
+            (fork-quiesced-p nil)
+            (quiesce-count 0))
+        (let ((*checkpoint-thread-quiescer*
+                (lambda (thunk)
+                  (incf quiesce-count)
+                  (setf quiesced-p t)
+                  (unwind-protect (funcall thunk)
+                    (setf quiesced-p nil)))))
+          (test-call-with-function-replacements
+           (list
+            (list 'checkpoint--source-snapshot
+                  (lambda (active-configuration)
+                    (declare (ignore active-configuration))
+                    (setf prechecked-p t
+                          precheck-quiesced-p quiesced-p)
+                    "test-source-commit"))
+            (list 'checkpoint--revalidate-source
+                  (lambda (active-configuration source-commit)
+                    (declare (ignore active-configuration source-commit))
+                    (setf validate-quiesced-p quiesced-p)))
+            (list 'checkpoint-single-threaded-p (lambda () t))
+            (list 'checkpoint--call-with-fork-guard
+                  (lambda (worker thunk)
+                    (declare (ignore worker))
+                    (funcall thunk)))
+            (list 'sbcl-generations::checkpoint--fork
+                  (lambda (generation)
+                    (declare (ignore generation))
+                    (setf fork-quiesced-p quiesced-p)
+                    (values nil nil)))
+            (list 'generation--metadata
+                  (lambda (active-configuration identifier &key git-commit mutation-checker)
+                    (declare (ignore active-configuration identifier git-commit mutation-checker))
+                    nil)))
+           (lambda ()
+             (test-assert
+              (handler-case (checkpoint-create (checkpoint-backend-create configuration nil))
+                (checkpoint-error () t))
+              "the synthetic missing coordinator reports checkpoint failure"))))
+        (test-assert (and prechecked-p (not precheck-quiesced-p))
+                     "source validation runs before session quiescence")
+        (test-assert (and validate-quiesced-p fork-quiesced-p)
+                     "source revalidation and fork run inside session quiescence")
+        (test-assert (and (= quiesce-count 1) (not quiesced-p))
+                     "the parent restores its context after failed fork preparation"))))
+  nil)
+
 (-> generation-tests--test-checkpoint-runtime-resume () null)
 (defun generation-tests--test-checkpoint-runtime-resume ()
   "Test failed checkpoint preparation resumes every quiesced tool runtime."

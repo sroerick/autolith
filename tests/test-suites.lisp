@@ -379,6 +379,7 @@
 
 (define-test-suite generation
   test-checkpoint-backend-selection
+  test-checkpoint-source-precheck-order
   test-generation-manifest
   test-crash-capsule-correlation)
 
@@ -576,6 +577,9 @@
   test-localgroup-terminal-restart
   test-localgroup-picker-waits-for-relayed-input
   test-localgroup-remote-detach-never-pauses-reader
+  test-localgroup-checkpoint-source-precheck-order
+  test-localgroup-checkpoint-reconnect-transition
+  test-localgroup-checkpoint-reconnect-boundaries
   test-localgroup-detached-terminal-lifecycle
   test-localgroup-session-exit-relay
   test-localgroup-relay-exit
