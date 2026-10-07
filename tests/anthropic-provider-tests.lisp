@@ -76,6 +76,46 @@
                        "dispatch rejects neither or both search inputs after wire projection")))))
   nil)
 
+(-> anthropic-provider-test--thinking-continuation () null)
+(defun anthropic-provider-test--thinking-continuation ()
+  "Replay signed thinking after durable conversation reload and a user follow-up."
+  (with-test-configuration (configuration)
+    (setf (config :model configuration) "claude-haiku-4-5-20251001")
+    (dolist (thinking '("reasoning text" ""))
+      (let* ((provider (anthropic-provider-create configuration))
+             (conversation (conversation-create configuration))
+             (signed (json-object "type" "thinking"
+                                  "thinking" thinking
+                                  "signature" "fixture-signature"))
+             (redacted (json-object "type" "redacted_thinking"
+                                    "data" "opaque-fixture-payload")))
+        (conversation-append-user-message conversation "First question.")
+        (dolist (part (list signed redacted
+                            (json-object "type" "output_text" "text" "Answer.")))
+          (conversation-append-provider-item
+           conversation
+           (json-object "type" "message" "role" "assistant"
+                        "content" (json-array part))))
+        (conversation-append-user-message conversation "Follow-up question.")
+        (let* ((loaded (conversation-load (conversation-pathname conversation)))
+               (request (json-decode
+                         (json-encode (provider-request-object provider loaded #()))))
+               (messages (json-get request "messages"))
+               (assistant (find "assistant" messages :test #'string=
+                                :key (lambda (message) (json-get message "role"))))
+               (content (json-get assistant "content")))
+          (test-assert
+           (equal (loop for message across messages collect (json-get message "role"))
+                  '("user" "assistant" "user"))
+           "reloaded thinking retains assistant and follow-up message order")
+          (test-assert
+           (and (= (length content) 3)
+                (equalp signed (aref content 0))
+                (equalp redacted (aref content 1))
+                (json-string= (json-get (aref content 2) "type") "text"))
+           "signed and opaque thinking replay unchanged before the assistant text")))))
+  nil)
+
 (-> anthropic-provider-test--credential-source () null)
 (defun anthropic-provider-test--credential-source ()
   "Test Anthropic credential precedence at the provider boundary."
