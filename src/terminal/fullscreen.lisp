@@ -49,6 +49,7 @@ sequence, so it lands in the normal screen where it stays readable."
              (terminal-theme-leave-sequence *terminal-theme*)
              (format nil "~C[0m~C[?7h~C[?25h" #\Escape #\Escape #\Escape)
              (mouse-reporting-disable-sequence)
+             (terminal-keyboard-enhancement-disable-sequence)
              (alternate-screen-leave-sequence)))
            (when epilogue
              (terminal--write-safe-text terminal (format nil "~A~%" epilogue)))
@@ -76,6 +77,7 @@ sequence, so it lands in the normal screen where it stays readable."
               (concatenate
                'string
                (alternate-screen-enter-sequence)
+               (terminal-keyboard-enhancement-enable-sequence)
                (format nil "~C[2J~C[H" #\Escape #\Escape)
                (mouse-reporting-enable-sequence)
                (terminal-theme-enter-sequence *terminal-theme*)))
