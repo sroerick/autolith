@@ -587,6 +587,12 @@
       (when (and execution (not (job-terminal-p execution)))
         (job-cancel execution :reason ':test-cleanup))
       (ignore-errors (lisp-worker-pool-stop-all worker-pool))
+      ;; Pool listeners publish the durable completion record after the
+      ;; execution turns terminal; joining the pools ends that write.
+      (unless (task-orchestrator-close orchestrator)
+        (error 'task-error
+               :message "Task job pools did not stop before test cleanup."
+               :tool-name "task.run"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
