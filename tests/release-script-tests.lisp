@@ -3127,7 +3127,10 @@ esac
                             "tar command starts with a command pathname")
                (when (release-archive--gnu-tar-required-p (software-type))
                  (test-assert
-                  (string= (first command) (namestring (truename gtar)))
+                  (string= (namestring (platform-truename
+                                        *platform*
+                                        (platform-pathname (first command))))
+                           (namestring (platform-truename *platform* gtar)))
                   "tar command uses the discovered GNU tar pathname"))))
           (platform-setenv "PATH" saved)))
     nil)
