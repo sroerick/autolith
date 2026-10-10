@@ -157,10 +157,9 @@
 (-> management-repl-tests--unix-lifecycle () null)
 (defun management-repl-tests--unix-lifecycle ()
   "Drive the Unix management transport through its application lifecycle."
-  (let* ((root (uiop:ensure-directory-pathname
-                (merge-pathnames
-                 (format nil "management-unix-~A/" (make-identifier))
-                 (uiop:temporary-directory))))
+  ;; A short MKDTEMP root keeps the socket path within the 104-byte macOS
+  ;; limit below the long per-user TMPDIR.
+  (let* ((root (test-make-temporary-root))
          (configuration (management-repl-test-configuration root))
          (token "test-management-token")
          (application (make-instance 'application :configuration configuration))
