@@ -96,6 +96,18 @@
     (ensure-directories-exist directory)
     directory))
 
+(-> emacs-test-await-exit (integer real) boolean)
+(defun emacs-test-await-exit (process-id timeout-seconds)
+  "Wait up to TIMEOUT-SECONDS for PROCESS-ID to exit; return T when it has."
+  (let ((deadline (+ (get-internal-real-time)
+                     (* timeout-seconds internal-time-units-per-second))))
+    (loop
+      (unless (platform-process-alive-p *platform* process-id)
+        (return t))
+      (when (>= (get-internal-real-time) deadline)
+        (return nil))
+      (sleep 0.05))))
+
 (-> emacs-test-executable () (option pathname))
 (defun emacs-test-executable ()
   "Return the emacs executable on PATH, or NIL."
@@ -281,7 +293,8 @@
                  (socket (merge-pathnames (format nil "emacs/~A" name) runtime))
                  (file (merge-pathnames "notes.lisp" root))
                  (outside (merge-pathnames "outside.txt" runtime))
-                 (configuration (emacs-test-configuration root socket)))
+                 (configuration (emacs-test-configuration root socket))
+                 (daemon-process-id nil))
             (publish-file file (format nil "(defun greet ()~%  \"hello\")~%"))
             (publish-file outside (format nil "outside~%"))
             (unwind-protect
@@ -292,6 +305,8 @@
                                            (format nil "--daemon=~A" name))
                                      :output nil :error-output nil)
                    (test-assert (probe-file socket) "The Emacs daemon listens on its socket.")
+                   (setf daemon-process-id
+                         (parse-integer (emacs-server-evaluate socket "(emacs-pid)")))
                    (emacs-server-evaluate
                     socket
                     (format nil "(progn (with-current-buffer (find-file-noselect ~S) (goto-char (point-max)) (insert \"; λ unsaved\\n\")) (find-file-noselect ~S) (with-current-buffer (get-buffer-create \"*autolith notes*\") (insert \"scratch\")))"
@@ -364,6 +379,13 @@
                        (test-assert (equal ran "nil")
                                     (format nil "A denied form never reaches Emacs: ~S" ran)))))
               (ignore-errors (emacs-server-evaluate socket "(kill-emacs)" :timeout 2))
+              ;; The exiting daemon unlinks its lock files below RUNTIME, so a
+              ;; deletion that starts first can lose a listed file to it.
+              (when (and daemon-process-id
+                         (not (emacs-test-await-exit daemon-process-id 10)))
+                (error 'emacs-server-error
+                       :message "The test Emacs daemon did not exit before cleanup."
+                       :reason ':timeout))
               (platform-delete-directory-tree *platform* runtime :validate t :if-does-not-exist ':ignore)))))))
 
 
