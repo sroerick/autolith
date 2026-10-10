@@ -66,8 +66,11 @@ return a value json-serialize accepts: a plist, vector, string, number, t,
                                    :timeout timeout)))
            (handler-case
                (progn
+                 ;; Like emacsclient, end every argument with a space; newer
+                 ;; servers reject a request line that does not end in one.
                  (write-string "-eval " stream)
                  (write-string (emacs-server-quote form) stream)
+                 (write-char #\Space stream)
                  (write-char #\Newline stream)
                  (finish-output stream)
                  (emacs-server--read-reply stream))

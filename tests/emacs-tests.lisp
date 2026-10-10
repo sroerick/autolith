@@ -137,8 +137,8 @@
                         (format stream "-emacs-pid 42~%-print \"abc~%-print-nonl &_def\"~%")))
                 (test-assert (equal (emacs-server-evaluate socket "(foo bar)") "\"abc def\"")
                              "Print chunks join and unquote.")))
-             (test-assert (equal request "-eval (foo&_bar)")
-                          "The request is one quoted -eval line.")
+             (test-assert (equal request "-eval (foo&_bar) ")
+                          "The request is one quoted -eval line ending in a space.")
              (join-thread
               (prog1 (emacs-test-serve-once
                       socket
