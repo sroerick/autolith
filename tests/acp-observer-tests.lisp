@@ -220,3 +220,45 @@
                   "coalescing preserves fragment text and order")))
           (agentcomms:connection-close (agentcomms:acp-client-connection client))))))
   nil)
+
+(-> test-acp-observer-skips-empty-message-text () null)
+(defun test-acp-observer-skips-empty-message-text ()
+  "Skip empty deltas while preserving thought batching and nonstreamed final text."
+  (with-test-configuration (configuration)
+    (let* ((service (acp-observer-test-service configuration))
+           (session (make-instance 'acp-session :service service :identifier "empty-text"
+                                   :application (make-instance 'application :configuration configuration)))
+           (observer (make-instance 'acp-observer :session session :turn-sequence 1))
+           (client (make-instance 'acp-observer-test-client)))
+      (multiple-value-bind (server client-channel) (agentcomms:make-acp-channel-pair)
+        (unwind-protect
+             (progn
+               (agentcomms:acp-agent-connect service server)
+               (agentcomms:acp-client-connect client client-channel)
+               (agentcomms:client-initialize client)
+               (agent-observer-text observer "")
+               (agentcomms:agent-client-request service "_sync" (agentcomms:json-object))
+               (test-assert (null (acp-observer-test-client-updates client))
+                            "empty text alone sends no update")
+               ;; Providers stream an empty content delta beside each
+               ;; reasoning delta while the model is still thinking.
+               (agent-observer-reasoning observer "first ")
+               (agent-observer-text observer "")
+               (agent-observer-reasoning observer "thought")
+               (agent-observer-text observer "")
+               (agent-observer-status observer ':assistant-response-persisted
+                                      (list :text "answer"))
+               (agentcomms:agent-client-request service "_sync" (agentcomms:json-object))
+               (let ((updates (reverse (acp-observer-test-client-updates client))))
+                 (test-assert
+                  (equal '(:agent-thought-chunk :agent-message-chunk)
+                         (mapcar #'agentcomms:acp-update-kind updates))
+                  "the final response follows one thought batch")
+                 (test-assert
+                  (equal (list "first thought" "answer")
+                         (mapcar (lambda (update)
+                                   (agentcomms:acp-content-text (agentcomms:json-get update "content")))
+                                 updates))
+                  "empty streamed deltas preserve the nonstreamed final response")))
+          (agentcomms:connection-close (agentcomms:acp-client-connection client))))))
+  nil)

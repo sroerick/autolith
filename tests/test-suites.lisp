@@ -1042,6 +1042,7 @@
   test-acp-observer-forwards-serialized-tool-execution
   test-acp-observer-tool-title-previews
   test-acp-observer-batches-thoughts-before-permission
+  test-acp-observer-skips-empty-message-text
   test-acp-session-wire-new-prompt-replay-close
   test-acp-session-busy-admission-is-owner-safe
   test-acp-session-cancel-blocked-provider-and-reuse

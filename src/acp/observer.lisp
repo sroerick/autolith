@@ -137,7 +137,10 @@
               (list (agentcomms:acp-tool-call-content (agentcomms:acp-text-content output))))))
 
 (defmethod agent-observer-text ((observer acp-observer) text)
-  "Stream assistant text and retain its length for nonstreamed response reconciliation."
+  "Stream assistant text and retain its length for nonstreamed response reconciliation.
+
+Empty text sends nothing: an empty message chunk would split the thought
+fragments that providers interleave with empty content deltas."
   (acp-session-check-cancelled (acp-observer-session observer))
   (when (plusp (length text))
     (with-lock-held ((acp-observer-lock observer))
