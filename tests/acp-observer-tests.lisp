@@ -200,6 +200,9 @@
                (agent-observer-status observer ':provider-request-started nil)
                (agent-observer-reasoning observer "before ")
                (agent-observer-reasoning observer "approval")
+               (agent-observer-reasoning observer "continued ")
+               (agent-observer-text observer "")
+               (agent-observer-reasoning observer "thought")
                (test-assert
                 (acp-observer--approval observer "shell.run" (json-object "command" "pwd") '(:command))
                 "the editor can approve after receiving pending thoughts")
@@ -209,7 +212,8 @@
                          (mapcar #'agentcomms:acp-update-kind updates))
                   "thought batches precede the next message and permission request")
                  (test-assert
-                  (equal (list (format nil "first thought~2%next thought") "answer" "before approval")
+                  (equal (list (format nil "first thought~2%next thought") "answer"
+                               (format nil "before approvalcontinued thought"))
                          (mapcar (lambda (update)
                                    (agentcomms:acp-content-text (agentcomms:json-get update "content")))
                                  updates))
