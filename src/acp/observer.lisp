@@ -139,10 +139,11 @@
 (defmethod agent-observer-text ((observer acp-observer) text)
   "Stream assistant text and retain its length for nonstreamed response reconciliation."
   (acp-session-check-cancelled (acp-observer-session observer))
-  (with-lock-held ((acp-observer-lock observer))
-    (text-buffer-append (acp-observer-streamed-text observer) text)
-    (acp-observer--send observer
-                        (agentcomms:acp-update-agent-message (agentcomms:acp-text-content text))))
+  (when (plusp (length text))
+    (with-lock-held ((acp-observer-lock observer))
+      (text-buffer-append (acp-observer-streamed-text observer) text)
+      (acp-observer--send observer
+                          (agentcomms:acp-update-agent-message (agentcomms:acp-text-content text)))))
   nil)
 
 (defmethod agent-observer-reasoning ((observer acp-observer) text)
