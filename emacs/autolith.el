@@ -95,10 +95,9 @@ ENVIRONMENT is a list of \"NAME=VALUE\" strings added to
 ;;;###autoload
 (defun autolith-ide ()
   "Develop in Autolith's image: code, a sly REPL and an Autolith conversation.
-The current buffer stays in the upper-left code window.  The conversation
-uses the right third of the frame; sly-mrepl uses the bottom quarter of
-the left pane.  Autolith starts under agent-shell and sly connects once
-Slynk reports its port."
+Edit code in the upper-left window and converse in the right third above
+sly-mrepl, which spans the bottom quarter of the whole frame.  Autolith
+starts under agent-shell and sly connects once Slynk reports its port."
   (interactive)
   (autolith--require 'sly)
   (autolith--require 'agent-shell)
@@ -185,8 +184,9 @@ STARTED is when the launch began, for `autolith-slynk-timeout'."
       (sly-connect "127.0.0.1" port))))
 
 (defun autolith--layout (code repl shell)
-  "Show CODE above REPL on the left, with SHELL in the right third.
-REPL occupies the bottom quarter of the left pane's height."
+  "Show CODE and SHELL above a full-width REPL.
+REPL occupies the bottom quarter of the frame; SHELL uses the right third
+of the area above it."
   (when (and (buffer-live-p code) (buffer-live-p repl) (buffer-live-p shell))
     (let* ((ignore-window-parameters t)
            (left (cl-find-if (lambda (window)
@@ -195,8 +195,8 @@ REPL occupies the bottom quarter of the left pane's height."
       (delete-other-windows left)
       (set-window-dedicated-p left nil)
       (set-window-buffer left code)
-      (let* ((right (split-window left (- (/ (window-total-width left) 3)) 'right))
-             (bottom (split-window left (- (/ (window-total-height left) 4)) 'below)))
+      (let* ((bottom (split-window left (- (/ (window-total-height left) 4)) 'below))
+             (right (split-window left (- (/ (window-total-width left) 3)) 'right)))
         (set-window-buffer right shell)
         (set-window-buffer bottom repl))
       (select-window left))))

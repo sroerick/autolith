@@ -20,9 +20,9 @@
     (should (equal (window-edges code-window)
                    (list left top shell-left repl-top)))
     (should (equal (window-edges repl-window)
-                   (list left repl-top shell-left bottom)))
+                   (list left repl-top right bottom)))
     (should (equal (window-edges shell-window)
-                   (list shell-left top right bottom)))))
+                   (list shell-left top right repl-top)))))
 
 (ert-deftest autolith-ide-proportional-layout ()
   "IDE startup replaces popup placement with the requested three panes."
