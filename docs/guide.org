@@ -27,6 +27,22 @@ Autolith's prompt window can also evuluate lisp forms directly:
 This can be frequently helpful since you can use the exact same tools
 the clanker can, and the same machinery is exposed to you.
 
+* Onboarding
+
+On your first interactive launch, try the prompt, =(help)=, background Lisp,
+and =(settings)= in the fullscreen tour. Edit the lesson input normally and
+press Enter to check it. Resize your terminal at any point. Use Page Up/Page Down
+to scroll long lessons and Shift-Tab to go back.
+
+Press Esc to skip the tour. Completed and skipped lesson versions are recorded
+in your state directory. Ctrl-C interrupts the tour without acknowledging the
+unfinished lessons. Later launches show only new or revised lessons. Evaluate
+=(onboard)= to replay the whole tour.
+
+Disable automatic tours through =(settings "onboarding-p" "off")= or set
+=AUTOLITH_ONBOARDING= to =off=. If you disable the boot screen, enter the tour
+directly without its opening animation.
+
 * Goals and verified missions
 
 Use =(goal "OBJECTIVE")= for lightweight autonomous work. Use =(goal "pause")=,

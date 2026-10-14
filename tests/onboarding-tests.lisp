@@ -1,0 +1,299 @@
+(in-package #:autolith)
+
+;;;; -- Application Onboarding Boundaries --
+
+(-> onboarding-tests--call (function &key (:fullscreen-p boolean) (:start-reader-p boolean)) t)
+(defun onboarding-tests--call (function &key fullscreen-p start-reader-p)
+  "Call FUNCTION with an isolated application, controller, configuration, and terminal."
+  (with-test-configuration (configuration root)
+    (setf configuration
+          (configuration-copy configuration :working-directory root :onboarding-p t
+                              :fullscreen-p fullscreen-p :boot-screen-seconds 0
+                              :boot-screen-tip-seconds 1))
+    (let* ((terminal (make-instance 'queued-recording-terminal :columns 100 :rows 32))
+           (ui (terminal-ui-create :terminal terminal :fullscreen-p fullscreen-p))
+           (application
+             (make-instance 'application :configuration configuration
+                            :conversation (conversation-create configuration :identifier "onboarding-test")
+                            :provider nil :worker nil :agent nil
+                            :tool-registry (make-default-tool-registry) :ui ui)))
+      (with-terminal-ui (active-ui ui)
+        (declare (ignore active-ui))
+        (let ((controller (application-input-controller-create
+                           application :start-reader-p start-reader-p :load-pending-p nil)))
+          (unwind-protect
+               (funcall function application controller configuration terminal)
+            (application-input-controller-stop controller)))))))
+
+(-> onboarding-tests--pages () list)
+(defun onboarding-tests--pages ()
+  "Return a small independently versioned catalog for application boundary tests."
+  (list (list :id "first" :version 1 :title "First" :body "First page")
+        (list :id "second" :version 2 :title "Second" :body "Second page")
+        (list :id "third" :version 1 :title "Third" :body "Third page")))
+
+(-> test-onboarding-operation () null)
+(defun test-onboarding-operation ()
+  "Resolve and invoke the replay command through the real operation boundary."
+  (onboarding-tests--call
+   (lambda (application controller configuration terminal)
+     (declare (ignore controller configuration terminal))
+     (let* ((operation (application-operation-find application 'onboard))
+            (command (application-operation-backend operation))
+            (called nil))
+       (test-assert (typep operation 'application-command-operation) "onboard resolves to a command operation")
+       (test-assert (eq ':hold (application-command-busy-behavior command)) "replay waits for active work")
+       (test-assert (eq ':exclusive (application-command-terminal-behavior command)) "replay owns terminal input exclusively")
+       (test-call-with-function-replacements
+        (list (list 'application-onboard
+                    (lambda (target &key new-only-p)
+                      (test-assert (eq target application) "operation invokes the current application")
+                      (test-assert (not new-only-p) "manual replay includes acknowledged lessons")
+                      (setf called t)
+                      ':completed)))
+        (lambda () (application-operation-invoke operation application nil)))
+       (test-assert called "operation invocation reaches onboarding"))))
+  nil)
+
+(-> test-onboarding-first-startup () null)
+(defun test-onboarding-first-startup ()
+  "Present first-run onboarding in fullscreen even when inline is the saved preference."
+  (onboarding-tests--call
+   (lambda (application controller configuration terminal)
+     (declare (ignore terminal))
+     (let ((presented nil)
+           (boot-count 0)
+           (ui (application-ui application)))
+       (test-assert (not (config :fullscreen-p configuration)) "fixture begins with an inline preference")
+       (test-call-with-function-replacements
+        (list (list 'terminal-ui-boot-sequence
+                    (lambda (target &rest options)
+                      (declare (ignore options))
+                      (incf boot-count)
+                      (test-assert (terminal-ui-fullscreen-p target) "first-run boot uses fullscreen")
+                      ':completed))
+              (list 'terminal-ui-onboard
+                    (lambda (target pages &key help-function settings-function resize-callback
+                                              page-completed-function introduction-title)
+                      (declare (ignore introduction-title))
+                      (test-assert (fullscreen-terminal-ui-active-p target) "lesson presentation owns the alternate buffer")
+                      (test-assert (non-empty-string-p (funcall help-function)) "tutorial receives real basic operation help")
+                      (test-assert (functionp settings-function) "tutorial can open real settings")
+                      (test-assert (eq resize-callback #'application-pending-terminal-size)
+                                   "tutorial follows the application's terminal resize source")
+                      (setf presented (mapcar (lambda (page) (getf page :id)) pages))
+                      (dolist (page pages) (funcall page-completed-function page))
+                      (values ':completed presented))))
+        (lambda ()
+          (test-assert (eq ':completed (application-startup-presentation application controller))
+                       "first startup completes onboarding")))
+       (test-assert (= 1 boot-count) "onboarding includes one boot presentation")
+       (test-assert (equal presented (mapcar (lambda (page) (getf page :id)) (onboarding-pages configuration)))
+                    "first startup presents every current lesson in catalog order")
+       (test-assert (null (onboarding-state-pending configuration (onboarding-pages configuration)))
+                    "completed lesson callbacks acknowledge the tour")
+       (test-assert (not (terminal-ui-fullscreen-p ui)) "first-run presentation restores inline mode")
+       (test-assert (not (config :fullscreen-p configuration)) "onboarding does not overwrite fullscreen preference"))))
+  nil)
+
+(-> test-onboarding-startup-exclusions () null)
+(defun test-onboarding-startup-exclusions ()
+  "Exclude noninteractive startup and both configuration and caller opt-outs."
+  (dolist (case '(:headless :configuration-optout :caller-optout))
+    (onboarding-tests--call
+     (lambda (application controller configuration terminal)
+       (declare (ignore configuration))
+       (when (eq case ':headless)
+         (setf (terminal-interactive-p terminal) nil))
+       (when (eq case ':configuration-optout)
+         (setf (application-configuration application)
+               (configuration-copy (application-configuration application) :onboarding-p nil)))
+       (let ((boot-count 0))
+         (test-call-with-function-replacements
+          (list (list 'application-onboard
+                      (lambda (&rest arguments)
+                        (declare (ignore arguments))
+                        (error "Excluded startup entered onboarding.")))
+                (list 'terminal-ui-boot-sequence
+                      (lambda (&rest arguments)
+                        (declare (ignore arguments))
+                        (incf boot-count)
+                        ':completed)))
+          (lambda ()
+            (application-startup-presentation application controller
+                                              :onboarding-p (not (eq case ':caller-optout)))))
+         (when (eq case ':headless)
+           (test-assert (eq ':unavailable (application-onboard application))
+                        "manual tour also declines noninteractive input"))
+         (test-assert (= 1 boot-count) "excluded startup follows ordinary boot")))))
+  nil)
+
+(-> test-onboarding-version-selection () null)
+(defun test-onboarding-version-selection ()
+  "Suppress completed/refused versions and present only genuinely pending changes."
+  (onboarding-tests--call
+   (lambda (application controller configuration terminal)
+     (declare (ignore terminal))
+     (let* ((pages (onboarding-tests--pages))
+            (selected nil)
+            (boot-count 0)
+            (tour-count 0))
+       (onboarding-state-record configuration (list (first pages)) ':completed)
+       (onboarding-state-record configuration (rest pages) ':refused)
+       (test-call-with-function-replacements
+        (list (list 'onboarding-pages (lambda (config) (declare (ignore config)) pages))
+              (list 'terminal-ui-boot-sequence
+                    (lambda (&rest arguments) (declare (ignore arguments)) (incf boot-count) ':completed))
+              (list 'terminal-ui-onboard
+                    (lambda (ui offered &key help-function page-completed-function introduction-title &allow-other-keys)
+                      (declare (ignore ui help-function introduction-title))
+                      (incf tour-count)
+                      (setf selected (copy-tree offered))
+                      (dolist (page offered) (funcall page-completed-function page))
+                      (values ':completed (mapcar (lambda (page) (getf page :id)) offered)))))
+        (lambda ()
+          (application-startup-presentation application controller)
+          (test-assert (zerop tour-count) "acknowledged catalog uses ordinary boot")
+          (test-assert (= 1 boot-count) "suppressed tour does not add another boot")
+          (setf (getf (first pages) :version) 2
+                pages (append pages (list (list :id "new" :version 1 :title "New" :body "New page"))))
+          (application-startup-presentation application controller)
+          (test-assert (equal '("first" "new") (mapcar (lambda (page) (getf page :id)) selected))
+                       "automatic update selects revised and new lessons, skipping refused unchanged versions")
+          (test-assert (null (onboarding-state-pending configuration pages)) "updates become durably acknowledged")
+          (application-onboard application)
+          (test-assert (equal pages selected) "explicit replay offers the entire acknowledged catalog"))))))
+  nil)
+
+(-> test-onboarding-incremental-interruption () null)
+(defun test-onboarding-incremental-interruption ()
+  "Persist completed pages on interruption and acknowledge the remainder on refusal."
+  (onboarding-tests--call
+   (lambda (application controller configuration terminal)
+     (declare (ignore controller terminal))
+     (let ((pages (onboarding-tests--pages))
+           (offered nil))
+       (test-call-with-function-replacements
+        (list (list 'onboarding-pages (lambda (config) (declare (ignore config)) pages))
+              (list 'terminal-ui-boot-sequence (lambda (&rest arguments) (declare (ignore arguments)) ':completed))
+              (list 'terminal-ui-onboard
+                    (lambda (ui selected &key help-function page-completed-function introduction-title &allow-other-keys)
+                      (declare (ignore ui help-function introduction-title))
+                      (setf offered selected)
+                      (funcall page-completed-function (first selected))
+                      (values ':interrupted (list (getf (first selected) :id))))))
+        (lambda ()
+          (test-assert (eq ':interrupted (application-onboard application :new-only-p t))
+                       "tour interruption propagates to application")
+          (test-assert (equal (rest offered) (onboarding-state-pending configuration pages))
+                       "only the completed page is acknowledged after interruption")))
+       (test-call-with-function-replacements
+        (list (list 'onboarding-pages (lambda (config) (declare (ignore config)) pages))
+              (list 'terminal-ui-boot-sequence (lambda (&rest arguments) (declare (ignore arguments)) ':completed))
+              (list 'terminal-ui-onboard
+                    (lambda (ui selected &key help-function page-completed-function introduction-title &allow-other-keys)
+                      (declare (ignore ui help-function page-completed-function introduction-title))
+                      (test-assert (equal (rest pages) selected) "resume offers unfinished pages only")
+                      (values ':refused nil))))
+        (lambda ()
+          (test-assert (eq ':refused (application-onboard application :new-only-p t)) "explicit refusal propagates")
+          (test-assert (null (onboarding-state-pending configuration pages)) "refusal acknowledges remaining selected versions"))))))
+  nil)
+
+(-> test-onboarding-fullscreen-restoration () null)
+(defun test-onboarding-fullscreen-restoration ()
+  "Restore fullscreen mode and input ownership after completion, refusal, and errors."
+  (dolist (fullscreen-p '(nil t))
+    (dolist (outcome '(:completed :refused :error))
+      (onboarding-tests--call
+       (lambda (application controller configuration terminal)
+         (declare (ignore configuration terminal))
+         (let* ((ui (application-ui application))
+                (owner (terminal-ui-exclusive-input-function ui))
+                (reader-was-live-p (application-input-controller-reader-live-p controller)))
+           (test-assert reader-was-live-p "fixture has a live responsive reader")
+           (terminal-ui-set-input ui "user draft")
+           (test-call-with-function-replacements
+            (list (list 'terminal-ui-boot-sequence (lambda (&rest arguments) (declare (ignore arguments)) ':completed))
+                  (list 'terminal-ui-onboard
+                        (lambda (target pages &key help-function page-completed-function introduction-title &allow-other-keys)
+                          (declare (ignore pages help-function page-completed-function introduction-title))
+                          (test-assert (terminal-ui-fullscreen-p target) "tour enters fullscreen regardless of original mode")
+                          (test-assert (fullscreen-terminal-ui-active-p target) "tour owns an active alternate buffer")
+                          (when (eq outcome ':error) (error "Expected onboarding presenter failure."))
+                          (values outcome nil))))
+            (lambda ()
+              (if (eq outcome ':error)
+                  (test-assert (handler-case (progn (application-onboard application) nil)
+                                 (simple-error () t)) "presenter error is propagated")
+                  (test-assert (eq outcome (application-onboard application)) "presenter outcome is propagated"))))
+           (test-assert (eq fullscreen-p (terminal-ui-fullscreen-p ui)) "original display mode is restored")
+           (when fullscreen-p
+             (test-assert (fullscreen-terminal-ui-active-p ui) "original fullscreen ownership survives the tour"))
+           (test-assert (string= "user draft" (line-editor-text (terminal-ui-editor ui))) "mode transition preserves the draft")
+           (test-assert (eq owner (terminal-ui-exclusive-input-function ui)) "exclusive reader owner is restored")
+           (test-assert (application-input-controller-reader-live-p controller) "responsive reader is live after tour cleanup")
+           (test-assert (not (application-input-controller-exit-requested-p controller)) "manual replay does not retire the controller")))
+       :fullscreen-p fullscreen-p :start-reader-p t)))
+  nil)
+
+(-> test-onboarding-startup-interruption () null)
+(defun test-onboarding-startup-interruption ()
+  "Request controller exit when either the onboarding boot or presenter is interrupted."
+  (dolist (stage '(:boot :presenter))
+    (onboarding-tests--call
+     (lambda (application controller configuration terminal)
+       (declare (ignore terminal))
+       (test-call-with-function-replacements
+        (list (list 'terminal-ui-boot-sequence
+                    (lambda (&rest arguments)
+                      (declare (ignore arguments))
+                      (if (eq stage ':boot) ':interrupt ':completed)))
+              (list 'terminal-ui-onboard
+                    (lambda (&rest arguments)
+                      (declare (ignore arguments))
+                      (test-assert (eq stage ':presenter) "interrupted boot does not enter lessons")
+                      (values ':interrupted nil))))
+        (lambda ()
+          (test-assert (eq ':interrupted (application-startup-presentation application controller))
+                       "startup returns interrupted outcome")
+          (test-assert (application-input-controller-exit-requested-p controller)
+                       "startup interruption requests controller exit")
+          (test-assert (equal (mapcar (lambda (page) (getf page :id)) (onboarding-pages configuration))
+                              (mapcar (lambda (page) (getf page :id))
+                                      (onboarding-state-pending configuration (onboarding-pages configuration))))
+                       "interrupted startup leaves uncompleted revisions pending"))))))
+  nil)
+
+
+(-> test-onboarding-settings-exercise () null)
+(defun test-onboarding-settings-exercise ()
+  "Try the real settings picker, persist a change, and return to the tour."
+  (onboarding-tests--call
+   (lambda (application controller configuration terminal)
+     (declare (ignore controller))
+     (setf (application-configuration application)
+           (configuration-copy configuration :boot-screen-p nil))
+     (let ((pages (list (onboarding-ui-test--page "settings" ':settings)
+                        (onboarding-ui-test--page "finish")))
+           (ui (application-ui application)))
+       (terminal-ui-set-input ui "saved user draft")
+       (dolist (event '((:paste "(settings)") :submit
+                        (:paste "theme") :submit (:paste "almighty") :submit :escape
+                        :submit :submit))
+         (queued-recording-terminal-enqueue terminal event))
+       (test-call-with-function-replacements
+        (list (list 'onboarding-pages (lambda (config) (declare (ignore config)) pages)))
+        (lambda ()
+          (test-assert (eq ':completed (application-onboard application))
+                       "settings exercise returns to the tour and completes")))
+       (test-assert (eq ':almighty (config :terminal-theme (application-configuration application)))
+                    "the user changed a real durable setting")
+       (test-assert (null (onboarding-state-pending configuration pages)) "exercise completion is recorded")
+       (test-assert (search "settings" (recording-terminal-output terminal)) "the real picker was rendered")
+       (test-assert (null (queued-recording-terminal-events terminal)) "every picker and lesson event was consumed")
+       (test-assert (string= "saved user draft" (line-editor-text (terminal-ui-editor ui)))
+                    "the user's original draft is restored")
+       (test-assert (not (terminal-ui-fullscreen-p ui)) "the original inline mode is restored")
+       (test-assert (not (terminal-ui-live-output-suspended-p ui)) "live output is available after the tour"))))
+  nil)

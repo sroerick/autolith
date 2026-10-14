@@ -124,7 +124,6 @@
   test-onboarding-state-publication-failure
   test-onboarding-state-process-merge)
 
-
 (define-test-suite onboarding-ui
   test-onboarding-ui-session
   test-onboarding-ui-restoration
@@ -133,6 +132,15 @@
   test-onboarding-ui-validation
   test-onboarding-ui-idle-resize)
 
+(define-test-suite onboarding
+  test-onboarding-operation
+  test-onboarding-first-startup
+  test-onboarding-startup-exclusions
+  test-onboarding-version-selection
+  test-onboarding-incremental-interruption
+  test-onboarding-fullscreen-restoration
+  test-onboarding-startup-interruption
+  test-onboarding-settings-exercise)
 
 (define-test-suite job-completion-policy
   test-job-completion-policy-normalization

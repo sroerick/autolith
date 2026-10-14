@@ -15,7 +15,7 @@
                 "papercut" "papercut-close"))
     (:topic :display :title "Display"
      :description "Adjust settings, reasoning, timestamps, and transcript detail."
-     :commands ("settings" "trace" "timestamps" "ste" "titles" "cache-misses"
+     :commands ("onboard" "settings" "trace" "timestamps" "ste" "titles" "cache-misses"
                 "compact-tool"))
     (:topic :runtime :title "Runtime and recovery"
      :description "Inspect the session, save a generation, or recover queued input."

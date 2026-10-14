@@ -460,32 +460,9 @@ closes. Both carry the same styling, rendered for the terminal that shows it."
                     (application-recovery-input-vault-present-startup-warning
                      application)
                     (localgroup-start application)
-                    (when (eq (terminal-ui-boot-sequence
-                               ui
-                               :screen-p (config :boot-screen-p
-                                                 (application-configuration application))
-                               :duration (config :boot-screen-seconds
-                                                 (application-configuration application))
-                               :linger-p (config :boot-screen-linger-p
-                                                 (application-configuration application))
-                               :tip-seconds (config :boot-screen-tip-seconds
-                                                    (application-configuration application))
-                               ;; A client attaching during boot starts the
-                               ;; reader, which then owns the terminal.
-                               :halted-function
-                               (lambda ()
-                                 (application-input-controller-exit-requested-p
-                                  input-controller))
-                               :direct-input-p-function
-                               (lambda ()
-                                 (not (application-input-controller-reader-live-p
-                                       input-controller))))
-                              ':interrupt)
-                      ;; Ctrl-C on the lingering boot screen halts like Ctrl-C
-                      ;; at an empty prompt: the controller stops before its
-                      ;; reader starts and the session exits with resume advice.
-                      (application-input-controller--request-exit
-                       input-controller ':interrupt))
+                    (application-startup-presentation
+                     application input-controller
+                     :onboarding-p (null recovery-diagnosis))
                     (management-repl-start application)
                     (slynk-start (application-configuration application)
                                  :background-p t)

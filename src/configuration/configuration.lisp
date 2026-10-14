@@ -345,6 +345,14 @@ exist yet, and is only put in directory form."
   :documentation "Whether interactive sessions use the fullscreen terminal UI."
   :scope :durable)
 
+(define-setting :onboarding-p (boolean-setting)
+  :label "Onboarding"
+  :group :terminal
+  :documentation "Whether interactive launches offer unseen or revised onboarding lessons."
+  :scope :durable
+  :environment "AUTOLITH_ONBOARDING"
+  :default t)
+
 (define-setting :terminal-theme (choice-setting)
   :label "Theme"
   :group :terminal
