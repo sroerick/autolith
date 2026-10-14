@@ -279,3 +279,44 @@
            ':start)
        "the queued direct key still starts once direct input is allowed")))
   nil)
+
+
+(-> test-fullscreen-boot-idle-resize () null)
+(defun test-fullscreen-boot-idle-resize ()
+  "Repaint a waiting boot screen on a relayed resize without waiting for input."
+  (let* ((terminal (make-instance 'queued-recording-terminal :columns 80 :rows 24))
+         (waits 0)
+         (repainted-p nil)
+         (*terminal-resize-pending-p* nil)
+         (*terminal-relayed-resize* nil)
+         (boot-screen (symbol-function 'terminal-ui-boot-screen)))
+    (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t))
+      (test-call-with-function-replacements
+       (list (list 'terminal-ui-boot-screen
+                   (lambda (target phase detail)
+                     (when (and (eq phase ':listener-ready)
+                                (= 28 (terminal-columns terminal))
+                                (= 9 (terminal-rows terminal)))
+                       (setf repainted-p t))
+                     (funcall boot-screen target phase detail))))
+       (lambda ()
+         (test-assert
+          (eq ':start
+              (terminal-ui-boot-sequence
+               ui :duration 0 :linger-p t :resize-callback #'application-pending-terminal-size
+               :wait-function
+               (lambda (seconds)
+                 (declare (ignore seconds))
+                 (incf waits)
+                 (let ((phase-count (length *terminal-ui-boot-sequence-phases*)))
+                   (cond
+                     ((= waits (1+ phase-count))
+                      (terminal-relayed-resize-publish 9 28))
+                     ((= waits (+ 2 phase-count))
+                      (test-assert repainted-p "resize redraws before a start key is available")
+                      (queued-recording-terminal-enqueue terminal '(:insert " ")))
+                     ((> waits (+ 2 phase-count))
+                      (error "Boot resize test exceeded its deterministic wait budget.")))))))
+          "Space starts the resized boot screen")))
+      (test-assert repainted-p "the boot screen followed the pending resize")))
+  nil)

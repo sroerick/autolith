@@ -60,6 +60,9 @@
 (defparameter *terminal-ui-boot-linger-prompt* "PRESS SPACE TO START"
   "The call to action shown below the tip while the boot screen waits.")
 
+(defparameter *terminal-ui-boot-start-label* "start"
+  "The Space action advertised in the boot panel footer.")
+
 (-> terminal-ui--boot-panel-width (integer) integer)
 (defun terminal-ui--boot-panel-width (columns)
   "Return the boot panel width for the installed theme within COLUMNS."
@@ -146,7 +149,8 @@ are centered as one block, so rows of unequal width stay aligned."
              (boxed ':plain "")
              (boxed ':hint
                     (if *terminal-ui-boot-linger-p*
-                        "[ SYSTEM CONSOLE ]          Space: start   Ctrl-C: halt"
+                        (format nil "[ SYSTEM CONSOLE ]          Space: ~A   Ctrl-C: halt"
+                                *terminal-ui-boot-start-label*)
                         "[ SYSTEM CONSOLE ]                         Ctrl-C: halt"))
              (row ':brand bottom-border)))))))
 
@@ -299,10 +303,11 @@ the same way it does at an empty prompt."
 
 (-> terminal-ui--boot-linger
     (terminal-ui &key (:wait-function function) (:tip-seconds real)
-                      (:halted-function function) (:direct-input-p-function function))
+                      (:halted-function function) (:direct-input-p-function function)
+                      (:resize-callback (option function)))
     keyword)
 (defun terminal-ui--boot-linger
-    (ui &key wait-function tip-seconds halted-function direct-input-p-function)
+    (ui &key wait-function tip-seconds halted-function direct-input-p-function resize-callback)
   "Hold the boot screen until the operator starts the session.
 
 Keys arrive through the responsive reader, which diverts them into the UI's
@@ -317,6 +322,8 @@ stay deterministic."
          (elapsed 0))
     (terminal-ui-boot-screen ui ':listener-ready detail)
     (loop
+      (when (terminal-ui-refresh-size ui resize-callback)
+        (terminal-ui-boot-screen ui ':listener-ready detail))
       (cond
         ((terminal-ui-boot-start-requested-p ui)
          (return ':start))
@@ -343,7 +350,8 @@ stay deterministic."
 (-> terminal-ui-boot-sequence
     (terminal-ui &key (:wait-function function) (:screen-p boolean) (:duration real)
                       (:linger-p boolean) (:tip-seconds real)
-                      (:halted-function function) (:direct-input-p-function function))
+                      (:halted-function function) (:direct-input-p-function function)
+                      (:resize-callback (option function)))
     keyword)
 (defun terminal-ui-boot-sequence
     (ui &key (wait-function #'sleep)
@@ -352,7 +360,7 @@ stay deterministic."
              linger-p
              (tip-seconds *terminal-ui-boot-tip-default-seconds*)
              (halted-function (constantly nil))
-             (direct-input-p-function (constantly t)))
+             (direct-input-p-function (constantly t)) resize-callback)
   "Present a brief Lisp-machine boot sequence before opening the listener.
 
 Keep ordinary output deferred throughout the presentation. WAIT-FUNCTION accepts
@@ -363,7 +371,8 @@ listener opens at once. Throughout,
 the boot screen owns keystrokes: the responsive reader diverts them through
 TERMINAL-UI-BOOT-DIVERT-EVENT, and the wait reads the terminal itself only
 while DIRECT-INPUT-P-FUNCTION allows. HALTED-FUNCTION reports an exit request
-made elsewhere. Returns :START, or :INTERRUPT when Ctrl-C ended the wait."
+made elsewhere. Poll RESIZE-CALLBACK while waiting and repaint resized boot frames.
+Returns :START, or :INTERRUPT when Ctrl-C ended the wait."
   (let ((result ':start))
     (when (and (terminal-ui-fullscreen-p ui)
                (terminal-ui--await-interactive
@@ -386,12 +395,14 @@ made elsewhere. Returns :START, or :INTERRUPT when Ctrl-C ended the wait."
                (progn
                  (dolist (phase *terminal-ui-boot-sequence-phases*)
                    (terminal-ui-boot-screen ui (first phase) (second phase))
-                   (funcall wait-function phase-duration))
+                   (funcall wait-function phase-duration)
+                   (terminal-ui-refresh-size ui resize-callback))
                  (when linger-p
                    (setf result
                          (terminal-ui--boot-linger
                           ui
                           :wait-function wait-function
+                          :resize-callback resize-callback
                           :tip-seconds tip-seconds
                           :halted-function halted-function
                           :direct-input-p-function direct-input-p-function))))

@@ -105,6 +105,7 @@
   test-fullscreen-boot-cursor-lifecycle
   test-fullscreen-boot-linger
   test-fullscreen-boot-reader-diversion
+  test-fullscreen-boot-idle-resize
   test-terminal-fullscreen-relayed-wheel
   test-terminal-fullscreen-relay-startup-output
   test-detached-fullscreen-streaming
