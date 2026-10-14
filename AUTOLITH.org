@@ -18,6 +18,21 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Native paths in file observations
+
+- Problem: scratchpad URIs did not identify the filesystem paths needed by
+  compiler and shell commands.
+- Behavior: include the resolved native path from observation metadata in
+  workspace and scratchpad read/edit results.
+- Scope and location: private =workspace-file--read-result= definition, image
+  commit =3014c532-3f40-43c8-b03c-53ba49bf1501=, private Git
+  =310f0743410e9a50a858d2895c87ca77194c9e88=.
+- Verification: missing/file/directory observations exposed their paths; 121
+  workspace/scratchpad checks passed. A C file with spaces in its name compiled
+  and ran using the returned path. Clean-process private replay passed.
+- Removal condition: replace the override after installing equivalent tracked
+  file-observation output.
+
 ** Temporary shell capture quota
 
 - Problem: 424 closed shell captures could not be pruned, exceeding the
