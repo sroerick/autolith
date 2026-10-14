@@ -802,12 +802,12 @@
                         :created-at (get-universal-time)))
             (let ((evaluation
                     (application-lisp-evaluate
-                     "(goal 'clear)"
+                     "(goal :clear)"
                      :application application)))
               (test-assert
                (and (eq (application-lisp-evaluation-status evaluation) ':ok)
                     (null (application-goal application)))
-               "raw-remainder Lisp commands normalize evaluated values to text"))
+               "keyword goal actions execute through the local Lisp binding"))
            (recording-terminal-reset terminal)
            (let* ((evaluation
                     (application-lisp-evaluate

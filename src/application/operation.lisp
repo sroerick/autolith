@@ -794,9 +794,11 @@ paths that do not contain QUERY as a contiguous substring."
                name)))
     (make-instance 'application-command-invocation
                    :input input
+                   :syntax ':lisp
                    :name name
                    :remainder remainder
-                   :argument (application-command--first-token remainder)
+                   :argument (and arguments
+                                  (application-operation--command-value (first arguments)))
                    :arguments semantic-arguments
                    :supplied-argument-count (length semantic-arguments)
                    :command command)))

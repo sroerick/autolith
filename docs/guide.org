@@ -45,10 +45,16 @@ directly without its opening animation.
 
 * Goals and verified missions
 
-Use =(goal "OBJECTIVE")= for lightweight autonomous work. Use =(goal "pause")=,
-=(goal "resume")= or =(goal "clear")= to control it. For externally verifiable
-work, install explicit acceptance policy with =(mission "start PLIST")=, or
-evaluate:
+Use =(goal "OBJECTIVE")= for lightweight autonomous work. Inspect it with
+=(goal)= or =(goal :status)=. Use =(goal :pause)=, =(goal :resume)= or
+=(goal :clear)= to control it, and =(goal :update "NEW-OBJECTIVE")= to edit
+it in place. String arguments are literal objectives, including ="pause"=.
+Unknown keyword actions signal =application-goal-error= without changing the goal.
+The slash forms =/goal OBJECTIVE=, =/goal update NEW-OBJECTIVE=, =/goal pause=,
+=/goal resume= and =/goal clear= are also available.
+
+For externally verifiable work, install explicit acceptance policy with
+=(mission "start PLIST")=, or evaluate:
 
 #+BEGIN_SRC lisp
 (application-mission-start
@@ -95,7 +101,7 @@ can exhaust the token allowance. Missing usage is recorded as unknown and blocks
 further inference. Install a new explicit budget to proceed after unknown usage.
 
 The wall-clock deadline includes gate execution, delegated tools, pauses and
-time away. Work runs under cl-jobpond supervision. Use =(goal "pause")= and
+time away. Work runs under cl-jobpond supervision. Use =(goal :pause)= and
 =(mission "resume")= without resetting any mission budget; use
 =(mission "cancel REASON")= to terminate it. Terminal states are =verified=, =exhausted=, =cancelled=
 and =failed=. A =blocked= mission retains the evidence needed to resolve its

@@ -7793,6 +7793,155 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-public-goal-actions () null)
+(defun test-public-goal-actions ()
+  "Test literal objectives and keyword controls through the public goal operation."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation (conversation-create configuration
+                                                   :identifier "public-goal"))
+                (application (make-instance
+                              'application
+                              :configuration configuration
+                              :conversation conversation
+                              :tool-registry (make-default-tool-registry)
+                              :ui (terminal-ui-create
+                                   :terminal (make-instance 'recording-terminal
+                                                            :columns 60))))
+                (started-goal-work 0))
+           (terminal-ui-start (application-ui application))
+           (labels ((call-goal (&rest arguments)
+                      "Invoke the registered user operation with evaluated arguments."
+                      (apply #'application-operation-call application "goal" arguments))
+
+                    (reload-goal ()
+                      "Restore the persisted goal into another application."
+                      (let ((sibling
+                              (make-instance
+                               'application
+                               :configuration configuration
+                               :conversation (conversation-load-by-id
+                                              configuration "public-goal")
+                               :ui (terminal-ui-create
+                                    :terminal (make-instance 'recording-terminal
+                                                             :columns 60)))))
+                        (application--load-goal sibling)
+                        (application-goal sibling)))
+
+                    (call-slash (text)
+                      "Execute one slash submission through command dispatch."
+                      (let ((invocation (application-command-invocation-parse text)))
+                        (application-command-execute
+                         (application-command-invocation-command invocation)
+                         application invocation))))
+             (test-call-with-function-replacements
+              (list (list 'application--start-goal-work
+                          (lambda (app)
+                            (declare (ignore app))
+                            (incf started-goal-work)
+                            nil)))
+              (lambda ()
+                (call-goal)
+                (test-assert (null (application-goal application))
+                             "status with no goal does not create one")
+                (dolist (objective '("pause" "resume" "clear" "update" "status"
+                                     "update another objective" ":pause" "/status"
+                                     "  pause  " "an unfinished \"quote"))
+                  (let ((previous-starts started-goal-work))
+                    (call-goal objective)
+                    (test-assert
+                     (and (string= (getf (application-goal application) :objective)
+                                   objective)
+                          (eq (getf (application-goal application) :status) ':active)
+                          (= started-goal-work (1+ previous-starts)))
+                     "a string, including a reserved word, sets a literal active goal")
+                    (test-assert
+                     (string= (getf (reload-goal) :objective) objective)
+                     "literal objectives persist without action conversion")))
+                (let ((snapshot (copy-list (application-goal application)))
+                      (previous-starts started-goal-work))
+                  (call-goal)
+                  (call-goal ':status)
+                  (test-assert
+                   (and (equal snapshot (application-goal application))
+                        (= previous-starts started-goal-work))
+                   "no-argument and keyword status inspect without restarting work")
+                  (dolist (case '(((:unknown) :invalid-action)
+                                  ((pause) :invalid-action)
+                                  ((42) :invalid-action)
+                                  ((:pause "extra") :invalid-arguments)
+                                  (("literal" "extra") :invalid-arguments)
+                                  ((:update) :invalid-arguments)
+                                  ((:update :pause) :invalid-arguments)
+                                  ((:update "") :invalid-arguments)
+                                  (("") :invalid-objective)))
+                    (test-assert
+                     (eq (handler-case
+                             (progn (apply #'call-goal (first case)) nil)
+                           (application-goal-error (condition)
+                             (application-goal-error-reason condition)))
+                         (second case))
+                     "invalid actions and arguments signal a typed goal failure")
+                    (test-assert
+                     (and (equal snapshot (application-goal application))
+                          (= previous-starts started-goal-work)
+                          (equal snapshot (reload-goal)))
+                     "invalid requests neither mutate nor persist goal state")))
+                (call-goal "pause")
+                (let ((created-at (getf (application-goal application) :created-at))
+                      (previous-starts started-goal-work))
+                  (call-goal ':pause)
+                  (test-assert
+                   (and (eq (getf (application-goal application) :status) ':paused)
+                        (eq (getf (reload-goal) :status) ':paused)
+                        (null (application-goal-context application)))
+                   "keyword pause persists the pause and removes goal context")
+                  (call-goal ':update "/status")
+                  (test-assert
+                   (string= (getf (application-goal application) :objective) "/status")
+                   "keyword update accepts command-shaped literal strings")
+                  (setf (getf (application-goal application) :continuations) 3)
+                  (call-goal ':update "resume")
+                  (test-assert
+                   (and (string= (getf (application-goal application) :objective) "resume")
+                        (eq (getf (application-goal application) :status) ':paused)
+                        (= (getf (application-goal application) :created-at) created-at)
+                        (zerop (getf (application-goal application) :continuations))
+                        (= started-goal-work previous-starts)
+                        (equal (reload-goal) (application-goal application)))
+                   "keyword update preserves a paused goal's identity and resets its budget")
+                  (call-goal ':resume)
+                  (test-assert
+                   (and (eq (getf (application-goal application) :status) ':active)
+                        (= started-goal-work (1+ previous-starts))
+                        (equal (reload-goal) (application-goal application)))
+                   "keyword resume persists activation and starts work")
+                  (call-goal ':clear)
+                  (test-assert
+                   (and (null (application-goal application))
+                        (null (reload-goal)))
+                   "keyword clear persists removal"))
+                (call-slash "/goal polish the terminal")
+                (test-assert
+                 (string= (getf (application-goal application) :objective)
+                          "polish the terminal")
+                 "slash objectives retain their whole remainder")
+                (call-slash "/goal pause")
+                (call-slash "/goal update clear")
+                (test-assert
+                 (and (string= (getf (application-goal application) :objective) "clear")
+                      (eq (getf (application-goal application) :status) ':paused))
+                 "slash pause and update retain their control semantics")
+                (call-slash "/goal resume")
+                (test-assert (eq (getf (application-goal application) :status) ':active)
+                             "slash resume activates the goal")
+                (call-slash "/goal clear")
+                (test-assert (null (application-goal application))
+                             "slash clear removes the goal")))))
+      (platform-delete-directory-tree *platform* root :validate t
+                                      :if-does-not-exist ':ignore)))
+  nil)
 (-> test-session-goal () null)
 (defun test-session-goal ()
   "Test goal persistence, context injection, continuation, and completion."

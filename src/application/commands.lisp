@@ -1369,12 +1369,13 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
              (find (char word (length "update")) '(#\Space #\Tab)))
          (application--command-remainder remainder))))
 
-(-> application--goal-update (application string) boolean)
-(defun application--goal-update (application objective)
+(-> application--goal-update (application string &key (:literal-p boolean)) boolean)
+(defun application--goal-update (application objective &key literal-p)
   "Rewrite the current session goal's objective to OBJECTIVE in place.
 
 An active or paused goal keeps its status and creation time while its
 continuation budget restarts. A completed goal becomes active again.
+LITERAL-P permits command-shaped strings supplied as evaluated Lisp values.
 Return true only when the objective was rewritten."
   (let ((goal (application-goal application)))
     (cond
@@ -1389,7 +1390,7 @@ Return true only when the objective was rewritten."
       ((zerop (length objective))
        (application-present application "Usage: /goal update NEW-OBJECTIVE")
        nil)
-      ((uiop:string-prefix-p "/" objective)
+      ((and (not literal-p) (uiop:string-prefix-p "/" objective))
        (application-present
         application
         (format nil "~S looks like a command, not an objective. ~
@@ -1406,7 +1407,7 @@ Return true only when the objective was rewritten."
        (application-present
         application
         (format nil
-                "Goal updated: ~A~:[~;~%It stays paused until /goal resume.~]"
+                "Goal updated: ~A~:[~;~%Use (goal :resume) to resume work.~]"
                 objective
                 (eq (getf (application-goal application) :status)
                     ':paused)))
@@ -1440,29 +1441,59 @@ work must steer the running turn, not queue as follow-up work."
               (work nil nil))))))
   nil)
 
-(-> application-goal-command (application string) null)
-(defun application-goal-command (application remainder)
-  "Apply the /goal REMAINDER: show, set, update, clear, pause, or resume the goal."
-  (let ((goal (application-goal application))
-        (word (string-downcase remainder))
-        (update-argument (application--goal-update-argument remainder)))
+(define-condition application-goal-error (autolith-error)
+  ((reason
+    :initarg :reason
+    :reader application-goal-error-reason
+    :type keyword
+    :documentation "The stable reason the goal request was rejected.")
+   (request
+    :initarg :request
+    :reader application-goal-error-request
+    :type t
+    :documentation "The objective or action supplied by the caller."))
+  (:documentation "A public goal request has an invalid action or arguments."))
+
+(-> application-goal-request (application t list) null)
+(defun application-goal-request (application request arguments)
+  "Set a literal string objective or apply a keyword action to APPLICATION.
+
+NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
+:RESUME, and :CLEAR take no arguments. Invalid requests signal APPLICATION-GOAL-ERROR."
+  (unless (or (null request) (stringp request)
+              (member request '(:status :update :pause :resume :clear)))
+    (error 'application-goal-error
+           :reason ':invalid-action :request request
+           :message "Goal actions are :status, :update, :pause, :resume, and :clear."))
+  (unless (if (eq request ':update)
+              (and (= (length arguments) 1)
+                   (non-empty-string-p (first arguments)))
+              (null arguments))
+    (error 'application-goal-error
+           :reason ':invalid-arguments :request request
+           :message "Only (goal :update OBJECTIVE) takes an additional argument."))
+  (when (and (stringp request) (not (non-empty-string-p request)))
+    (error 'application-goal-error
+           :reason ':invalid-objective :request request
+           :message "A goal objective must be a nonempty string."))
+  (let ((goal (application-goal application)))
     (cond
-      ((zerop (length remainder))
+      ((member request '(nil :status))
        (application-present application
                             (application--goal-description application)))
-      ((string= word "clear")
+      ((eq request ':clear)
        (mission-detach application)
        (setf (application-goal application) nil)
        (application--record-goal application)
        (application-present application "The session goal was cleared."))
-      ((string= word "pause")
+      ((eq request ':pause)
        (if (and goal (eq (getf goal :status) ':active))
            (progn
              (setf (getf (application-goal application) :status) ':paused)
              (application--record-goal application)
              (application-present application "The session goal is paused."))
            (application-present application "No active goal to pause.")))
-      ((string= word "resume")
+      ((eq request ':resume)
        (if (and goal (eq (getf goal :status) ':paused))
            (progn
              (if (mission-goal-p goal)
@@ -1475,6 +1506,38 @@ work must steer the running turn, not queue as follow-up work."
                                   "The session goal is active again.")
              (application--start-goal-work application))
            (application-present application "No paused goal to resume.")))
+      ((eq request ':update)
+       (when (and (application--goal-update application (first arguments) :literal-p t)
+                  (application-goal application)
+                  (eq (getf (application-goal application) :status) ':active))
+         (application--start-goal-work application)))
+      (t
+       (mission-detach application)
+       (setf (application-goal application)
+             (list :objective (copy-seq request)
+                   :status ':active
+                   :continuations 0
+                   :created-at (get-universal-time)))
+       (application--record-goal application)
+       (application-present
+        application
+        (format nil
+                "Goal set: ~A~%Autolith is starting work on it now. Use (goal) ~
+                 to inspect it and (goal :clear) to stop."
+                request))
+       (application--start-goal-work application))))
+  nil)
+
+(-> application-goal-command (application string) null)
+(defun application-goal-command (application remainder)
+  "Translate the legacy slash goal syntax into a typed goal request."
+  (let ((word (string-downcase remainder))
+        (update-argument (application--goal-update-argument remainder)))
+    (cond
+      ((zerop (length remainder))
+       (application-goal-request application nil nil))
+      ((member word '("clear" "pause" "resume") :test #'string=)
+       (application-goal-request application (intern (string-upcase word) '#:keyword) nil))
       (update-argument
        (when (and (application--goal-update application update-argument)
                   (application-goal application)
@@ -1487,20 +1550,7 @@ work must steer the running turn, not queue as follow-up work."
                      Usage: /goal [OBJECTIVE|update NEW-OBJECTIVE|clear|pause|resume]"
                 remainder)))
       (t
-       (mission-detach application)
-       (setf (application-goal application)
-             (list :objective remainder
-                   :status ':active
-                   :continuations 0
-                   :created-at (get-universal-time)))
-       (application--record-goal application)
-       (application-present
-        application
-        (format nil
-                "Goal set: ~A~%Autolith is starting work on it now. Use /goal ~
-                 to inspect it and /goal clear to stop."
-                remainder))
-       (application--start-goal-work application))))
+       (application-goal-request application remainder nil))))
   nil)
 
 
@@ -2943,12 +2993,17 @@ The current value and its source sit in aligned columns of their own."
     (:name "/goal"
      :argument "[OBJECTIVE]"
      :description "set or view the session goal"
-     :tip "sets the objective Autolith should pursue across continuations."
+     :tip "set a string objective; use (goal :pause), (goal :resume), or (goal :clear) for control."
      :busy-behavior :inspect
      :terminal-behavior :shared
      :callable t)
-    (application &optional (remainder ""))
-  (application-goal-command application remainder)
+    (application &optional request &rest arguments)
+  (let ((invocation *application-command-presentation-invocation*))
+    (if (and invocation
+             (eq (application-command-invocation-syntax invocation) ':slash))
+        (application-goal-command
+         application (application-command-invocation-remainder invocation))
+        (application-goal-request application request arguments)))
   ':continue)
 
 (define-application-command application--builtin-agenda-command

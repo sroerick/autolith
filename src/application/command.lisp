@@ -300,6 +300,12 @@
     :reader application-command-invocation-input
     :type string
     :documentation "The complete submitted command input.")
+   (syntax
+    :initarg :syntax
+    :initform ':slash
+    :reader application-command-invocation-syntax
+    :type (member :slash :lisp)
+    :documentation "Whether arguments came from slash text or evaluated Lisp values.")
    (name
     :initarg :name
     :reader application-command-invocation-name
@@ -314,7 +320,7 @@
     :initarg :argument
     :reader application-command-invocation-argument
     :type (option string)
-    :documentation "The first whitespace-delimited remainder argument.")
+    :documentation "The first supplied argument in textual form, when available.")
     (arguments
      :initarg :arguments
      :initform nil
@@ -804,7 +810,7 @@ without changing the registry."
 
 (-> application-command--raw-remainder-call-p (application-command) boolean)
 (defun application-command--raw-remainder-call-p (command)
-  "Return whether callable COMMAND receives its slash remainder without tokenizing."
+  "Return whether COMMAND uses one compatibility text argument in Lisp calls."
   (and
    (application-command-callable-p command)
    (multiple-value-bind (minimum maximum)
@@ -822,7 +828,7 @@ without changing the registry."
   "Return semantic slash arguments for callable COMMAND and REMAINDER."
   (unless (and command (application-command-callable-p command))
     (return-from application-command--slash-arguments nil))
-  (if (application-command--raw-remainder-call-p command)
+  (if (application-command--raw-remainder-p command)
       (if (zerop (length remainder)) nil (list remainder))
       parsed-arguments))
 
@@ -877,7 +883,7 @@ without changing the registry."
          (command (application-command-find submitted-name))
          (parsed-arguments
            (if (and command
-                    (application-command--raw-remainder-call-p command))
+                    (application-command--raw-remainder-p command))
                nil
                (application-command--tokens remainder)))
          (arguments

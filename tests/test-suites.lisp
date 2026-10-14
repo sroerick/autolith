@@ -933,6 +933,7 @@
   test-application-task-presentation
   test-working-directory-command
   test-effort-switch
+  test-public-goal-actions
   test-session-goal
   test-pending-publication-lock-boundaries
   test-pending-input-persistence)
