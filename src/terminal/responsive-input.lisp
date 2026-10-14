@@ -3664,27 +3664,12 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
      (and (typep condition 'agent-loop-error)
           (agent-loop-error-request-number condition)))))
 
-(-> application--run-message-input
-    (application (or string user-message-input)
-     &key (:steering-function (option function))
-          (:steering-persisted-function (option function))
-          (:user-message-persisted-function (option function))
-          (:pending-operations-function (option function))
-          (:pending-input-identifier (option non-empty-string))
-          (:tools-p boolean)
-          (:tool-allowlist (option list))
-          (:tool-restriction-p boolean)
-          (:goal-continuations-p boolean)
-          (:fatal-agent-loop-errors-p boolean))
+(-> application--call-with-model-error-handling
+    (application function &key (:fatal-agent-loop-errors-p boolean))
     keyword)
-(defun application--run-message-input
-    (application input
-     &key steering-function steering-persisted-function
-          user-message-persisted-function pending-operations-function
-          pending-input-identifier (tools-p t)
-          tool-allowlist (tool-restriction-p nil) (goal-continuations-p t)
-          (fatal-agent-loop-errors-p t))
-  "Run model INPUT with established expected, cancellation, and fatal handling."
+(defun application--call-with-model-error-handling
+    (application function &key (fatal-agent-loop-errors-p t))
+  "Run model work under the expected, cancellation, and fatal condition boundary."
   (let* ((conversation (application-conversation application))
          (turn-start-sequence (conversation-next-sequence conversation))
          (signal-backtrace nil))
@@ -3695,18 +3680,7 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
              (setf signal-backtrace (application-safe-backtrace)))))
       (handler-case
           (progn
-            (application-run-message
-             application
-             input
-             :steering-function steering-function
-             :steering-persisted-function steering-persisted-function
-             :user-message-persisted-function user-message-persisted-function
-             :pending-operations-function pending-operations-function
-             :pending-input-identifier pending-input-identifier
-             :tools-p tools-p
-             :tool-allowlist tool-allowlist
-             :tool-restriction-p tool-restriction-p
-             :goal-continuations-p goal-continuations-p)
+            (funcall function)
             ':continue)
         (application-turn-cancelled (condition)
           (application--record-turn-aborted
@@ -3740,6 +3714,43 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           ':failed)
         (serious-condition (condition)
           (application-raise-fatal application condition signal-backtrace))))))
+
+(-> application--run-message-input
+    (application (or string user-message-input)
+     &key (:steering-function (option function))
+          (:steering-persisted-function (option function))
+          (:user-message-persisted-function (option function))
+          (:pending-operations-function (option function))
+          (:pending-input-identifier (option non-empty-string))
+          (:tools-p boolean)
+          (:tool-allowlist (option list))
+          (:tool-restriction-p boolean)
+          (:goal-continuations-p boolean)
+          (:fatal-agent-loop-errors-p boolean))
+    keyword)
+(defun application--run-message-input
+    (application input
+     &key steering-function steering-persisted-function
+          user-message-persisted-function pending-operations-function
+          pending-input-identifier (tools-p t)
+          tool-allowlist (tool-restriction-p nil) (goal-continuations-p t)
+          (fatal-agent-loop-errors-p t))
+  "Run model INPUT with established expected, cancellation, and fatal handling."
+  (application--call-with-model-error-handling
+   application
+   (lambda ()
+     (application-run-message
+      application input
+      :steering-function steering-function
+      :steering-persisted-function steering-persisted-function
+      :user-message-persisted-function user-message-persisted-function
+      :pending-operations-function pending-operations-function
+      :pending-input-identifier pending-input-identifier
+      :tools-p tools-p
+      :tool-allowlist tool-allowlist
+      :tool-restriction-p tool-restriction-p
+      :goal-continuations-p goal-continuations-p))
+   :fatal-agent-loop-errors-p fatal-agent-loop-errors-p))
 
 (defun application--run-command-input (application input &key (interactive-p t))
   "Run command INPUT through the local restart debugger."
@@ -3821,7 +3832,12 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
             (:apply-pending
              (application-input-controller--apply-pending-commands controller))
             (:job-completion
-             (application-job-completions-run controller (second work)))
+             (application-input-controller--record-prompt-result
+              controller
+              (application--call-with-model-error-handling
+               application
+               (lambda ()
+                 (application-job-completions-run controller (second work))))))
             (:job-completion-maintenance
              (application-job-completions-maintain controller (second work)))
             (:message
@@ -3880,20 +3896,25 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
                  (application-input-controller--request-exit
                   controller ':quit))))
             (:operation-request
-             (let ((request (second work)))
-               (application-input-controller-call-with-primary-steering
-                controller
-                (lambda (take acknowledge)
-                  (application--run-turn
-                   application
-                   (getf request :text)
-                   :operation-request (getf request :request)
-                   :steering-function take
-                   :steering-persisted-function acknowledge
-                   :pending-operations-function
-                   (lambda (owner)
-                     (application-input-controller--apply-pending-commands
-                      controller :agent owner)))))))
+             (application-input-controller--record-prompt-result
+              controller
+              (application--call-with-model-error-handling
+               application
+               (lambda ()
+                 (let ((request (second work)))
+                   (application-input-controller-call-with-primary-steering
+                    controller
+                    (lambda (take acknowledge)
+                      (application--run-turn
+                       application
+                       (getf request :text)
+                       :operation-request (getf request :request)
+                       :steering-function take
+                       :steering-persisted-function acknowledge
+                       :pending-operations-function
+                       (lambda (owner)
+                         (application-input-controller--apply-pending-commands
+                          controller :agent owner))))))))))
             (:project-adaptation-offer
              (application-maybe-offer-project-adaptation application))
             (:localgroup-handoff

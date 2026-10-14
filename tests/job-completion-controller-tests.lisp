@@ -12,12 +12,13 @@
         :completion-policy policy :mission-id mission-id :ready-at ready-at
         :state ':completed :outcome ':success :summary "completed fixture" :artifact-path nil))
 
-(-> job-completion-controller-tests--fixture (function) null)
-(defun job-completion-controller-tests--fixture (function)
+(-> job-completion-controller-tests--fixture
+    (function &key (:results list)) null)
+(defun job-completion-controller-tests--fixture
+    (function &key (results (loop repeat 4 collect (mission-test--result "done"))))
   "Exercise real primary turns while isolating the completion service's durable boundary."
   (with-test-configuration (configuration)
-    (let* ((application (mission-test--application
-                         configuration :results (loop repeat 4 collect (mission-test--result "done"))))
+    (let* ((application (mission-test--application configuration :results results))
            (controller (make-instance 'application-input-controller
                                       :application application :main-thread (current-thread)))
            (notices nil))
@@ -101,6 +102,68 @@
                            (search "continuing with job results" replayed)
                            (not (search "Continue the current work" replayed)))
                       "the replayed wakeup shows the same notice instead of its prompt"))))))
+
+(-> test-automatic-work-provider-failure () null)
+(defun test-automatic-work-provider-failure ()
+  "Contain refused automatic turns, retain their outcomes, and accept the next message."
+  (dolist (work-kind '(:job-completion :operation-request :goal-continuation))
+    (job-completion-controller-tests--fixture
+     (lambda (application controller notices)
+       (let* ((conversation (application-conversation application))
+              (provider (application-provider application))
+              (terminal (terminal-ui-terminal (application-ui application)))
+              (work
+                (if (eq work-kind ':operation-request)
+                    (list ':operation-request
+                          (list :text "Run the generated fixture request."
+                                :request (list :operation "fixture"
+                                               :summary "Run the fixture.")))
+                    (progn
+                      (funcall notices
+                               (list (job-completion-controller-tests--notice
+                                      application "refused-completion")))
+                      (application-input-controller--next-work controller)))))
+         (when (eq work-kind ':goal-continuation)
+           (setf (application-goal application)
+                 (list :objective "Finish the fixture." :status ':active
+                       :continuations 0 :created-at (get-universal-time))))
+         (recording-terminal-reset terminal)
+         (application-input-controller--run-work controller work)
+         (test-assert (= 1 (application-input-controller-prompt-marker-status controller))
+                      "the refused automatic turn reports a failed prompt")
+         (test-assert (search "cyber_policy" (recording-terminal-output terminal))
+                      "the provider refusal is visible in the terminal")
+         (test-assert (find-if
+                       (lambda (record)
+                         (and (eq (first record) ':turn-aborted)
+                              (eq (getf (rest record) :reason) ':application-error)))
+                       (conversation--read-records (conversation-pathname conversation)))
+                      "the failed automatic turn has a durable aborted outcome")
+         (unless (eq work-kind ':operation-request)
+           (test-assert (member "completion:refused-completion"
+                                (conversation-pending-input-identifiers conversation)
+                                :test #'equal)
+                        "the completion receipt survives its failed provider turn")
+           (test-assert (null (funcall notices))
+                        "a refused provider turn does not redeliver the completed job"))
+         (let ((request-count (length (scripted-provider-input-snapshots provider))))
+           (test-assert (= request-count (if (eq work-kind ':goal-continuation) 2 1))
+                        "the refusal does not trigger an automatic provider retry")
+           (setf (application-goal application) nil)
+           (application-input-controller--run-work controller (list ':message "Continue."))
+           (test-assert (= (1+ request-count)
+                           (length (scripted-provider-input-snapshots provider)))
+                        "the same controller accepts a subsequent user message")
+           (test-assert (null (application-input-controller-stopping-p controller))
+                        "the refused turn does not shut down the controller"))))
+     :results (append
+               (when (eq work-kind ':goal-continuation)
+                 (list (mission-test--result "integrated")))
+               (list (make-condition 'provider-error
+                                     :message "The provider returned cyber_policy."
+                                     :code "cyber_policy")
+                     (mission-test--result "continued")))))
+  nil)
 
 (-> test-job-completion-controller-notify-and-busy () null)
 (defun test-job-completion-controller-notify-and-busy ()
