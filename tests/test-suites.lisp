@@ -115,6 +115,15 @@
   test-terminal-fullscreen-exit-epilogue
   test-terminal-fullscreen-forced-exit-resume)
 
+(define-test-suite onboarding-state
+  test-onboarding-state-selection
+  test-onboarding-state-monotonic-merge
+  test-onboarding-state-invalid-records
+  test-onboarding-state-recovery-and-validation
+  test-onboarding-state-publication-failure
+  test-onboarding-state-process-merge)
+
+
 (define-test-suite job-completion-policy
   test-job-completion-policy-normalization
   test-job-completion-policy-schema-invocation
