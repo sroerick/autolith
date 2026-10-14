@@ -125,6 +125,15 @@
   test-onboarding-state-process-merge)
 
 
+(define-test-suite onboarding-ui
+  test-onboarding-ui-session
+  test-onboarding-ui-restoration
+  test-onboarding-ui-geometry
+  test-onboarding-ui-links
+  test-onboarding-ui-validation
+  test-onboarding-ui-idle-resize)
+
+
 (define-test-suite job-completion-policy
   test-job-completion-policy-normalization
   test-job-completion-policy-schema-invocation

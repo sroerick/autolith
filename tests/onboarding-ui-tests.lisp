@@ -1,0 +1,321 @@
+(in-package #:autolith)
+
+;;;; -- Fullscreen Onboarding Behavior --
+
+(-> onboarding-ui-test--page (string &optional (option keyword)) list)
+(defun onboarding-ui-test--page (id &optional exercise)
+  "Return one small valid lesson with an optional prompt EXERCISE."
+  (list :id id :version 1 :title "Welcome" :body "Read, explore, adapt." :exercise exercise))
+
+(-> test-onboarding-ui-session () null)
+(defun test-onboarding-ui-session ()
+  "Complete real-editor exercises without submitting work or evaluating input."
+  (let* ((terminal (make-instance 'scripted-terminal :columns 80 :rows 24
+                                  :events '((:paste "(error \"unevaluated lesson input\")") :submit
+                                            :home :kill-to-end (:paste "contnue")
+                                            :home :right :right :right :right (:insert "i") :submit
+                                            (:paste "(help)") :submit
+                                            (:paste "continue") :submit
+                                            (:paste "? (+ 1 2)") :submit :submit)))
+         (pages (list (onboarding-ui-test--page "plain" ':continue)
+                      (onboarding-ui-test--page "help" ':help)
+                      (onboarding-ui-test--page "async" ':async)))
+         (completed nil)
+         (help-calls 0))
+    (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
+      (multiple-value-bind (outcome ids)
+          (terminal-ui-onboard ui pages
+                               :help-function (lambda () (incf help-calls) "Actual basic help")
+                               :page-completed-function (lambda (page) (push page completed)))
+        (test-assert (eq outcome ':completed) "all three exercises finish")
+        (test-assert (equal ids '("plain" "help" "async")) "completion order is preserved")
+        (test-assert (equal (reverse completed) pages) "callback receives complete page plists")
+        (test-assert (plusp help-calls) "basic help callback was used")
+        (test-assert (null (scripted-terminal-events terminal)) "input loop consumes every stage")
+        (test-assert (search "Actual basic help" (recording-terminal-output terminal)) "help is presented")
+        (test-assert (zerop (length (line-editor-history (terminal-ui-editor ui)))) "demo adds no command history"))))
+  (onboarding-ui-test--navigation)
+  nil)
+
+(-> test-onboarding-ui-restoration () null)
+(defun test-onboarding-ui-restoration ()
+  "Restore editor traversal, attachments and fullscreen on every exit path."
+  (dolist (event '(:escape :interrupt :end-of-input))
+    (let ((terminal (make-instance 'scripted-terminal :columns 80 :rows 24
+                                   :events (list '(:paste "con") event))))
+      (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
+        (let ((editor (terminal-ui-editor ui))
+              (active (fullscreen-terminal-ui-active-p ui)))
+          (clinedi:line-editor-replace-history editor '("saved draft older" "saved draft recent"))
+          (line-editor-set-text editor "saved draft" :cursor 3)
+          (line-editor-handle-event editor ':history-previous)
+          (setf (terminal-ui-image-attachments ui) '(("image.png" . 2))
+                (terminal-ui-lisp-input-p ui) t)
+          (let ((text (line-editor-text editor))
+                (cursor (line-editor-cursor editor)))
+            (multiple-value-bind (outcome ids)
+                (terminal-ui-onboard ui (list (onboarding-ui-test--page "one" ':continue)))
+              (test-assert (eq outcome (if (eq event ':escape) ':refused ':interrupted)) "exit classification")
+              (test-assert (null ids) "unfinished pages are not completed"))
+            (test-assert (string= text (line-editor-text editor)) "visible recalled draft restored")
+            (test-assert (= cursor (line-editor-cursor editor)) "cursor restored")
+            (test-assert (clinedi:line-editor-history-navigating-p editor) "history traversal restored")
+            (line-editor-handle-event editor ':history-next)
+            (test-assert (string= "saved draft" (line-editor-text editor)) "history stash restored")
+            (test-assert (= 3 (line-editor-cursor editor)) "stash cursor restored")
+            (test-assert (equal (terminal-ui-image-attachments ui) '(("image.png" . 2))) "attachments restored")
+            (test-assert (terminal-ui-lisp-input-p ui) "prompt mode restored")
+            (test-assert (eq active (fullscreen-terminal-ui-active-p ui)) "fullscreen ownership restored"))))))
+  (onboarding-ui-test--lifecycle)
+  nil)
+
+(-> test-onboarding-ui-geometry () null)
+(defun test-onboarding-ui-geometry ()
+  "Keep full-height frames and prompt cursors inside small and resized terminals."
+  (let ((terminal (make-instance 'recording-terminal :columns 80 :rows 24)))
+    (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
+      (let ((page (onboarding-ui-test--page "one" ':help)))
+        (setf (getf page :body)
+              (with-output-to-string (stream)
+                (dotimes (index 30) (format stream "Long lesson ~D with 猫 and é.~%" index))))
+        (dolist (example '(("continue" #\>) ("(help)" #\*) ("? (+ 1 2)" #\?)))
+          (line-editor-set-text (terminal-ui-editor ui) (first example))
+          (multiple-value-bind (rows row column)
+              (terminal-ui-onboarding--prompt-rows ui 80)
+            (declare (ignore row column))
+            (test-assert (char= (second example)
+                               (char (string-left-trim '(#\Space) (clinedi:ansi-strip (first rows))) 0))
+                         "prompt marks ordinary, Lisp and async input")))
+        (line-editor-set-text (terminal-ui-editor ui) "(help)")
+        (dolist (width '(1 2 7 20 80 120))
+          (dolist (height '(1 2 4 8 24))
+            (terminal-set-dimensions terminal width :rows height)
+            (multiple-value-bind (rows row column offset)
+                (terminal-ui-onboarding--frame ui page :count 3 :help-function (constantly "Help"))
+              (test-assert (= (length rows) height) "frame fills viewport")
+              (test-assert (<= 0 row (1- height)) "cursor row fits")
+              (test-assert (<= 0 column (1- width)) "cursor column fits")
+              (test-assert (<= 0 offset) "scroll offset is bounded")
+              (test-assert (every (lambda (display) (<= (clinedi:ansi-display-width display) width)) rows)
+                           "every row fits terminal cells")))))))
+  (onboarding-ui-test--async-lifecycle)
+  (onboarding-ui-test--editor-viewport)
+  nil)
+
+(-> test-onboarding-ui-links () null)
+(defun test-onboarding-ui-links ()
+  "Hit-test separate semantic links after wrapping, centering and scrolling."
+  (let* ((first-action '(:open-url "https://autolith.rocks"))
+         (second-action '(:open-url "https://twitter.com/LukasHozda"))
+         (page (onboarding-ui-test--page "links"))
+         (terminal (make-instance 'recording-terminal :columns 80 :rows 24)))
+    (setf (getf page :body)
+          (list (termdown:make-widget ':brand "Autolith" first-action)
+                (terminal-span ':plain " by ")
+                (termdown:make-widget ':strong "Lukáš Hozda" second-action)))
+    (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
+      (dolist (width '(80 17 7))
+        (terminal-set-dimensions terminal width :rows 24)
+        (multiple-value-bind (rows cursor-row cursor-column offset regions)
+            (terminal-ui-onboarding--frame ui page)
+          (declare (ignore cursor-row cursor-column offset))
+          (test-assert (find first-action regions :key #'fourth :test #'equal) "first link visible")
+          (test-assert (find second-action regions :key #'fourth :test #'equal) "second link visible")
+          (dolist (region regions)
+            (destructuring-bind (row start end action) region
+              (test-assert (< start end) "regions contain cells")
+              (test-assert (<= end (clinedi:ansi-display-width (nth row rows))) "regions end inside rendered row")
+              (test-assert (equal action (terminal-ui-onboarding--link-action regions (1+ start) (1+ row)))
+                           "click invokes that exact link")))
+          (test-assert (null (terminal-ui-onboarding--link-action regions 1 1)) "blank area has no action")))))
+  nil)
+
+(-> test-onboarding-ui-validation () null)
+(defun test-onboarding-ui-validation ()
+  "Reject malformed pages before ownership and check freely edited text only on submission."
+  (dolist (pages (list (list (list :id "x" :version 0 :title "T" :body "B"))
+                      (list (onboarding-ui-test--page "x") (onboarding-ui-test--page "x"))))
+    (test-assert (handler-case (progn (terminal-ui-onboarding--validate-pages pages) nil)
+                   (onboarding-error () t)) "malformed and duplicate pages fail"))
+  (let ((terminal (make-instance 'recording-terminal :columns 80 :rows 24)))
+    (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
+      (terminal-ui-onboarding--apply-exercise-event ui '(:paste "(delete-file \"data\")"))
+      (test-assert (string= "(delete-file \"data\")" (line-editor-text (terminal-ui-editor ui)))
+                   "arbitrary forms are editable")
+      (test-assert (not (terminal-ui-onboarding--exercise-submitted-p ui "(help)"))
+                   "unmatched submissions do not complete the exercise")
+      (terminal-ui-onboarding--apply-exercise-event ui ':home)
+      (terminal-ui-onboarding--apply-exercise-event ui ':kill-to-end)
+      (terminal-ui-onboarding--apply-exercise-event ui '(:paste "(hlp)"))
+      (terminal-ui-onboarding--apply-exercise-event ui ':home)
+      (terminal-ui-onboarding--apply-exercise-event ui ':right)
+      (terminal-ui-onboarding--apply-exercise-event ui ':right)
+      (terminal-ui-onboarding--apply-exercise-event ui '(:insert "e"))
+      (test-assert (terminal-ui-onboarding--exercise-submitted-p ui "(help)")
+                   "the user can correct a typo in the middle of a form")))
+  nil)
+
+
+(-> onboarding-ui-test--navigation () null)
+(defun onboarding-ui-test--navigation ()
+  "Navigate backwards without duplicating callbacks, including partial completion."
+  (let* ((terminal (make-instance 'scripted-terminal :columns 80 :rows 24
+                                  :events '(:submit :left :submit (:resize 30 12) :submit :escape)))
+         (pages (loop for id in '("one" "two" "three") collect (onboarding-ui-test--page id)))
+         (completed nil))
+    (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
+      (multiple-value-bind (outcome ids)
+          (terminal-ui-onboard ui pages :page-completed-function
+                               (lambda (page) (push (getf page :id) completed)))
+        (test-assert (eq outcome ':refused) "refusal after partial completion")
+        (test-assert (equal ids '("one" "two")) "seen IDs exclude unfinished page and duplicates")
+        (test-assert (equal completed '("two" "one")) "back navigation does not duplicate callbacks")
+        (test-assert (= 30 (terminal-columns terminal)) "resize event updates width")
+        (test-assert (= 12 (terminal-rows terminal)) "resize event updates height"))))
+  nil)
+
+(-> onboarding-ui-test--lifecycle () null)
+(defun onboarding-ui-test--lifecycle ()
+  "Defer threaded output during presentation and restore before returning input ownership."
+  (dolist (fail-callback-p '(nil t))
+    (let* ((active-ui nil)
+           (owned-p nil)
+           (appended-p nil)
+           (terminal
+             (make-instance
+              'scripted-terminal :columns 80 :rows 24 :events '(:submit)
+              :read-callback
+              (lambda ()
+                (test-assert owned-p "modal reads only under exclusive input ownership")
+                (test-assert (terminal-ui-live-output-suspended-p active-ui) "live output suspended")
+                (unless appended-p
+                  (setf appended-p t)
+                  (let* ((output (recording-terminal-output (terminal-ui-terminal active-ui)))
+                         (thread (bordeaux-threads:make-thread
+                                  (lambda () (terminal-ui-append-finalized active-ui ':background "Background result")))))
+                    (bordeaux-threads:join-thread thread)
+                    (test-assert (string= output (recording-terminal-output (terminal-ui-terminal active-ui)))
+                                 "background output cannot repaint modal")))))))
+      (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
+        (setf active-ui ui)
+        (line-editor-set-text (terminal-ui-editor ui) "saved" :cursor 2)
+        (setf (terminal-ui-exclusive-input-function ui)
+              (lambda (thunk)
+                (test-assert (not owned-p) "input ownership acquired once")
+                (setf owned-p t)
+                (unwind-protect (funcall thunk)
+                  (test-assert (string= "saved" (line-editor-text (terminal-ui-editor ui))) "restore before releasing owner")
+                  (test-assert (= 2 (line-editor-cursor (terminal-ui-editor ui))) "cursor restored before releasing owner")
+                  (test-assert (not (terminal-ui-live-output-suspended-p ui)) "output restored before releasing owner")
+                  (setf owned-p nil))))
+        (let ((caught-p nil))
+          (handler-case
+              (terminal-ui-onboard
+               ui (list (onboarding-ui-test--page "one"))
+               :page-completed-function
+               (lambda (page)
+                 (declare (ignore page))
+                 (when fail-callback-p
+                   (error 'onboarding-error :message "Injected completion failure."
+                                            :operation ':onboard :cause nil))))
+            (onboarding-error () (setf caught-p t)))
+          (test-assert (eq caught-p fail-callback-p) "callback error propagates after cleanup"))
+        (test-assert (not owned-p) "exclusive input released")
+        (test-assert (string= "" (terminal-ui-deferred-live-appended-text ui)) "deferred output flushed")
+        (test-assert (search "Background result" (recording-terminal-output terminal)) "background output retained")
+        (terminal-ui-fullscreen-leave ui)
+        (setf (scripted-terminal-events terminal) '(:escape))
+        (terminal-ui-onboard ui (list (onboarding-ui-test--page "again")))
+        (test-assert (not (fullscreen-terminal-ui-active-p ui)) "temporary fullscreen ownership restored"))))
+  nil)
+
+(-> onboarding-ui-test--async-lifecycle () null)
+(defun onboarding-ui-test--async-lifecycle ()
+  "Join the fixed demo thread after both successful and failed pending paints."
+  (let ((thread nil)
+        (original (symbol-function 'bordeaux-threads:make-thread)))
+    (test-call-with-function-replacements
+     (list (list 'bordeaux-threads:make-thread
+                 (lambda (function &rest arguments)
+                   (setf thread (apply original function arguments)))))
+     (lambda ()
+       (test-assert (= 3 (terminal-ui-onboarding--async-demo (constantly nil)))
+                    "fixed demo computes its result on a worker thread")
+       (test-assert (not (bordeaux-threads:thread-alive-p thread)) "successful demo thread joined")
+       (handler-case
+           (terminal-ui-onboarding--async-demo
+            (lambda ()
+              (error 'onboarding-error :message "Injected pending paint failure."
+                                       :operation ':onboard :cause nil)))
+         (onboarding-error () nil))
+       (test-assert (not (bordeaux-threads:thread-alive-p thread)) "failed paint still joins demo thread"))))
+  nil)
+
+
+(-> test-onboarding-ui-idle-resize () null)
+(defun test-onboarding-ui-idle-resize ()
+  "Shrink and grow the active tour without a keystroke, preserving edited input."
+  (let* ((terminal (make-instance 'queued-recording-terminal :columns 80 :rows 24))
+         (waits 0)
+         (sizes nil)
+         (*terminal-resize-pending-p* nil)
+         (*terminal-relayed-resize* nil)
+         (paint-function (symbol-function 'terminal-ui-fullscreen-paint)))
+    (queued-recording-terminal-enqueue terminal '(:paste "free editing"))
+    (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
+      (test-call-with-function-replacements
+       (list (list 'terminal-ui-fullscreen-paint
+                   (lambda (target &key rows cursor-row cursor-column)
+                     (when (terminal-ui-live-output-suspended-p target)
+                       (let ((width (terminal-columns terminal))
+                             (height (terminal-rows terminal)))
+                         (push (cons height width) sizes)
+                         (test-assert (= height (length rows)) "resize repaints the complete viewport")
+                         (test-assert (<= 0 cursor-row (1- height)) "resized cursor row fits")
+                         (test-assert (<= 0 cursor-column (1- width)) "resized cursor column fits")
+                         (test-assert (every (lambda (row) (<= (clinedi:ansi-display-width row) width)) rows)
+                                      "resized rows fit their terminal width")))
+                     (funcall paint-function target :rows rows :cursor-row cursor-row :cursor-column cursor-column))))
+       (lambda ()
+         (test-assert
+          (eq ':refused
+              (terminal-ui-onboard
+               ui (list (onboarding-ui-test--page "resize" ':help))
+               :resize-callback #'application-pending-terminal-size
+               :wait-function
+               (lambda (seconds)
+                 (declare (ignore seconds))
+                 (case (incf waits)
+                   (1
+                    (terminal-relayed-resize-publish 9 28))
+                   (2
+                    (test-assert (equal (first sizes) '(9 . 28)) "shrink repaint happens before any input")
+                    (terminal-relayed-resize-publish 30 100))
+                   (3
+                    (test-assert (equal (first sizes) '(30 . 100)) "grow repaint happens before any input")
+                    (test-assert (string= "free editing" (line-editor-text (terminal-ui-editor ui)))
+                                 "idle resizes preserve the exercise buffer")
+                    (queued-recording-terminal-enqueue terminal ':escape))
+                   (otherwise
+                    (error "Onboarding resize test exceeded its deterministic wait budget."))))))
+          "the resized tour can be dismissed normally")))
+      (test-assert (= 3 waits) "the modal loop polls while input is idle")))
+  nil)
+
+
+(-> onboarding-ui-test--editor-viewport () null)
+(defun onboarding-ui-test--editor-viewport ()
+  "Keep the actual cursor's input row visible when a draft exceeds the screen."
+  (let* ((text (format nil "~{~A~^~%~}" (loop for index below 20 collect (format nil "~3,'0D" index))))
+         (terminal (make-instance 'recording-terminal :columns 20 :rows 8)))
+    (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
+      (dolist (height '(1 2 8))
+        (terminal-set-dimensions terminal 20 :rows height)
+        (dolist (position (list 0 (length text)))
+          (line-editor-set-text (terminal-ui-editor ui) text :cursor position)
+          (multiple-value-bind (rows row column)
+              (terminal-ui-onboarding--frame ui (onboarding-ui-test--page "long" ':help))
+            (declare (ignore column))
+            (test-assert (search (if (zerop position) "000" "019") (clinedi:ansi-strip (nth row rows)))
+                         "the rendered cursor points at its visible input row"))))))
+  nil)
