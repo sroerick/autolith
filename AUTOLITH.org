@@ -18,6 +18,21 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Isolated patches beside unrelated edits
+
+- Problem: isolated patch checks required an entirely clean integration target,
+  blocking nonoverlapping patches in a workspace with preserved user edits.
+- Behavior: require cleanliness only for affected paths reported by Git; retain
+  busy-operation checks and Git's index/worktree applicability checks.
+- Scope and location: private =cl-worktree:check-patch= definition, image commit
+  =bc75abac-fc67-40b7-9148-cbfe76206c78=, private Git
+  =19b44556b18fb0a7f2fa1d56c25319a6464d3a5a=.
+- Verification: actual =task.worktree= check/apply preserved unrelated edits and
+  rejected changed patch paths. NUL-delimited rename and literal path checks
+  passed, as did clean-process private replay.
+- Removal condition: replace the override after installing equivalent upstream
+  =cl-worktree= integration behavior.
+
 ** Native paths in file observations
 
 - Problem: scratchpad URIs did not identify the filesystem paths needed by
