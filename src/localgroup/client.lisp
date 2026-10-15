@@ -711,17 +711,36 @@ that action to the controlling terminal."
         (localgroup-print-statuses statuses)))
   nil)
 
-(-> localgroup--required-session-id (clingon:command) string)
-(defun localgroup--required-session-id (command)
-  "Return COMMAND's single required session identifier argument."
-  (let ((arguments (command-arguments command)))
-    (unless (and (= (length arguments) 1)
-                 (non-empty-string-p (first arguments)))
-      (error 'localgroup-error
-             :message (format nil "localgroup ~A requires a session identifier."
-                              (command-name command))
-             :operation ':arguments))
-    (first arguments)))
+(-> localgroup--reachable-records (configuration) list)
+(defun localgroup--reachable-records (configuration)
+  "Return endpoint records whose status endpoint is reachable."
+  (loop for entry in (localgroup-endpoint-records configuration)
+        when (handler-case
+                (localgroup-query-record entry ':status)
+              (localgroup-error () nil))
+        collect entry))
+
+(-> localgroup--session-record (configuration &optional (option string)) cons)
+(defun localgroup--session-record (configuration &optional session-id)
+  "Return the explicitly selected or sole reachable session record."
+  (if session-id
+      (localgroup--find-record configuration session-id)
+      (let ((records (localgroup--reachable-records configuration)))
+        (cond ((null records)
+               (error 'localgroup-error
+                      :message "No reachable localgroup session is running."
+                      :operation ':discover))
+              ((rest records)
+               (error 'localgroup-error
+                      :message (format nil "Multiple reachable localgroup sessions are running; provide a session identifier: ~{~A~^, ~}."
+                                       (sort (mapcar (lambda (entry)
+                                                       (session-identifier-display
+                                                        (localgroup--record-session-id (rest entry))))
+                                                     records)
+                                             #'string<))
+                      :operation ':discover))
+              (t
+               (first records))))))
 
 (-> localgroup--status-command () clingon:command)
 (defun localgroup--status-command ()
@@ -748,20 +767,20 @@ that action to the controlling terminal."
   (make-command
    :name "tell"
    :description "queue one message for a detached session"
-   :usage "SESSION-ID MESSAGE"
+   :usage "[SESSION-ID] MESSAGE"
    :handler
    (lambda (command)
      (let ((arguments (command-arguments command)))
-       (unless (= (length arguments) 2)
+       (unless (member (length arguments) '(1 2))
          (error 'localgroup-error
-                :message "localgroup tell requires a session identifier and exactly one quoted message argument."
+                :message "localgroup tell requires MESSAGE, or SESSION-ID and exactly one quoted message argument."
                 :operation ':arguments))
        (let* ((configuration (localgroup--client-configuration))
-              (entry (localgroup--find-record configuration
-                                              (first arguments))))
+              (session-id (when (= (length arguments) 2) (first arguments)))
+              (message (if session-id (second arguments) (first arguments)))
+              (entry (localgroup--session-record configuration session-id)))
          (localgroup--print-response
-          (localgroup-query-record entry ':tell
-                                   (list :message (second arguments)))
+          (localgroup-query-record entry ':tell (list :message message))
           *standard-output*))))))
 
 (-> localgroup--attach-command () clingon:command)
@@ -770,7 +789,7 @@ that action to the controlling terminal."
   (make-command
    :name "attach"
    :description "attach this terminal to a detached session"
-   :usage "SESSION-ID"
+   :usage "[SESSION-ID]"
    :options (list (make-option ':flag
                                :long-name "read-only"
                                :key ':read-only
@@ -781,38 +800,46 @@ that action to the controlling terminal."
                                :description "take exclusive control"))
    :handler
    (lambda (command)
-     (let ((session-id (localgroup--required-session-id command))
-           (read-only-p (not (null (getopt command ':read-only))))
-           (take-over-p (not (null (getopt command ':take-over)))))
-       (when (and read-only-p take-over-p)
+     (let ((arguments (command-arguments command)))
+       (unless (member (length arguments) '(0 1))
          (error 'localgroup-error
-                :message "Choose at most one of --read-only and --take-over."
+                :message "localgroup attach accepts at most one session identifier."
                 :operation ':arguments))
-       (let ((configuration (localgroup--client-configuration))
-             (mode (cond (read-only-p ':read-only)
-                         (take-over-p ':take-over)
-                         (t ':control))))
-         (localgroup-relay-exit
-          (localgroup-attach-record configuration
-                                    (localgroup--find-record configuration session-id)
-                                    mode)
-          mode))))))
+       (let ((read-only-p (not (null (getopt command ':read-only))))
+             (take-over-p (not (null (getopt command ':take-over)))))
+         (when (and read-only-p take-over-p)
+           (error 'localgroup-error
+                  :message "Choose at most one of --read-only and --take-over."
+                  :operation ':arguments))
+         (let* ((configuration (localgroup--client-configuration))
+                (session-id (first arguments))
+                (mode (cond (read-only-p ':read-only)
+                            (take-over-p ':take-over)
+                            (t ':control)))
+                (entry (localgroup--session-record configuration session-id)))
+           (localgroup-relay-exit
+            (localgroup-attach-record configuration entry mode)
+            mode)))))))
 
 (-> localgroup--operation-command (string string keyword) clingon:command)
 (defun localgroup--operation-command (name description operation)
-  "Return one single-session localgroup OPERATION sub-command definition."
+  "Return a single-session localgroup OPERATION sub-command definition."
   (make-command
    :name name
    :description description
-   :usage "SESSION-ID"
+   :usage "[SESSION-ID]"
    :handler
    (lambda (command)
-     (let* ((session-id (localgroup--required-session-id command))
-            (configuration (localgroup--client-configuration))
-            (entry (localgroup--find-record configuration session-id)))
-       (localgroup--print-response
-        (localgroup-query-record entry operation)
-        *standard-output*)))))
+     (let ((arguments (command-arguments command)))
+       (unless (member (length arguments) '(0 1))
+         (error 'localgroup-error
+                :message (format nil "localgroup ~A accepts at most one session identifier." name)
+                :operation ':arguments))
+       (let* ((configuration (localgroup--client-configuration))
+              (entry (localgroup--session-record configuration (first arguments))))
+         (localgroup--print-response
+          (localgroup-query-record entry operation)
+          *standard-output*))))))
 
 (-> main-localgroup-command () clingon:command)
 (defun main-localgroup-command ()

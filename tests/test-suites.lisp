@@ -830,6 +830,7 @@
   test-localgroup-session-exit-relay
   test-localgroup-resume-instruction-relay
   test-localgroup-relay-exit
+  test-localgroup-cli-targets
   test-localgroup-session-prefixes
   test-localgroup-protocol
   test-localgroup-orphan-reconciliation

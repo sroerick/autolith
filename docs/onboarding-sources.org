@@ -299,15 +299,16 @@ Use =(detach)= to disconnect your terminal while Autolith keeps working.
 
 *From another terminal:*
 =autolith localgroup status=
-=autolith localgroup attach SESSION-ID=
-=autolith localgroup tell   SESSION-ID "message"=
-=autolith localgroup pause  SESSION-ID=
-=autolith localgroup detach SESSION-ID=
-=autolith localgroup kill   SESSION-ID=
+=autolith localgroup attach [SESSION-ID]=
+=autolith localgroup tell   [SESSION-ID] "message"=
+=autolith localgroup pause  [SESSION-ID]=
+=autolith localgroup detach [SESSION-ID]=
+=autolith localgroup kill   [SESSION-ID]=
 
 To watch without sending input, use =attach --read-only=.
 To take over the session, use =attach --take-over=.
-Use the conversation ID reported by =status=.
+Use =autolith lg= as shorthand for =autolith localgroup=.
+With one active session, omit =SESSION-ID=. With several, use an ID from =status=.
 
 * Give Autolith an objective
 :PROPERTIES:

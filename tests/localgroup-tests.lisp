@@ -228,6 +228,150 @@
                                                ':ignore))))
   nil)
 
+(-> test-localgroup-cli-targets () null)
+(defun test-localgroup-cli-targets ()
+  "Exercise aliases, optional targets, discovery, and CLI validation at dispatch."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (configuration-ensure-directories configuration)
+    (let ((calls nil)
+          (probes nil)
+          (live-ports nil)
+          (*standard-output* (make-string-output-stream)))
+      (labels ((publish (session-id port)
+                 "Publish a private endpoint using PORT as its test identity."
+                 (snapshot-write
+                  (localgroup-registry-pathname configuration session-id)
+                  (list :localgroup-endpoint
+                        :version image-daemon:*daemon-registry-version*
+                        :session-id session-id :pid 1 :address "127.0.0.1"
+                        :port port :token "cli-test-token"
+                        :created-at (get-universal-time))))
+
+               (invoke (arguments)
+                 "Dispatch ARGUMENTS through the actual top-level CLI tree."
+                 (setf calls nil probes nil)
+                 (let ((command (parse-command-line (main--top-level-command) arguments)))
+                   (funcall (command-handler command) command))
+                 (reverse calls))
+
+               (reject (arguments operation candidates)
+                 "Require structured failure and the applicable discovery candidates."
+                 (let ((condition
+                         (handler-case (progn (invoke arguments) nil)
+                           (localgroup-error (condition) condition))))
+                   (test-assert (and condition
+                                     (eq (daemon-error-operation condition) operation)
+                                     (null calls))
+                                "invalid or ambiguous commands do not perform operations")
+                   (when condition
+                     (test-assert
+                      (every (lambda (candidate)
+                               (search (session-identifier-display candidate)
+                                       (autolith-error-message condition)))
+                             candidates)
+                      "discovery failures identify the reachable candidate sessions"))
+                   (when (eq operation ':arguments)
+                     (test-assert (null probes)
+                                  "argument errors fail before discovering sessions"))))
+
+               (check-targets (alias selector)
+                 "Exercise every targeted command with an omitted or explicit selector."
+                 (dolist (case '(("tell" ("two words") :tell (:message "two words"))
+                                 ("pause" nil :pause nil)
+                                 ("detach" nil :detach nil)
+                                 ("kill" nil :kill nil)
+                                 ("attach" nil :attach :control)
+                                 ("attach" ("--read-only") :attach :read-only)
+                                 ("attach" ("--take-over") :attach :take-over)))
+                   (destructuring-bind (name arguments operation payload) case
+                     (let ((expected (if (eq operation ':attach)
+                                         (list "b6uouHJ" operation payload)
+                                         (list 1 operation payload))))
+                       (test-assert
+                        (equal (invoke (append (list alias name)
+                                               (when selector (list selector))
+                                               arguments))
+                               (list expected))
+                        "CLI aliases and optional selectors route each operation and attach mode"))))))
+        (test-call-with-function-replacements
+         (list
+          (list 'localgroup--client-configuration (lambda () configuration))
+          (list 'daemon-call
+                (lambda (port token operation &optional arguments)
+                  (declare (ignore token))
+                  (when (eq operation ':status) (push port probes))
+                  (unless (member port live-ports)
+                    (error "Test endpoint is unreachable."))
+                  (unless (eq operation ':status)
+                    (push (list port operation arguments) calls))
+                  (list :ok :operation operation
+                        :session-id (nth (1- port) '("b6uouHJ" "c6uouHJ" "d6uouHJ")))))
+          (list 'localgroup--run-status
+                (lambda (&key sexp-p) (push (list :status sexp-p) calls) nil))
+          (list 'localgroup-attach-record
+                (lambda (client-configuration entry mode)
+                  (test-assert (eq client-configuration configuration)
+                               "attach receives the selected client configuration")
+                  (push (list (localgroup--record-session-id (rest entry)) ':attach mode)
+                        calls)
+                  (list :status 0 :message "test exit")))
+          (list 'localgroup-relay-exit
+                (lambda (exit mode)
+                  (test-assert (and (equal exit '(:status 0 :message "test exit"))
+                                    (member mode '(:control :read-only :take-over)))
+                               "attach relays the exit result with its selected control mode")
+                  nil)))
+         (lambda ()
+           (dolist (alias '("localgroup" "lg"))
+             (test-assert (equal (invoke (list alias)) '((:status nil)))
+                          "either command spelling defaults to status")
+             (test-assert (equal (invoke (list alias "status" "--sexp")) '((:status t)))
+                          "the alias dispatches status options")
+             (dolist (arguments '(("tell") ("tell" "a" "b" "c")
+                                  ("pause" "a" "b") ("detach" "a" "b")
+                                  ("kill" "a" "b") ("attach" "a" "b")
+                                  ("attach" "--read-only" "--take-over")
+                                  ("status" "extra") ("unknown")))
+               (reject (cons alias arguments) ':arguments nil)))
+           ;; No registered endpoints, then only a stale endpoint.
+           (dolist (arguments '(("tell" "message") ("pause") ("detach")
+                                ("kill") ("attach")))
+             (reject (cons "lg" arguments) ':discover nil))
+           (publish "d6uouHJ" 3)
+           (reject '("lg" "pause") ':discover nil)
+           (test-assert (not (probe-file (localgroup-registry-pathname configuration "d6uouHJ")))
+                        "implicit discovery prunes stale endpoints")
+           ;; A stale endpoint does not make a sole live endpoint ambiguous.
+           (publish "d6uouHJ" 3)
+           (publish "b6uouHJ" 1)
+           (setf live-ports '(1))
+           (dolist (alias '("localgroup" "lg"))
+             (check-targets alias nil)
+             (dolist (selector '("b6uouHJ" "b-6uouHJ" "b-6"))
+               (check-targets alias selector)))
+           (test-assert (not (probe-file (localgroup-registry-pathname configuration "d6uouHJ")))
+                        "a stale endpoint is removed while selecting the sole live endpoint")
+           ;; Multiple reachable endpoints require a selector for every operation.
+           (publish "c6uouHJ" 2)
+           (setf live-ports '(1 2))
+           (dolist (arguments '(("tell" "message") ("pause") ("detach")
+                                ("kill") ("attach") ("attach" "--read-only")
+                                ("attach" "--take-over")))
+             (reject (cons "lg" arguments) ':discover '("b6uouHJ" "c6uouHJ")))
+           (dolist (alias '("localgroup" "lg"))
+             (check-targets alias "b"))
+           (test-assert (equal (invoke '("lg" "tell" "c" ""))
+                               '((2 :tell (:message ""))))
+                        "an explicit target preserves an empty quoted message")
+           ;; Explicit unavailable targets fail rather than falling back to a live one.
+           (publish "d6uouHJ" 3)
+           (reject '("lg" "pause" "d") ':pause '("d6uouHJ"))
+           (test-assert (not (probe-file (localgroup-registry-pathname configuration "d6uouHJ")))
+                        "explicit operations prune an unreachable target")
+           (reject '("lg" "pause" "z") ':discover '("z")))))))
+  nil)
+
 (-> test-localgroup-session-prefixes () null)
 (defun test-localgroup-session-prefixes ()
   "Test CLI session selection by unique canonical, displayed, and legacy prefixes."

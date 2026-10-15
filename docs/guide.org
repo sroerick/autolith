@@ -884,28 +884,31 @@ attached terminals continue using the same connection. Inspect endpoints with:
 
 #+BEGIN_SRC sh
 autolith localgroup status
-autolith localgroup status --sexp
+autolith lg status --sexp
 #+END_SRC
 
 =idle= means that the process is at input with no active work of any kind.
 
-Control a sessions with the following commands:
+Control a session with the following commands:
 
 #+BEGIN_SRC sh
-autolith localgroup tell   SESSION-ID "message"
-autolith localgroup pause  SESSION-ID
-autolith localgroup attach SESSION-ID
-autolith localgroup attach SESSION-ID --read-only
-autolith localgroup attach SESSION-ID --take-over
-autolith localgroup detach SESSION-ID
-autolith localgroup kill   SESSION-ID
+autolith lg tell   "message"
+autolith lg tell   SESSION-ID "message"
+autolith lg pause  [SESSION-ID]
+autolith lg attach [SESSION-ID]
+autolith lg attach [SESSION-ID] --read-only
+autolith lg attach [SESSION-ID] --take-over
+autolith lg detach [SESSION-ID]
+autolith lg kill   [SESSION-ID]
 #+END_SRC
 
-Use a full =SESSION-ID= or a prefix that matches one session. Prefixes accept
-IDs with or without the display hyphen, for example =b=, =b-6=, or =b6= for
-=b-6uouHJ=. Full IDs take priority over prefix matches. If a prefix matches
-more than one session, the error lists the matching IDs; use a longer prefix.
-Current IDs are case-sensitive. Legacy hexadecimal IDs accept either case.
+=lg= is an alias for =localgroup=. When exactly one endpoint is reachable,
+these commands select it when =SESSION-ID= is omitted. With multiple sessions,
+provide a full ID or a prefix that matches one session. Prefixes accept IDs with
+or without the display hyphen, for example =b=, =b-6=, or =b6= for =b-6uouHJ=.
+Full IDs take priority over prefix matches. If a prefix matches more than one
+session, the error lists the matching IDs; use a longer prefix. Current IDs are
+case-sensitive. Legacy hexadecimal IDs accept either case.
 
 =tell= uses input to tell something to a session and resumes a paused session.
 =pause= cancels active work and holds queued primary work.
