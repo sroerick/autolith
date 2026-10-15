@@ -77,7 +77,7 @@
     (let* ((pages (onboarding-pages configuration))
            (ids (mapcar (lambda (page) (getf page :id)) pages))
            (revised '("lisp-listener" "prompt-function" "input-vault" "indexed-search"
-                      "settings" "detached-sessions" "live-image")))
+                      "settings" "detached-sessions" "live-image" "mcp")))
       (test-assert (equal ids '("welcome" "live-image" "ordinary-prompt" "lisp-listener" "asynchronous-lisp"
                                 "prompt-function" "steering" "input-vault" "indexed-search"
                                 "settings" "detached-sessions" "goals" "missions"
@@ -102,6 +102,10 @@
         (test-assert (and (search (namestring (config :config-root configuration)) text)
                           (search (namestring (config :state-root configuration)) text))
                      "actual configured roots are visible in the settings lesson"))
+      (let* ((mcp (find "mcp" pages :test #'string= :key (lambda (page) (getf page :id))))
+             (text (terminal--spans-text (getf mcp :body))))
+        (test-assert (search (namestring (config :config-root configuration)) text)
+                     "the MCP lesson identifies the actual configuration root"))
       (test-assert (equal (loop for page in pages when (getf page :exercise)
                                collect (cons (getf page :id) (getf page :exercise)))
                           '(("ordinary-prompt" . :continue) ("lisp-listener" . :help)

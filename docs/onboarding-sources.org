@@ -383,7 +383,7 @@ Steer a running child with =(prompt :to 'child-name "...")=.
 * Connect external tools and services
 :PROPERTIES:
 :ID: mcp
-:VERSION: 3
+:VERSION: 4
 :END:
 *Model Context Protocol (MCP)* provides tools, resources, and reusable prompts from external servers.
 
@@ -393,6 +393,8 @@ Steer a running child with =(prompt :to 'child-name "...")=.
 Configure servers in =<config-root>/mcp.sexp=.
 Trusted project configuration can use =.autolith/mcp.sexp=.
 =init.lisp= can also register servers; use =(mcp)= for the configuration command and its help.
+
+@@code:Config root: {{{:config-root}}}@@
 
 * Turn expertise into a reusable Skill
 :PROPERTIES:
