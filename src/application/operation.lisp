@@ -765,42 +765,23 @@ paths that do not contain QUERY as a contiguous substring."
                    (application-operation--json-value value)))
     object))
 
-(-> application-operation--command-value (t) string)
-(defun application-operation--command-value (value)
-  "Return one evaluated Lisp VALUE as compatibility command argument text."
-  (etypecase value
-    (string (copy-seq value))
-    (pathname (namestring value))
-    (character (string value))
-    (symbol (string-downcase (symbol-name value)))
-    (t (princ-to-string value))))
-
 (-> application-operation--command-invocation
     (application-command list) application-command-invocation)
 (defun application-operation--command-invocation (command arguments)
-  "Return COMMAND's canonical compatibility invocation for evaluated ARGUMENTS."
-  (let* ((name (application-command-name command))
-         (remainder
-           (string-trim *application-command-whitespace*
-                        (format nil "~{~A~^ ~}"
-                                (mapcar #'application-operation--command-value arguments))))
-         (semantic-arguments
-           (if (application-command--raw-remainder-call-p command)
-               (mapcar #'application-operation--command-value arguments)
-               (copy-list arguments)))
-         (input
-           (if (non-empty-string-p remainder)
-               (format nil "~A ~A" name remainder)
-               name)))
+  "Preserve evaluated ARGUMENTS in COMMAND's Lisp invocation.
+
+The command name alone labels presentation. Never print or traverse argument
+objects to construct a label: values may be cyclic, mutable, or have printers
+with side effects. Only the outer argument list is copied."
+  (let ((name (application-command-name command)))
     (make-instance 'application-command-invocation
-                   :input input
+                   :input name
                    :syntax ':lisp
                    :name name
-                   :remainder remainder
-                   :argument (and arguments
-                                  (application-operation--command-value (first arguments)))
-                   :arguments semantic-arguments
-                   :supplied-argument-count (length semantic-arguments)
+                   :remainder ""
+                   :argument nil
+                   :arguments (copy-list arguments)
+                   :supplied-argument-count (length arguments)
                    :command command)))
 
 

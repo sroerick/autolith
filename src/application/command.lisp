@@ -5,7 +5,7 @@
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defparameter *application-command-metadata-keys*
     '(:name :aliases :argument :description :tip
-      :busy-behavior :terminal-behavior :callable :static-options)
+      :busy-behavior :terminal-behavior :callable :static-options :slash-parser)
     "The literal metadata keys accepted by DEFINE-APPLICATION-COMMAND.")
 
   (defparameter *application-command-required-metadata-keys*
@@ -49,7 +49,7 @@
             (length (remove-duplicates value :test #'string=)))))
 
   (defun application-command--lambda-list-arity (lambda-list)
-    "Return LAMBDA-LIST's minimum and maximum positional argument counts."
+    "Return minimum and maximum counts, or NIL for an open keyword/rest tail."
     (let ((minimum 0)
           (maximum 0)
           (state ':required)
@@ -63,10 +63,16 @@
               (&rest
                (setf state ':rest
                      rest-p t))
+              (&key
+               (setf state ':key
+                     rest-p t))
+              (&allow-other-keys
+               (unless (eq state ':key)
+                 (error "&ALLOW-OTHER-KEYS requires &KEY.")))
               (&aux
                (setf state ':aux))
-              ((&key &allow-other-keys &whole &environment)
-               (error "Callable application commands use positional lambda lists."))
+              ((&whole &environment)
+               (error "Callable application commands require ordinary lambda lists."))
               (otherwise
                (error "Unsupported application command lambda-list keyword ~S."
                       entry)))
@@ -87,6 +93,15 @@
                (unless (symbolp entry)
                  (error "An application command rest parameter must be a symbol."))
                (setf state ':after-rest))
+              (:key
+               (unless (or (symbolp entry)
+                           (and (proper-list-p entry)
+                                (<= 1 (length entry) 3)
+                                (or (symbolp (first entry))
+                                    (and (proper-list-p (first entry))
+                                         (= 2 (length (first entry)))
+                                         (every #'symbolp (first entry))))))
+                 (error "Invalid keyword application command parameter ~S." entry)))
               (:after-rest
                (error "Unexpected parameter after an application command rest parameter."))
               (:aux
@@ -173,6 +188,13 @@
                  (not callable-p))
         (error "Application command ~S :CALLABLE must be literal T."
                definition-name))
+      (when (plusp (application-command--metadata-key-count metadata :slash-parser))
+        (let ((parser (getf metadata :slash-parser)))
+          (unless (and callable-p parser (symbolp parser)
+                       (not (keywordp parser)) (not (eq parser t))
+                       (symbol-package parser))
+            (error "Application command ~S :SLASH-PARSER requires a literal function name and :CALLABLE T."
+                   definition-name))))
       (when (and static-options (not callable-p))
         (error "Application command ~S :STATIC-OPTIONS require :CALLABLE T."
                definition-name))
@@ -280,6 +302,12 @@
     :reader application-command-callable-p
     :type boolean
     :documentation "Whether the handler receives canonical Lisp arguments.")
+   (slash-parser
+    :initarg :slash-parser
+    :initform nil
+    :reader application-command-slash-parser
+    :type (option function)
+    :documentation "Captured slash-only parser from complete remainder text to semantic arguments.")
    (static-options
     :initarg :static-options
     :initform nil
@@ -399,6 +427,14 @@
     (error 'configuration-error
            :message (format nil "Application command ~A has no callable handler."
                             (application-command-name command))))
+  (unless (or (null (application-command-slash-parser command))
+              (functionp (application-command-slash-parser command)))
+    (error 'configuration-error
+           :message "An application command slash parser must be a function."))
+  (when (and (application-command-slash-parser command)
+             (not (application-command-callable-p command)))
+    (error 'configuration-error
+           :message "A slash parser requires a callable application command."))
   (if (application-command-callable-p command)
       (handler-case
           (multiple-value-bind (minimum maximum)
@@ -426,11 +462,11 @@
           (:argument (option string)) (:description string) (:tip string)
           (:busy-behavior keyword) (:terminal-behavior keyword)
           (:lambda-list list) (:callable-p boolean) (:static-options list)
-          (:handler function))
+          (:slash-parser (option function)) (:handler function))
     application-command)
 (defun application-command-create
     (&key definition-name name aliases argument description tip busy-behavior
-          terminal-behavior lambda-list callable-p static-options handler)
+          terminal-behavior lambda-list callable-p static-options slash-parser handler)
   "Create and validate one immutable interactive command."
   (unless (and (symbolp definition-name)
                definition-name
@@ -472,6 +508,7 @@
     :lambda-list (copy-tree lambda-list)
     :callable-p callable-p
     :static-options (mapcar #'copy-seq static-options)
+     :slash-parser slash-parser
     :handler handler)))
 
 
@@ -808,18 +845,6 @@ without changing the registry."
               application--builtin-tasks-command application--builtin-mission-wakeup-command)
             :test #'eq))))
 
-(-> application-command--raw-remainder-call-p (application-command) boolean)
-(defun application-command--raw-remainder-call-p (command)
-  "Return whether COMMAND uses one compatibility text argument in Lisp calls."
-  (and
-   (application-command-callable-p command)
-   (multiple-value-bind (minimum maximum)
-       (application-command--lambda-list-arity
-        (application-command-lambda-list command))
-     (declare (ignore minimum))
-     (and maximum
-          (= maximum 1)
-          (application-command--raw-remainder-p command)))))
 
 (-> application-command--slash-arguments
     ((option application-command) list string)
@@ -828,9 +853,17 @@ without changing the registry."
   "Return semantic slash arguments for callable COMMAND and REMAINDER."
   (unless (and command (application-command-callable-p command))
     (return-from application-command--slash-arguments nil))
-  (if (application-command--raw-remainder-p command)
-      (if (zerop (length remainder)) nil (list remainder))
-      parsed-arguments))
+  (cond
+    ((application-command-slash-parser command)
+     (let ((arguments (funcall (application-command-slash-parser command) remainder)))
+       (unless (proper-list-p arguments)
+         (error 'configuration-error
+                :message "A command slash parser must return a proper argument list."))
+       arguments))
+    ((application-command--raw-remainder-p command)
+     (if (zerop (length remainder)) nil (list remainder)))
+    (t
+     parsed-arguments)))
 
 (-> application-command--validate-invocation-arity
     (application-command list)
@@ -883,7 +916,8 @@ without changing the registry."
          (command (application-command-find submitted-name))
          (parsed-arguments
            (if (and command
-                    (application-command--raw-remainder-p command))
+                    (or (application-command-slash-parser command)
+                        (application-command--raw-remainder-p command)))
                nil
                (application-command--tokens remainder)))
          (arguments
@@ -892,13 +926,14 @@ without changing the registry."
          (argument
            (if (and command (application-command-callable-p command))
                (first arguments)
-               (first parsed-arguments))))
+               (first parsed-arguments)))
+         (text-argument (and (stringp argument) argument)))
     (make-instance
      'application-command-invocation
      :input (copy-seq input)
      :name submitted-name
      :remainder remainder
-     :argument argument
+     :argument text-argument
      :arguments arguments
      :supplied-argument-count (length arguments)
      :command command)))
@@ -1095,8 +1130,11 @@ METADATA must contain literal :NAME, :DESCRIPTION, :TIP, :BUSY-BEHAVIOR, and
 :TERMINAL-BEHAVIOR values. :ALIASES defaults to NIL. Commands state either an
 :ARGUMENT hint or finite :STATIC-OPTIONS. Legacy handlers receive APPLICATION
 and an APPLICATION-COMMAND-INVOCATION. A :CALLABLE T handler's parameters after
-APPLICATION are its authoritative Lisp and slash argument contract. Every
-handler returns :CONTINUE or :QUIT."
+APPLICATION are its authoritative Lisp argument contract. Optional :SLASH-PARSER
+names a function receiving the complete slash remainder and returning a proper
+list of semantic arguments; it is never invoked for Lisp calls. Without a parser,
+slash input uses token splitting. Parser and handler functions are captured at
+registration. Every handler returns :CONTINUE or :QUIT."
   (application-command--validate-defining-form
    definition-name metadata lambda-list)
   (let* ((callable-p (eq (getf metadata :callable) t))
@@ -1119,5 +1157,7 @@ handler returns :CONTINUE or :QUIT."
            :lambda-list ',call-lambda-list
            :callable-p ,callable-p
            :static-options ',static-options
+           :slash-parser ,(when (getf metadata :slash-parser)
+                            `#',(getf metadata :slash-parser))
            :handler #',definition-name)))
        ',definition-name)))

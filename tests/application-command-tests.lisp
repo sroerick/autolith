@@ -161,6 +161,7 @@
 (-> test-application-command-semantic-calls () null)
 (defun test-application-command-semantic-calls ()
   "Test callable commands retain ordinary lambda-list and slash semantics."
+  (application-command-tests--native-arguments)
   (let ((snapshot (application-command--registry-snapshot)))
     (unwind-protect
          (progn
@@ -1327,4 +1328,157 @@ nil)
                    "every visible setting is listed once")
       (test-assert (= (length runs) (length (remove-duplicates runs)))
                    "each settings group forms one contiguous run")))
+  nil)
+
+
+;;;; -- Native Values and Slash Adapters --
+
+(defvar *application-command-tests-parser-calls* nil
+  "The complete remainders received by the slash parser fixture.")
+
+(-> application-command-tests--slash-parser (string) list)
+(defun application-command-tests--slash-parser (remainder)
+  "Record REMAINDER and return it as one literal argument."
+  (push remainder *application-command-tests-parser-calls*)
+  (list remainder))
+
+(defclass application-command-tests-unprintable () ()
+  (:documentation "An opaque value whose printer must not run during invocation."))
+
+(defmethod print-object ((object application-command-tests-unprintable) stream)
+  "Fail if command presentation attempts to inspect OBJECT."
+  (declare (ignore object stream))
+  (error 'configuration-error :message "A command argument was printed."))
+
+(-> application-command-tests--native-arguments () null)
+(defun application-command-tests--native-arguments ()
+  "Exercise native value transport, slash-only parsers and keyword binding."
+  (dolist (parser '(nil t :parser "parser" (function parser)))
+    (test-assert
+     (application-command-tests--macroexpand-error-p
+      `(define-application-command application-command-tests--invalid-parser
+           (:name "/invalid-parser" :argument nil
+            :description "invalid parser metadata" :tip "tests parser validation."
+            :busy-behavior :inspect :terminal-behavior :shared
+            :callable t :slash-parser ,parser)
+           (application &rest arguments)
+         (declare (ignore application arguments))
+         :continue))
+     "slash-parser metadata requires a literal non-NIL function-name symbol"))
+  (let ((snapshot (application-command--registry-snapshot))
+        (*application-command-tests-parser-calls* nil))
+    (unwind-protect
+         (progn
+           (eval
+            '(define-application-command application-command-tests--native
+                 (:name "/native-values" :argument "[VALUES...]"
+                  :description "test native command values"
+                  :tip "tests native command values."
+                  :busy-behavior :inspect :terminal-behavior :shared
+                  :callable t
+                  :slash-parser application-command-tests--slash-parser)
+                 (application &rest values)
+               (declare (ignore application))
+               (setf *application-command-tests-semantic-call* values)
+               :continue))
+           (let* ((application (make-instance 'application))
+                  (opaque (make-instance 'application-command-tests-unprintable))
+                  (cycle (list :cycle))
+                  (nested (list :objective "Keep Case" :criteria nil
+                                (vector 1 (list :nested nil))))
+                  (arguments (list 'ordinary-symbol nil 37 #P"relative/path"
+                                   nested opaque cycle))
+                  (command (application-command-find "/native-values")))
+             (setf (rest cycle) cycle)
+             (apply #'application-operation-call application "native-values" arguments)
+             (test-assert
+              (and (= (length arguments)
+                      (length *application-command-tests-semantic-call*))
+                   (every #'eq arguments *application-command-tests-semantic-call*))
+              "symbols, NIL, numbers, paths, nested and opaque values retain identity")
+             (test-assert (null *application-command-tests-parser-calls*)
+                          "Lisp invocation never invokes a slash parser")
+             (let* ((payload "quoted \"Mixed Case\" and an unmatched \"")
+                    (invocation
+                      (application-command-invocation-parse
+                       (concatenate 'string "/native-values " payload))))
+               (application-command-execute command application invocation)
+               (test-assert
+                (and (equal *application-command-tests-parser-calls* (list payload))
+                     (equal *application-command-tests-semantic-call* (list payload)))
+                "an explicit slash parser receives complete text before token parsing"))
+             ;; A submitted invocation owns both handler and parser snapshots.
+             (let ((old (application-command-invocation-parse "/native-values old"))
+                   (registered (application-command--registry-snapshot)))
+               (eval
+                '(define-application-command application-command-tests--native
+                     (:name "/native-values" :argument "[VALUES...]"
+                      :description "replacement native command"
+                      :tip "tests command replacement."
+                      :busy-behavior :inspect :terminal-behavior :shared
+                      :callable t)
+                     (application &rest values)
+                   (declare (ignore application))
+                   (setf *application-command-tests-semantic-call*
+                         (cons :replacement values))
+                   :continue))
+               (application-command-execute
+                (application-command-invocation-command old) application old)
+               (test-assert (equal *application-command-tests-semantic-call* '("old"))
+                            "submitted invocations retain captured handler behavior")
+               (let ((new (application-command-invocation-parse
+                           "/native-values \"new value\"")))
+                 (application-command-execute
+                  (application-command-invocation-command new) application new)
+                 (test-assert
+                  (equal *application-command-tests-semantic-call*
+                         '(:replacement "new value"))
+                  "replacement without a parser uses ordinary slash tokenization"))
+               (application-command--registry-restore registered)
+               (let ((restored (application-command-invocation-parse
+                                "/native-values restored \"literal\"")))
+                 (application-command-execute
+                  (application-command-invocation-command restored) application restored)
+                 (test-assert
+                  (equal *application-command-tests-semantic-call*
+                         '("restored \"literal\""))
+                  "restoring a registration restores its captured slash parser"))))
+           (eval
+            '(define-application-command application-command-tests--keywords
+                 (:name "/native-keywords" :argument "[VALUE] [:PAYLOAD VALUE]"
+                  :description "test keyword command values"
+                  :tip "tests keyword command values."
+                  :busy-behavior :inspect :terminal-behavior :shared :callable t)
+                 (application &optional (value :default value-p)
+                              &rest arguments &key (payload nil payload-p))
+               (declare (ignore application))
+               (setf *application-command-tests-semantic-call*
+                     (list value value-p arguments payload payload-p))
+               :continue))
+           (let ((application (make-instance 'application)))
+             (application-operation-call application "native-keywords")
+             (test-assert
+              (equal *application-command-tests-semantic-call* '(:default nil nil nil nil))
+              "omitted optional and keyword values retain supplied-p semantics")
+             (let ((payload (list :nested "literal")))
+               (application-operation-call application "native-keywords" nil :payload payload)
+               (test-assert
+                (and (equal (subseq *application-command-tests-semantic-call* 0 2) '(nil t))
+                     (eq (fourth *application-command-tests-semantic-call*) payload)
+                     (fifth *application-command-tests-semantic-call*))
+                "&REST &KEY preserves native values and explicit NIL supplied-p"))
+             (dolist (arguments '((nil :unknown 1) (nil :payload)
+                                  (nil ordinary-symbol 1)))
+               (let ((before *application-command-tests-semantic-call*))
+                 (test-assert
+                  (handler-case
+                      (progn
+                        (apply #'application-operation-call
+                               application "native-keywords" arguments)
+                        nil)
+                    (program-error () t))
+                  "unknown or incomplete keyword arguments signal PROGRAM-ERROR")
+                 (test-assert (eq before *application-command-tests-semantic-call*)
+                              "invalid keyword invocation has no handler effects")))))
+      (application-command--registry-restore snapshot)))
   nil)

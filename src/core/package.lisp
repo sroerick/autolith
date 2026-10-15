@@ -1314,6 +1314,7 @@
            #:application-command-lambda-list
            #:application-command-list
            #:application-command-name
+           #:application-command-slash-parser
            #:application-command-static-options
            #:application-command-terminal-behavior
            #:application-command-terminal-owner-p
