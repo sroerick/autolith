@@ -846,17 +846,6 @@ without changing the registry."
       (finish-argument)
       (nreverse arguments))))
 
-(-> application-command--raw-remainder-p (application-command) boolean)
-(defun application-command--raw-remainder-p (command)
-  "Return whether COMMAND receives its complete slash remainder as one argument."
-  (not
-   (null
-    (member (application-command-definition-name command)
-            '(application--builtin-goal-command application--builtin-mission-command
-              application--builtin-tasks-command application--builtin-mission-wakeup-command)
-            :test #'eq))))
-
-
 (-> application-command--slash-arguments
     ((option application-command) list string)
     list)
@@ -871,8 +860,6 @@ without changing the registry."
          (error 'configuration-error
                 :message "A command slash parser must return a proper argument list."))
        arguments))
-    ((application-command--raw-remainder-p command)
-     (if (zerop (length remainder)) nil (list remainder)))
     (t
      parsed-arguments)))
 
@@ -926,9 +913,7 @@ without changing the registry."
                ""))
          (command (application-command-find submitted-name))
          (parsed-arguments
-           (if (and command
-                    (or (application-command-slash-parser command)
-                        (application-command--raw-remainder-p command)))
+           (if (and command (application-command-slash-parser command))
                nil
                (application-command--tokens remainder)))
          (arguments
