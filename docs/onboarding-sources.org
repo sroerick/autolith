@@ -11,6 +11,124 @@ Authored newlines and spaces are preserved, including aligned example columns.
 The org-templater slots {{{:config-root}}} and {{{:state-root}}} use runtime paths.
 Markup is decoded before interpolation, so paths remain literal text.
 Edits are read on the next tour; an open tour keeps its current snapshot.
+
+Named text blocks below contain interface labels and practice instructions.
+Use org-templater slots for runtime values in these blocks.
+
+#+name: boot-linger
+#+begin_onboarding_text
+Begin onboarding by pressing Space
+#+end_onboarding_text
+
+#+name: boot-start
+#+begin_onboarding_text
+onboard
+#+end_onboarding_text
+
+#+name: introduction
+#+begin_onboarding_text
+Getting started
+#+end_onboarding_text
+
+#+name: introduction-new
+#+begin_onboarding_text
+Here's what's new in Autolith
+#+end_onboarding_text
+
+#+name: action-check
+#+begin_onboarding_text
+check
+#+end_onboarding_text
+
+#+name: action-next
+#+begin_onboarding_text
+next
+#+end_onboarding_text
+
+#+name: footer-wide
+#+begin_onboarding_text
+{{{:current}}}/{{{:count}}}  Enter {{{:action}}}  Shift-Tab back  Esc skip{{{:scroll}}}
+#+end_onboarding_text
+
+#+name: footer-medium
+#+begin_onboarding_text
+{{{:current}}}/{{{:count}}}  Enter {{{:action}}}  Shift-Tab back  Esc skip
+#+end_onboarding_text
+
+#+name: footer-compact
+#+begin_onboarding_text
+{{{:current}}}/{{{:count}}}  Enter {{{:action}}}  Esc skip
+#+end_onboarding_text
+
+#+name: footer-small
+#+begin_onboarding_text
+{{{:current}}}/{{{:count}}} Enter Esc
+#+end_onboarding_text
+
+#+name: footer-minimal
+#+begin_onboarding_text
+{{{:current}}}/{{{:count}}}Esc
+#+end_onboarding_text
+
+#+name: footer-scroll
+#+begin_onboarding_text
+  PgUp/PgDn scroll
+#+end_onboarding_text
+
+#+name: hint-continue
+#+begin_onboarding_text
+Type continue and press Enter.
+#+end_onboarding_text
+
+#+name: hint-help-input
+#+begin_onboarding_text
+Type (help) or (help "topic") and press Enter.
+#+end_onboarding_text
+
+#+name: hint-help-output
+#+begin_onboarding_text
+Try (help :workspace) or (help "topic"). Type continue to proceed.
+#+end_onboarding_text
+
+#+name: hint-async-input
+#+begin_onboarding_text
+Type ? (+ 1 2) and press Enter.
+#+end_onboarding_text
+
+#+name: hint-async-result
+#+begin_onboarding_text
+Safe result shown. Press Space or Enter to continue.
+#+end_onboarding_text
+
+#+name: hint-settings-input
+#+begin_onboarding_text
+Type (settings), browse the picker, then press Esc to return.
+#+end_onboarding_text
+
+#+name: hint-settings-result
+#+begin_onboarding_text
+Press Space or Enter to continue.
+#+end_onboarding_text
+
+#+name: help-title
+#+begin_onboarding_text
+Help
+#+end_onboarding_text
+
+#+name: help-input-error
+#+begin_onboarding_text
+Use (help), (help :workspace), or (help 'resume).
+#+end_onboarding_text
+
+#+name: async-running
+#+begin_onboarding_text
+Background evaluation running...
+#+end_onboarding_text
+
+#+name: async-result
+#+begin_onboarding_text
+=> 3  (background evaluation finished)
+#+end_onboarding_text
 #+end_comment
 
 * Welcome to Autolith

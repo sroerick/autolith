@@ -83,35 +83,36 @@
     string)
 (defun terminal-ui-onboarding--footer (index count &key (width 76) input-p scrollable-p)
   "Fit essential navigation into WIDTH, keeping Escape visible on narrow screens."
-  (let ((action (if input-p "check" "next")))
-    (cond
-      ((>= width 70)
-       (format nil "~D/~D  Enter ~A  Shift-Tab back  Esc skip~A"
-               (1+ index) count action (if scrollable-p "  PgUp/PgDn scroll" "")))
-      ((>= width 44)
-       (format nil "~D/~D  Enter ~A  Shift-Tab back  Esc skip" (1+ index) count action))
-      ((>= width 26)
-       (format nil "~D/~D  Enter ~A  Esc skip" (1+ index) count action))
-      ((>= width 16)
-       (format nil "~D/~D Enter Esc" (1+ index) count))
-      (t
-       (format nil "~D/~DEsc" (1+ index) count)))))
+  (let ((variables (make-hash-table :test #'eq)))
+    (setf (gethash ':current variables) (1+ index)
+          (gethash ':count variables) count
+          (gethash ':action variables) (onboarding-source-text (if input-p "action-check" "action-next"))
+          (gethash ':scroll variables) (if scrollable-p (onboarding-source-text "footer-scroll") ""))
+    (onboarding-source-text
+     (cond
+       ((>= width 70)
+        "footer-wide")
+       ((>= width 44)
+        "footer-medium")
+       ((>= width 26)
+        "footer-compact")
+       ((>= width 16)
+        "footer-small")
+       (t
+        "footer-minimal"))
+     variables)))
 
 (-> terminal-ui-onboarding--exercise-hint ((option keyword) keyword) string)
 (defun terminal-ui-onboarding--exercise-hint (exercise stage)
-  "Return one instruction for EXERCISE at STAGE."
-  (case exercise
-    (:continue "Type continue and press Enter.")
-    (:help (if (eq stage ':help-output)
-               "Explore with (help :workspace), (help \"topic\"), or /help TOPIC. Type continue to proceed."
-               "Type (help) or (help \"topic\") and press Enter."))
-    (:async (if (eq stage ':result)
-                "Safe result shown. Press Space or Enter to continue."
-                "Type ? (+ 1 2) and press Enter."))
-    (:settings (if (eq stage ':result)
-                   "Press Space or Enter to continue."
-                   "Type (settings), browse the picker, then press Esc to return."))
-    (otherwise "")))
+  "Return one authored instruction for EXERCISE at STAGE."
+  (let ((name (case exercise
+                (:continue "hint-continue")
+                (:help (if (eq stage ':help-output) "hint-help-output" "hint-help-input"))
+                (:async (if (eq stage ':result) "hint-async-result" "hint-async-input"))
+                (:settings (if (eq stage ':result) "hint-settings-result" "hint-settings-input")))))
+    (if name
+        (onboarding-source-text name)
+        "")))
 
 (-> terminal-ui-onboarding--exercise-target ((option keyword) keyword) (option string))
 (defun terminal-ui-onboarding--exercise-target (exercise stage)
@@ -146,16 +147,16 @@
 (defun terminal-ui-onboarding--body-spans (page stage help-function &key (width 76))
   "Return the current lesson or the result of its exercise."
   (if (and (eq (getf page :exercise) ':help) (member stage '(:help-output :help-error)))
-      (append (list (terminal-span ':strong (format nil "Help~2%")))
+      (append (list (terminal-span ':strong (format nil "~A~2%" (onboarding-source-text "help-title"))))
               (terminal-ui-onboarding--help-spans help-function :width width))
       (append
        (terminal-ui-onboarding--spans (getf page :body))
        (when (eq (getf page :exercise) ':async)
          (case stage
            (:async-running
-            (list (terminal-span ':notice (format nil "~2%Background evaluation running..."))))
+            (list (terminal-span ':notice (format nil "~2%~A" (onboarding-source-text "async-running")))))
            (:result
-            (list (terminal-span ':success (format nil "~2%=> 3  (background evaluation finished)")))))))))
+            (list (terminal-span ':success (format nil "~2%~A" (onboarding-source-text "async-result"))))))))))
 
 (-> terminal-ui-onboarding--async-demo (function) integer)
 (defun terminal-ui-onboarding--async-demo (pending-function)
@@ -430,7 +431,8 @@ Never evaluate demo input."
   (terminal-ui-call-with-exclusive-input
    ui
    (lambda ()
-     (let* ((terminal (terminal-ui-terminal ui))
+     (let* ((*onboarding-source-snapshot* (onboarding-source--read))
+            (terminal (terminal-ui-terminal ui))
             (saved-editor (clinedi:line-editor-snapshot (terminal-ui-editor ui)))
             (saved-attachments (terminal-ui-onboarding--copy-attachments
                                 (terminal-ui-image-attachments ui)))
@@ -498,7 +500,7 @@ Never evaluate demo input."
                                    help-seen-p t
                                    stage ':help-output)
                              (terminal-ui-onboarding--reset-exercise ui))
-                           (setf help-output "Use (help), (help :workspace), (help 'resume), or /help TOPIC. No other Lisp is evaluated here."
+                           (setf help-output (onboarding-source-text "help-input-error")
                                  stage (if help-seen-p ':help-output ':help-error)))))))
 
                 (submit-exercise (target)

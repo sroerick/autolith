@@ -2,6 +2,9 @@
 
 ;;;; -- Authored Onboarding Sources --
 
+(defparameter *onboarding-source-snapshot* nil
+  "The authored source snapshot dynamically bound for one tour, or NIL between tours.")
+
 (define-condition onboarding-source-error (error)
   ((detail :initarg :detail :reader onboarding-source-error-detail
            :documentation "The invalid source construct."))
@@ -195,9 +198,10 @@ line separating lessons. Reject duplicate IDs and malformed metadata."
 
 (-> onboarding-source--read () string)
 (defun onboarding-source--read ()
-  "Read the Org asset shipped beside the source, including in saved-image installs."
-  (uiop:read-file-string
-   (asdf:system-relative-pathname :autolith #p"docs/onboarding-sources.org")))
+  "Return the current tour snapshot or read the shipped ASDF-relative Org asset."
+  (or *onboarding-source-snapshot*
+      (uiop:read-file-string
+       (asdf:system-relative-pathname :autolith #p"docs/onboarding-sources.org"))))
 
 (-> onboarding-source-text (string &optional hash-table) string)
 (defun onboarding-source-text (name &optional (variables (make-hash-table :test #'eq)))

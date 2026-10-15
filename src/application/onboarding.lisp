@@ -52,7 +52,8 @@
 
 Persist each completed page immediately. Explicit refusal acknowledges the
 remaining selected revisions; interruption leaves them pending."
-  (let* ((configuration (application-configuration application))
+  (let* ((*onboarding-source-snapshot* (onboarding-source--read))
+         (configuration (application-configuration application))
          (ui (application-ui application))
          (pages (onboarding-pages configuration))
          (selected (if new-only-p
@@ -67,8 +68,8 @@ remaining selected revisions; interruption leaves them pending."
        (application-onboarding--call-fullscreen
         application
         (lambda ()
-          (let ((*terminal-ui-boot-linger-prompt* "Begin onboarding by pressing Space")
-                (*terminal-ui-boot-start-label* "onboard"))
+           (let ((*terminal-ui-boot-linger-prompt* (onboarding-source-text "boot-linger"))
+                 (*terminal-ui-boot-start-label* (onboarding-source-text "boot-start")))
             (if (eq (terminal-ui-boot-sequence
                      ui :screen-p (config :boot-screen-p configuration) :linger-p t
                      :resize-callback #'application-pending-terminal-size
@@ -81,8 +82,8 @@ remaining selected revisions; interruption leaves them pending."
                      ui selected
                      :introduction-title
                      (if (and new-only-p (< (length selected) (length pages)))
-                         "Here's what's new in Autolith"
-                         "Getting started")
+                         (onboarding-source-text "introduction-new")
+                         (onboarding-source-text "introduction"))
                      :help-function (lambda (&optional topic)
                                       (application-operation-help application topic))
                       :settings-function (lambda () (application-onboarding--settings application))
