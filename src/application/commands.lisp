@@ -1528,29 +1528,35 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
        (application--start-goal-work application))))
   nil)
 
-(-> application-goal-command (application string) null)
-(defun application-goal-command (application remainder)
-  "Translate the legacy slash goal syntax into a typed goal request."
-  (let ((word (string-downcase remainder))
-        (update-argument (application--goal-update-argument remainder)))
+(-> application-goal--slash-arguments (string) list)
+(defun application-goal--slash-arguments (text)
+  "Parse goal controls and objective text only at the slash-command boundary."
+  (let* ((remainder (string-trim *application-command-whitespace* text))
+         (word (string-downcase remainder))
+         (update (application--goal-update-argument remainder))
+         (objective (or update remainder)))
+    (when (uiop:string-prefix-p "/" objective)
+      (error 'application-goal-error
+             :reason ':invalid-objective :request objective
+             :message "A slash-command goal objective must not begin with /."))
     (cond
       ((zerop (length remainder))
-       (application-goal-request application nil nil))
-      ((member word '("clear" "pause" "resume") :test #'string=)
-       (application-goal-request application (intern (string-upcase word) '#:keyword) nil))
-      (update-argument
-       (when (and (application--goal-update application update-argument)
-                  (application-goal application)
-                  (eq (getf (application-goal application) :status) ':active))
-         (application--start-goal-work application)))
-      ((uiop:string-prefix-p "/" remainder)
-       (application-present
-        application
-        (format nil "~S looks like a command, not an objective. ~
-                     Usage: /goal [OBJECTIVE|update NEW-OBJECTIVE|clear|pause|resume]"
-                remainder)))
+       nil)
+      ((member word '("clear" "pause" "resume" "status") :test #'string=)
+       (list (intern (string-upcase word) '#:keyword)))
+      (update
+       (list ':update update))
       (t
-       (application-goal-request application remainder nil))))
+       (list remainder)))))
+
+(-> application-goal-command (application string) null)
+(defun application-goal-command (application remainder)
+  "Apply a legacy slash goal request through the native goal interface."
+  (handler-case
+      (let ((arguments (application-goal--slash-arguments remainder)))
+        (application-goal-request application (first arguments) (rest arguments)))
+    (application-goal-error (condition)
+      (application-present application (princ-to-string condition))))
   nil)
 
 
@@ -2991,17 +2997,13 @@ The current value and its source sit in aligned columns of their own."
     (:name "/goal"
      :argument "[OBJECTIVE]"
      :description "set or view the session goal"
-     :tip "set a string objective; use (goal :pause), (goal :resume), or (goal :clear) for control."
+     :tip "Set a string objective; use (goal :pause), (goal :resume), or (goal :clear) for control."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :callable t)
+     :callable t
+     :slash-parser application-goal--slash-arguments)
     (application &optional request &rest arguments)
-  (let ((invocation *application-command-presentation-invocation*))
-    (if (and invocation
-             (eq (application-command-invocation-syntax invocation) ':slash))
-        (application-goal-command
-         application (application-command-invocation-remainder invocation))
-        (application-goal-request application request arguments)))
+  (application-goal-request application request arguments)
   ':continue)
 
 (define-application-command application--builtin-agenda-command
