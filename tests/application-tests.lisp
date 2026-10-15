@@ -8918,3 +8918,72 @@
       (test-assert (equal (conversation-input-history conversation) '("typed by the user"))
                    "input history keeps only what the user typed")))
   nil)
+
+
+(-> test-application-mermaid-transcript () null)
+(defun test-application-mermaid-transcript ()
+  "Exercise rendered diagrams and raw-source copy actions in transcript bodies."
+  (let* ((terminal (make-instance 'recording-terminal :columns 100))
+         (application (make-instance 'application
+                                     :ui (terminal-ui-create :terminal terminal)))
+         (source (format nil "flowchart TD~%A[Start] --> B[Finish]"))
+         (spans (application--markdown-body
+                 application (format nil "```mermaid~%~a~%```" source)))
+         (text (termdown:spans-text spans))
+         (widget (find-if #'termdown:widget-p spans)))
+    (test-assert (and (search "Start" text) (search "Finish" text)
+                      (not (search "A[Start]" text)))
+                 "a completed Mermaid block appears as a diagram")
+    (test-assert (and widget
+                      (equal (list ':copy source) (termdown:widget-action widget)))
+                 "the diagram copy action carries its Mermaid source")
+    (dolist (body (list (format nil "```mermaid~%pie~%title Sales~%```")
+                       (format nil "```mermaid~%~a" source)))
+      (let ((text (termdown:spans-text (application--markdown-body application body))))
+        (test-assert (or (search "title Sales" text) (search "A[Start]" text))
+                     "unsupported and unfinished blocks display their source"))))
+  nil)
+
+(-> test-application-mermaid-streaming () null)
+(defun test-application-mermaid-streaming ()
+  "Exercise speculative Mermaid tails, close commitment, and interrupted fences."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (dolist (closed-p '(t nil))
+      (let* ((terminal (make-instance 'recording-terminal :columns 100))
+             (application (make-instance 'application :configuration configuration
+                                         :ui (terminal-ui-create :terminal terminal)))
+             (observer (application-agent-observer application))
+             (send-text (callback-agent-observer-text-callback observer))
+             (send-status (callback-agent-observer-status-callback observer))
+             (committed nil)
+             (preview nil))
+        (test-call-with-function-replacements
+         (list (list 'terminal-ui-stream-update
+                     (lambda (ui &key rows tail)
+                       (declare (ignore ui))
+                       (setf committed (append committed rows)
+                             preview tail))))
+         (lambda ()
+           (funcall send-text (format nil "```mermaid~%flowchart TD~%A[Start] --> B[Finish]~%"))
+           (test-assert (not (search "A[Start]"
+                                     (format nil "~{~a~^~%~}"
+                                            (mapcar #'termdown:spans-text committed))))
+                        "open diagram source is not committed to scrollback")
+           (test-assert (search "A[Start]"
+                                (format nil "~{~a~^~%~}"
+                                        (mapcar #'termdown:spans-text preview)))
+                        "an open diagram appears in the speculative tail")
+           (when closed-p
+             (funcall send-text "```"))
+           (funcall send-status ':provider-retrying
+                    (list :attempt 1 :maximum-attempts 2 :delay 0))
+           (let ((text (format nil "~{~a~^~%~}"
+                              (mapcar #'termdown:spans-text committed))))
+             (test-assert (and (search "Start" text) (search "Finish" text))
+                          "closing or interrupting a fence commits its content")
+             (test-assert (if closed-p
+                              (not (search "A[Start]" text))
+                              (search "A[Start]" text))
+                          "closed blocks render diagrams and interrupted blocks render source")))))))
+  nil)

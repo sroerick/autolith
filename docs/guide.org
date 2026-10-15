@@ -27,6 +27,26 @@ Autolith's prompt window can also evuluate lisp forms directly:
 This can be frequently helpful since you can use the exact same tools
 the clanker can, and the same machinery is exposed to you.
 
+* Terminal diagrams
+
+Ask for a fenced =mermaid= block to view a diagram directly in the terminal.
+Autolith uses [[https://github.com/lambda-symbolics/clermaid][Clermaid]] for flowcharts, sequence diagrams, flat state diagrams,
+class diagrams, and entity relationships. The library documents the supported
+syntax for each family.
+
+#+BEGIN_SRC markdown
+```mermaid
+flowchart LR
+  A[Read] --> B[Evaluate]
+  B --> C[Print]
+```
+#+END_SRC
+
+During streaming, view the source in the live tail until the closing fence.
+Use the diagram's copy action to copy its original Mermaid source. For syntax
+outside the supported subset or a diagram too wide for the terminal, read the
+ordinary source block instead.
+
 * Command arguments
 
 Pass native Lisp values to commands. Use keyword actions, Boolean switches,

@@ -49,7 +49,7 @@ let
   qlotLibrariesWithBuildMetadata = [
     "agentcomms" "argo" "cl-colorist" "cl-exec-sandbox" "cl-hashline" "cl-jobpond"
     "cl-llm-provider-api" "cl-lsp" "cl-resources" "cl-rfc8252" "cl-rfc8628"
-    "cl-skills" "cl-termdown" "cl-worktree" "clasted" "clifff" "clinedi"
+    "cl-skills" "cl-termdown" "cl-worktree" "clasted" "clermaid" "clifff" "clinedi"
     "clinker-transcript" "colordiff" "colorlisp" "daphne" "fetch-gist"
     "idsmall" "image-daemon" "lambda-debugger" "ls-compat" "ls-flock" "mcparen" "org-templater"
     "parenchek" "sbcl-generations" "sbcl-workers" "setinka" "sexp-config" "sexp-store"
@@ -306,12 +306,20 @@ let
     ];
   };
 
+  clermaid = pkgs.sbcl.buildASDFSystem {
+    pname = "clermaid";
+    version = qlotVersion "clermaid";
+    src = qlotSource "clermaid";
+    lispLibs = [ clinedi ];
+  };
+
   clTermdown = pkgs.sbcl.buildASDFSystem {
     pname = "cl-termdown";
     version = qlotVersion "cl-termdown";
     src = qlotSource "cl-termdown";
     lispLibs = with pkgs.sbclPackages; [
       clinedi
+      clermaid
       colordiff
       colorlisp
       serapeum

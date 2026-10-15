@@ -874,6 +874,8 @@
 (define-test-suite application
   test-operation-request-turn
   test-application-transcript-actions
+  test-application-mermaid-transcript
+  test-application-mermaid-streaming
   test-application-command-tips
   test-application-banner-policy
   test-replay-skips-notice

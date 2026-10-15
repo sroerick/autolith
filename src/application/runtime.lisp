@@ -1905,13 +1905,13 @@ the fence's raw source; that span becomes a widget copying the source."
   (let ((renderer (application--markdown-renderer application))
         (trimmed (string-right-trim '(#\Space #\Tab #\Newline #\Return)
                                     (sanitize-text text))))
-    (loop for line in (or (uiop:split-string trimmed :separator '(#\Newline))
-                          (list ""))
-          append (loop for row in (application--markdown-rows renderer line)
-                       append (append row
-                                      (list (terminal-span
-                                             ':plain
-                                             (string #\Newline))))))))
+    (loop for row in (append
+                      (loop for line in (or (uiop:split-string trimmed :separator '(#\Newline))
+                                            (list ""))
+                            append (application--markdown-rows renderer line))
+                      (termdown:markdown-render-finish renderer))
+          append (append row
+                         (list (terminal-span ':plain (string #\Newline)))))))
 
 (-> application--timestamp-text
     ((option timestamp))
@@ -3275,6 +3275,7 @@ continuation turns, so the notice names what woke the model."
                   :rows (append (when (plusp (length stream-pending))
                                   (application--markdown-rows stream-renderer
                                                               stream-pending))
+                                 (termdown:markdown-render-finish stream-renderer)
                                 (list nil))
                   :tail nil)
                  (setf stream-pending ""

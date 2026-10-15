@@ -106,7 +106,8 @@ terminal prompt          local Lisp result       finalized scrollback
 | clinker-transcript | Ordered projection and reconciliation | Conversation meaning and durable repair decisions |
 | image-daemon/runtime | Service registry, relays, attachment queues and shutdown | Conversation leases, steering, handoff and input-reader coordination |
 | clinedi | Modal sessions, editor/history state and terminal transports | Completion, submission, paste and interruption policy |
-| cl-termdown | Column layout and semantic span presentation | Transcript composition, modeline and activity content |
+| cl-termdown | Column layout, Markdown fence lifecycle and semantic span presentation | Transcript composition, source-copy widgets and stream finalization |
+| clermaid | Bounded Mermaid parsing and terminal-cell diagram layout | Mermaid fenced blocks through cl-termdown |
 | cl-exec-sandbox | Bounded raw capture files, process cleanup, capture metadata and byte head/tail sampling | Private execution-owned log artifacts, preview budgets, retention, durable references and authorized resource reads |
 
 Retained shell output is split across =src/task/shell-logs.lisp= (ownership,
