@@ -37,16 +37,24 @@
     (loop for tail on metadata by #'cddr
           count (eq (first tail) key)))
 
+  (defun application-command--option-text (option)
+    "Return the slash spelling of a native string or keyword OPTION."
+    (etypecase option
+      (string option)
+      (keyword (string-downcase (symbol-name option)))))
+
   (defun application-command--static-options-p (value)
-    "Return true when VALUE is a unique proper list of printable strings."
+    "Return true for unique printable string or keyword choices."
     (and (proper-list-p value)
          (not (null value))
          (every (lambda (option)
-                  (and (non-empty-string-p option)
-                       (every #'graphic-char-p option)))
+                  (and (or (non-empty-string-p option) (keywordp option))
+                       (non-empty-string-p (application-command--option-text option))
+                       (every #'graphic-char-p (application-command--option-text option))))
                 value)
          (= (length value)
-            (length (remove-duplicates value :test #'string=)))))
+            (length (remove-duplicates value :test #'string=
+                                             :key #'application-command--option-text)))))
 
   (defun application-command--lambda-list-arity (lambda-list)
     "Return minimum and maximum counts, or NIL for an open keyword/rest tail."
@@ -111,8 +119,9 @@
       (values minimum (and (not rest-p) maximum))))
 
   (defun application-command--static-option-hint (options optional-p)
-    "Return the argument hint derived from finite OPTIONS."
-    (let ((choices (format nil "~{~A~^|~}" options)))
+    "Return the argument hint derived from finite native OPTIONS."
+    (let ((choices (format nil "~{~A~^|~}"
+                           (mapcar #'application-command--option-text options))))
       (if optional-p (format nil "[~A]" choices) choices)))
 
   (defun application-command--validate-metadata
@@ -313,7 +322,7 @@
     :initform nil
     :reader application-command-static-options
     :type list
-    :documentation "Finite string values offered for the command's sole argument.")
+    :documentation "Finite native string or keyword values offered for the command's sole argument.")
    (handler
     :initarg :handler
     :reader application-command-handler
@@ -507,8 +516,10 @@
     :terminal-behavior terminal-behavior
     :lambda-list (copy-tree lambda-list)
     :callable-p callable-p
-    :static-options (mapcar #'copy-seq static-options)
-     :slash-parser slash-parser
+    :static-options (mapcar (lambda (option)
+                              (if (stringp option) (copy-seq option) option))
+                            static-options)
+    :slash-parser slash-parser
     :handler handler)))
 
 
@@ -1090,15 +1101,16 @@ the typed text stops matching the canonical name."
                             name)
                     :primary (copy-seq name)))))
 
-(-> application-command--slash-option-token (string) string)
+(-> application-command--slash-option-token ((or string keyword)) string)
 (defun application-command--slash-option-token (option)
-  "Return OPTION quoted when slash syntax requires it."
-  (if (find-if (lambda (character)
-                 (or (char= character #\")
-                     (find character *application-command-whitespace*)))
-               option)
-      (format nil "~S" option)
-      (copy-seq option)))
+  "Return a native OPTION's text spelling, quoted when slash syntax requires it."
+  (let ((text (application-command--option-text option)))
+    (if (find-if (lambda (character)
+                   (or (char= character #\")
+                       (find character *application-command-whitespace*)))
+                 text)
+        (format nil "~S" text)
+        (copy-seq text))))
 
 (-> application-command-option-completion-entries () list)
 (defun application-command-option-completion-entries ()

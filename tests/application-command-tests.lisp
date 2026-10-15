@@ -1350,6 +1350,12 @@ nil)
   (declare (ignore object stream))
   (error 'configuration-error :message "A command argument was printed."))
 
+(-> application-command-tests--option-parser (string) list)
+(defun application-command-tests--option-parser (text)
+  "Parse the fixture's keyword action or literal string choice."
+  (let ((values (application-command--tokens text)))
+    (if (equal values '("on")) (list ':on) values)))
+
 (-> application-command-tests--native-arguments () null)
 (defun application-command-tests--native-arguments ()
   "Exercise native value transport, slash-only parsers and keyword binding."
@@ -1443,6 +1449,35 @@ nil)
                   (equal *application-command-tests-semantic-call*
                          '("restored \"literal\""))
                   "restoring a registration restores its captured slash parser"))))
+           (eval
+            '(define-application-command application-command-tests--options
+                 (:name "/native-options" :static-options (:on "MiXeD")
+                  :description "native finite choices" :tip "tests typed option completion."
+                  :busy-behavior :inspect :terminal-behavior :shared
+                  :callable t :slash-parser application-command-tests--option-parser)
+                 (application mode)
+               (declare (ignore application))
+               (setf *application-command-tests-semantic-call* (list mode))
+               :continue))
+           (let ((application (make-instance 'application))
+                 (lisp-values nil)
+                 (slash-values nil)
+                 (*read-eval* nil))
+             (dolist (entry (application-operation--command-option-completion-entries))
+               (when (equal (getf entry :primary) "(native-options")
+                 (let ((form (read-from-string (getf entry :name))))
+                   (application-operation-call application "native-options" (second form))
+                   (push (first *application-command-tests-semantic-call*) lisp-values))))
+             (dolist (entry (application-command-option-completion-entries))
+               (when (equal (getf entry :primary) "/native-options")
+                 (application-command-execute
+                  (application-command-find "/native-options") application
+                  (application-command-invocation-parse (getf entry :name)))
+                 (push (first *application-command-tests-semantic-call*) slash-values)))
+             (test-assert (equal (reverse lisp-values) '(:on "MiXeD"))
+                          "Lisp option completions retain keyword types and string case")
+             (test-assert (equal slash-values lisp-values)
+                          "slash and Lisp option completions invoke the same native choices"))
            (eval
             '(define-application-command application-command-tests--keywords
                  (:name "/native-keywords" :argument "[VALUE] [:PAYLOAD VALUE]"
