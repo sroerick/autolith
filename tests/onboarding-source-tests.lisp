@@ -1,0 +1,121 @@
+(in-package #:autolith)
+
+;;;; -- Org Onboarding Sources --
+
+(-> onboarding-source-test--lesson (string) string)
+(defun onboarding-source-test--lesson (body)
+  "Wrap BODY in a minimal authored lesson."
+  (format nil "* Fixture~%:PROPERTIES:~%:ID: fixture~%:VERSION: 2~%:EXERCISE: help~%:END:~%~A~%" body))
+
+(-> test-onboarding-source-rendering () null)
+(defun test-onboarding-source-rendering ()
+  "Decode semantic markup, links and literal runtime values without losing newlines."
+  (let* ((variables (make-hash-table :test #'eq))
+         (value "/path/*literal*=@@/猫/")
+         (source (onboarding-source-test--lesson
+                  (format nil "Plain *strong* =code=~%~%@@brand:brand~%line@@ @@dim:dim@@ @@lisp-prompt:*@@~%[[https://example.org][@@brand:site@@]]~%@@code:{{{:config-root}}}@@"))))
+    (setf (gethash ':config-root variables) value)
+    (let* ((page (first (onboarding-source-pages source variables)))
+           (body (getf page :body))
+           (spans (remove-if #'termdown:widget-p body))
+           (widget (find-if #'termdown:widget-p body)))
+      (test-assert (equal (list (getf page :id) (getf page :version) (getf page :exercise))
+                          '("fixture" 2 :help))
+                   "metadata is decoded once")
+      (test-assert (terminal-styled-text-p body) "all authored fragments become valid terminal content")
+      (test-assert (equal (mapcar #'terminal-span-style spans)
+                          '(:plain :strong :plain :code :plain :brand :plain :dim :plain :lisp-prompt :plain :plain :code))
+                   "each semantic style has its intended span")
+      (test-assert (string= value (terminal-span-text (first (last spans))))
+                   "interpolated paths are literal, not reparsed as markup")
+      (test-assert (find (format nil "~%~%") spans :key #'terminal-span-text :test #'string=)
+                   "paragraph boundaries survive")
+      (test-assert (find (format nil "brand~%line") spans :key #'terminal-span-text :test #'string=)
+                   "multiline semantic highlights preserve authored line breaks")
+      (test-assert (and widget (eq ':brand (termdown:widget-role widget))
+                        (equal '(:open-url "https://example.org") (termdown:widget-action widget)))
+                   "links retain semantic styling and executable URL actions")))
+  nil)
+
+(-> test-onboarding-source-validation () null)
+(defun test-onboarding-source-validation ()
+  "Reject malformed metadata and markup before any tour is presented."
+  (dolist (source (list ""
+                        (format nil "* Missing properties~%body")
+                        (format nil "* Bad version~%:PROPERTIES:~%:ID: bad~%:VERSION: 0~%:END:~%body")
+                        (format nil "* Bad exercise~%:PROPERTIES:~%:ID: bad~%:VERSION: 1~%:EXERCISE: eval~%:END:~%body")
+                        (format nil "* Unknown property~%:PROPERTIES:~%:ID: bad~%:VERSION: 1~%:WHAT: x~%:END:~%body")
+                        (format nil "* Open drawer~%:PROPERTIES:~%:ID: bad~%:VERSION: 1")
+                        (format nil "* Blank property~%:PROPERTIES:~%~%:END:~%body")
+                        (concatenate 'string (onboarding-source-test--lesson "one")
+                                     (onboarding-source-test--lesson "two"))
+                        (onboarding-source-test--lesson "=unclosed")
+                        (onboarding-source-test--lesson "@@unknown:text@@")
+                        (onboarding-source-test--lesson "[[https://example.org][unclosed")))
+    (test-assert (handler-case
+                     (progn (onboarding-source-pages source (make-hash-table :test #'eq)) nil)
+                   (onboarding-source-error () t))
+                 "invalid authoring signals the source condition"))
+  nil)
+
+(-> test-onboarding-source-catalog () null)
+(defun test-onboarding-source-catalog ()
+  "Read the shipped source through the same ASDF-relative asset path as saved images."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let* ((pages (onboarding-pages configuration))
+           (ids (mapcar (lambda (page) (getf page :id)) pages))
+           (revised '("lisp-listener" "prompt-function" "input-vault" "indexed-search"
+                      "settings" "detached-sessions" "live-image")))
+      (test-assert (equal ids '("welcome" "live-image" "ordinary-prompt" "lisp-listener" "asynchronous-lisp"
+                                "prompt-function" "steering" "input-vault" "indexed-search"
+                                "settings" "detached-sessions" "goals" "missions"
+                                "recursive-inference" "child-agents" "mcp" "skills"
+                                "fullscreen" "ready"))
+                   "stable IDs retain source order, with the live image intro second and a mission lesson")
+      (dolist (page pages)
+        (test-assert (= (getf page :version)
+                        (cond
+                          ((string= "missions" (getf page :id))
+                           1)
+                          ((member (getf page :id) revised :test #'string=)
+                           4)
+                          (t
+                           3)))
+                     "only materially revised lessons receive new versions")
+        (test-assert (and (non-empty-string-p (getf page :title))
+                          (terminal-styled-text-p (getf page :body)))
+                     "titles and styled lesson bodies load from the shipped asset"))
+      (let* ((settings (find "settings" pages :test #'string= :key (lambda (page) (getf page :id))))
+             (text (apply #'concatenate 'string (mapcar #'terminal-span-text (getf settings :body)))))
+        (test-assert (and (search (namestring (config :config-root configuration)) text)
+                          (search (namestring (config :state-root configuration)) text))
+                     "actual configured roots are visible in the settings lesson"))
+      (test-assert (equal (loop for page in pages when (getf page :exercise)
+                               collect (cons (getf page :id) (getf page :exercise)))
+                          '(("ordinary-prompt" . :continue) ("lisp-listener" . :help)
+                            ("asynchronous-lisp" . :async) ("settings" . :settings)))
+                   "practice contracts use the authored metadata")))
+  nil)
+
+(-> test-onboarding-source-text () null)
+(defun test-onboarding-source-text ()
+  "Expand named UI text only on demand, reading edits on the next invocation."
+  (let ((source (format nil "#+begin_comment~%#+name: fixture~%#+begin_onboarding_text~%{{{:current}}}/{{{:count}}}~%{{{:action}}}~%#+end_onboarding_text~%#+end_comment~%"))
+        (variables (make-hash-table :test #'eq)))
+    (setf (gethash ':current variables) 2
+          (gethash ':count variables) 19
+          (gethash ':action variables) "Continue")
+    (test-call-with-function-replacements
+     (list (list 'onboarding-source--read (lambda () source)))
+     (lambda ()
+       (test-assert (string= (format nil "2/19~%Continue")
+                             (onboarding-source-text "fixture" variables))
+                    "named sections interpolate runtime slots and preserve line breaks")
+       (setf source (format nil "#+name: fixture~%#+begin_onboarding_text~%Edited~%#+end_onboarding_text~%"))
+       (test-assert (string= "Edited" (onboarding-source-text "fixture"))
+                    "later reads observe edited text")
+       (test-assert (handler-case (progn (onboarding-source-text "missing") nil)
+                      (onboarding-source-error () t))
+                    "missing named sections signal a source error"))))
+  nil)

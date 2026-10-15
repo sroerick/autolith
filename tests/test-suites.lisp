@@ -133,6 +133,10 @@
   test-onboarding-ui-idle-resize)
 
 (define-test-suite onboarding
+  test-onboarding-source-rendering
+  test-onboarding-source-validation
+  test-onboarding-source-catalog
+  test-onboarding-source-text
   test-onboarding-operation
   test-onboarding-first-startup
   test-onboarding-startup-exclusions

@@ -70,7 +70,8 @@
                #:structlisp
                #:trivial-gray-streams
                #:usocket)
-  :components ((:module "src"
+  :components ((:static-file "docs/onboarding-sources.org")
+               (:module "src"
                 :serial t
                 :components ((:file "core/package")
                              (:file "core/types")
@@ -227,6 +228,7 @@
                              (:file "terminal/fullscreen")
                              (:file "terminal/boot-screen")
                              (:file "state/onboarding")
+                             (:file "application/onboarding-source")
                              (:file "terminal/onboarding")
                              (:file "application/prompt-cache")
                              (:file "application/runtime")
@@ -424,6 +426,7 @@
                              (:file "installer-checksum-tests" :if-feature (:not :win32))
                              (:file "release-server-tests" :if-feature (:not :win32))
                              (:file "application-tests")
+                             (:file "onboarding-source-tests")
                              (:file "onboarding-tests")
                              (:file "mission-tests")
                              (:file "mission-inference-tests")
