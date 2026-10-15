@@ -2418,10 +2418,11 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (-> application--setting-name (t) keyword)
 (defun application--setting-name (designator)
-  "Return the setting keyword named by DESIGNATOR, a string, symbol, or keyword."
-  (let ((name (string-downcase (string designator))))
-    (find-setting (intern (string-upcase name) '#:keyword))
-    (intern (string-upcase name) '#:keyword)))
+  "Return the setting keyword named by a string or symbol DESIGNATOR."
+  (unless (typep designator '(or string symbol))
+    (error 'configuration-error
+           :message (format nil "A setting name must be a string or symbol, not ~S." designator)))
+  (intern (string-upcase (string designator)) '#:keyword))
 
 (-> application--setting-adjustable-p (setting) boolean)
 (defun application--setting-adjustable-p (setting)
@@ -2450,31 +2451,31 @@ Settings with runtime consequences, such as the provider's reasoning
 summaries or the transcript pagination, go through their dedicated setters so
 the settings page and the slash commands behave identically."
   (let* ((configuration (application-configuration application))
-         (setting (configuration-setting configuration name))
-         (parsed (setting-parse setting value configuration)))
+         (setting (configuration-setting configuration name)))
+    (setting-validate setting value configuration)
     (unless (application--setting-adjustable-p setting)
       (error 'configuration-error
              :message (format nil "~A is set at startup by the command line, the environment, or a default and cannot change in a running session."
                               (setting-label setting))))
     (case name
-      (:model (application-set-model application parsed))
-      (:reasoning-effort (application-set-reasoning-effort application parsed))
-      (:codex-fast-mode-p (application-set-codex-fast-mode application parsed))
-      (:reasoning-traces-p (application-set-reasoning-traces application parsed))
-      (:turn-timestamps-p (application-set-turn-timestamps application parsed))
-      (:cache-miss-notices-p (application-set-cache-miss-notices application parsed))
+      (:model (application-set-model application value))
+      (:reasoning-effort (application-set-reasoning-effort application value))
+      (:codex-fast-mode-p (application-set-codex-fast-mode application value))
+      (:reasoning-traces-p (application-set-reasoning-traces application value))
+      (:turn-timestamps-p (application-set-turn-timestamps application value))
+      (:cache-miss-notices-p (application-set-cache-miss-notices application value))
       (:compact-view-p
-       (unless (eq (application-compact-view-p application) parsed)
-         (setf (application-compact-view-p application) parsed)
+       (unless (eq (application-compact-view-p application) value)
+         (setf (application-compact-view-p application) value)
          (application-reset-history-pagination application))
        (application-publish-recovery-session application))
-      (:hurry-up-p (application-set-hurry-up application parsed))
+      (:hurry-up-p (application-set-hurry-up application value))
       (:permission-mode
-       (if parsed
-           (application--set-durable-permission-mode application parsed)
+       (if value
+           (application--set-durable-permission-mode application value)
            (setf (config :permission-mode configuration) nil)))
       (t
-       (setf (config name configuration) parsed))))
+       (setf (config name configuration) value))))
   nil)
 
 (-> application--grouped-settings (configuration) list)
@@ -2578,7 +2579,9 @@ The current value and its source sit in aligned columns of their own."
                           :usage "Usage: /settings NAME VALUE"
                           :empty-notice "This setting offers no choices.")))
              (when option
-               (application-apply-setting application name option)
+               (application-apply-setting
+                application name
+                (setting-parse setting option (application-configuration application)))
                (application-present
                 application
                 (format nil "~A is now ~A." (setting-label setting) option)))))
@@ -2592,17 +2595,39 @@ The current value and its source sit in aligned columns of their own."
                     name)))))))
   nil)
 
-(-> application-settings-command
-    (application &optional (option string) (option string))
-    null)
-(defun application-settings-command (application &optional name value)
+(-> application--parse-settings-control (string) list)
+(defun application--parse-settings-control (text)
+  "Retain slash settings text for parsing with the executing configuration."
+  (unless (zerop (length (string-trim '(#\Space #\Tab) text)))
+    (list text)))
+
+(-> application--settings-text-command (application (option string)) null)
+(defun application--settings-text-command (application text)
+  "Parse slash settings once using APPLICATION's schema and quoted token rules."
+  (let ((arguments (and text (application-command--tokens text))))
+    (unless (<= (length arguments) 2)
+      (error 'configuration-error :message "Usage: /settings [NAME [VALUE]]."))
+    (destructuring-bind (&optional name (value nil value-supplied-p)) arguments
+      (if value-supplied-p
+          (let* ((configuration (application-configuration application))
+                 (setting (configuration-setting
+                           configuration (application--setting-name name))))
+            (application-settings-command
+             application name (setting-parse setting value configuration)))
+          (application-settings-command application name))))
+  nil)
+
+(-> application-settings-command (application &optional t t) null)
+(defun application-settings-command (application &optional name (value nil value-supplied-p))
   "Browse settings, show one, or set one, depending on the arguments."
+  (when (and value-supplied-p (null name))
+    (error 'configuration-error :message "Provide a setting name when changing a value."))
   (cond
     ((and (null name) *application-command-interactive-p*)
      (application--settings-page application))
     ((null name)
      (application-present application (application-settings-listing application)))
-    ((null value)
+    ((not value-supplied-p)
      (let* ((configuration (application-configuration application))
             (key (application--setting-name name))
             (setting (configuration-setting configuration key)))
@@ -2629,14 +2654,21 @@ The current value and its source sit in aligned columns of their own."
     (:name "/settings"
      :argument "[NAME [VALUE]]"
      :description "browse and change settings"
-     :tip "opens the settings page; (settings \"name\") shows one setting, (settings \"name\" \"value\") changes it, and (settings) from Lisp or a script lists them all."
+     :tip "Change native values with (settings :onboarding-p nil) or (settings :boot-screen-seconds 2); inspect one setting with (settings :terminal-theme)."
      :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
-     :callable t)
-    (application &optional name value)
-  (application-settings-command application
-                                (and name (string-downcase (string name)))
-                                (and value (if (stringp value) value (string-downcase (string value)))))
+     :callable t
+     :slash-parser application--parse-settings-control)
+    (application &optional name (value nil value-supplied-p))
+  (let ((invocation *application-command-presentation-invocation*))
+    (cond
+      ((and invocation
+            (eq (application-command-invocation-syntax invocation) ':slash))
+       (application--settings-text-command application name))
+      (value-supplied-p
+       (application-settings-command application name value))
+      (t
+       (application-settings-command application name))))
   ':continue)
 
 (-> application-slynk-command (application &optional t) null)

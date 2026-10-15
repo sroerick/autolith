@@ -1375,9 +1375,97 @@
         "/mcp reload omits the capability chip when the tool-name set is unchanged")))
   nil))
 
+(-> test-application-typed-setting-values (application) null)
+(defun test-application-typed-setting-values (application)
+  "Check schema-defined lists, paths, literal strings, and case-sensitive choices."
+  (let* ((*settings* (make-setting-registry))
+         (original (application-configuration application)))
+    (define-setting :typed-value (setting)
+      :label "Typed value" :scope :session :default nil
+      :type '(or null string list pathname))
+    (define-setting :typed-choice (choice-setting)
+      :label "Typed choice" :scope :session :default "Other"
+      :type 'string :options '("Keep Case" "Other"))
+    (let ((configuration (setinka:make-configuration)))
+      (unwind-protect
+           (progn
+             (setf (application-configuration application) configuration)
+             (dolist (value (list '("Keep Case" :keyword nil (1 2))
+                                 #P"Mixed Case/file.lisp"
+                                 "literal \" unmatched (text) \\ Keep Case"))
+               (application-operation-call application 'settings ':typed-value value)
+               (test-assert (eq (config :typed-value configuration) value)
+                            "schema-accepted native values are not printed or reparsed"))
+             (application-operation-call application 'settings ':typed-choice "Keep Case")
+             (test-assert (string= (config :typed-choice configuration) "Keep Case")
+                          "native string choice case is preserved")
+             (test-assert
+              (handler-case
+                  (progn
+                    (application-operation-call application 'settings ':typed-choice "keep case")
+                    nil)
+                (setting-invalid () t))
+              "native choice validation does not silently normalize strings")
+             (let ((literal "Keep \"quoted\" Case \\path"))
+               (application-command
+                application
+                (format nil "/settings typed-value ~S" literal))
+               (test-assert (string= (config :typed-value configuration) literal)
+                            "slash quoted strings are decoded exactly once")))
+        (setf (application-configuration application) original))))
+  nil)
+
+(-> test-application-typed-settings () null)
+(defun test-application-typed-settings ()
+  "Test native values and schema-aware slash settings without coercion of Lisp data."
+  (test-call-with-typed-control-application
+   (lambda (application root observations)
+     (declare (ignore root observations))
+     (let ((configuration (application-configuration application)))
+       (application-operation-call application 'settings ':onboarding-p t)
+       (let ((evaluation
+              (application-lisp-evaluate
+               "(progn (settings :onboarding-p nil) (settings :boot-screen-seconds 2))"
+               :application application)))
+         (test-assert
+          (and (eq (application-lisp-evaluation-status evaluation) ':ok)
+               (null (config :onboarding-p configuration))
+               (= (config :boot-screen-seconds configuration) 2))
+          "local Lisp settings accepts explicit NIL and numbers"))
+       (application-operation-call application 'settings 'terminal-theme ':almighty)
+       (test-assert (eq (config :terminal-theme configuration) ':almighty)
+                    "symbol names and native choice values follow the schema")
+       (application-command application "/settings boot-screen-seconds 3.5")
+       (application-command application "/settings onboarding-p off")
+       (test-assert
+        (and (= (config :boot-screen-seconds configuration) 3.5)
+             (null (config :onboarding-p configuration)))
+        "slash settings parses values with the active setting schema")
+       (let ((saved
+              (uiop/stream:read-file-string (configuration-preferences-path configuration))))
+         (dolist
+             (arguments
+              '((:boot-screen-seconds "2") (:onboarding-p "off") (:onboarding-p 2)
+                (:terminal-theme :unknown)))
+           (test-assert
+            (handler-case
+             (progn (apply #'application-operation-call application 'settings arguments) nil)
+             (setting-invalid nil t))
+            "invalid native settings signal the setting condition"))
+         (test-assert
+          (and (= (config :boot-screen-seconds configuration) 3.5)
+               (eq (config :terminal-theme configuration) ':almighty)
+               (string= saved
+                        (uiop/stream:read-file-string
+                         (configuration-preferences-path configuration))))
+          "invalid settings neither mutate nor persist"))
+       (test-application-typed-setting-values application))))
+  nil)
+
 (-> test-application-settings-command () null)
 (defun test-application-settings-command ()
   "Test the settings page lists, shows, changes, and refuses settings."
+  (test-application-typed-settings)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (application (make-instance 'application
@@ -1409,7 +1497,7 @@
                   (search "transcript" (first presented))
                   (not (search "provider-endpoint" (first presented))))
              "the listing shows visible settings with values and sources")
-            (application--builtin-settings-command application "cache-miss-notices-p" "on")
+            (application--builtin-settings-command application "cache-miss-notices-p" t)
             (test-assert
              (and (application-cache-miss-notices-p application)
                   (search "Cache miss notices is now on and saved" (first presented)))
@@ -1424,7 +1512,7 @@
             (test-assert
              (handler-case
                  (progn
-                   (application--builtin-settings-command application "immutable-p" "on")
+                   (application--builtin-settings-command application "immutable-p" t)
                    nil)
                (configuration-error (condition)
                  (not (null (search "cannot change" (format nil "~A" condition))))))
@@ -1432,7 +1520,7 @@
             (test-assert
              (handler-case
                  (progn
-                   (application--builtin-settings-command application "no-such-setting" "on")
+                   (application--builtin-settings-command application "no-such-setting" t)
                    nil)
                (setting-unknown () t))
              "unknown settings are refused")
