@@ -270,7 +270,7 @@
               provider nil :stream output :open-browser-p nil)
              device-message
              (provider-authenticate-with-method
-              provider "device" :stream output :open-browser-p nil))))
+              provider ':device-code :stream output :open-browser-p nil))))
     (test-assert
      (and (= browser-login-count 1)
           (= device-login-count 1)
@@ -284,7 +284,7 @@
      (handler-case
          (progn
            (provider-authenticate-with-method
-            provider "invalid" :stream output :open-browser-p nil)
+            provider ':invalid :stream output :open-browser-p nil)
            nil)
        (authentication-error ()
          t))
