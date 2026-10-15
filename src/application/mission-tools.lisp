@@ -60,48 +60,90 @@
 
 (-> mission--read-data (string) t)
 (defun mission--read-data (text)
-  "Read exactly one portable data form without read-time evaluation."
-  (let ((*read-eval* nil) (*package* (find-package '#:autolith)))
-    (multiple-value-bind (value position) (read-from-string text nil nil)
-      (unless (and value
-                   (every (lambda (character) (find character '(#\Space #\Tab #\Newline #\Return)))
-                          (subseq text position)))
-        (mission--reject ':invalid "Expected exactly one mission data form."))
-      value)))
-
-(-> application-mission-command (application string) null)
-(defun application-mission-command (application remainder)
-  "Apply /mission status, start, run, verify, resume, cancel, accept or invalidate."
+  "Read exactly one data form at the slash boundary without read-time evaluation."
   (handler-case
-      (let* ((remainder (string-trim '(#\Space #\Tab) remainder))
-             (space (position #\Space remainder))
-             (operation (string-downcase (subseq remainder 0 space)))
-             (argument (and space (string-trim '(#\Space #\Tab) (subseq remainder (1+ space))))))
-        (cond
-          ((member operation '("" "status") :test #'string=)
-           (application-present application (format nil "~S" (application-goal application))))
-          ((string= operation "start")
-           (application-mission-start application (mission--read-data (or argument "")))
-           (application-present application "Mission installed. Use /mission run to begin."))
-          ((string= operation "run")
-           (let ((goal (application-goal application)))
-             (unless (and (mission-goal-p goal) (eq (getf goal :status) ':active))
-               (mission--reject ':invalid "No active mission. Use /mission resume for paused or blocked missions."))
-             (application--start-goal-work application)))
-          ((string= operation "verify") (application-mission-verify application))
-          ((string= operation "resume") (application-mission-resume application))
-          ((string= operation "cancel")
-           (application-mission-stop application ':cancelled (or argument "User cancelled the mission.")))
-          ((member operation '("accept" "invalidate") :test #'string=)
-           (let* ((parts (mission--read-data (or argument "")))
-                  (id (first parts)) (evidence (second parts)))
-             (unless (and (non-empty-string-p id) (non-empty-string-p evidence))
-               (mission--reject ':invalid "Expected (\"ID\" \"EVIDENCE\")."))
-             (if (string= operation "accept")
-                 (application-mission-accept application id evidence)
-                 (application-mission-invalidate application id evidence))))
-          (t (mission--reject ':invalid "Usage: /mission [status|start PLIST|run|verify|resume|cancel REASON|accept (ID EVIDENCE)|invalidate (ID EVIDENCE)]"))))
-    (error (condition) (application-present application (princ-to-string condition))))
+      (let ((*read-eval* nil) (*package* (find-package '#:autolith))
+            (end (gensym "END")))
+        (with-input-from-string (stream text)
+          (let ((value (read stream nil end)))
+            (unless (and (not (eq value end)) (eq (read stream nil end) end))
+              (mission--reject ':invalid "Expected exactly one mission data form."))
+            value)))
+    (mission-error (condition) (error condition))
+    (error () (mission--reject ':invalid "Invalid mission data form."))))
+
+(-> application-mission-slash-arguments (string) list)
+(defun application-mission-slash-arguments (remainder)
+  "Parse legacy mission text into semantic arguments at the slash boundary."
+  (let* ((text (string-trim '(#\Space #\Tab #\Newline #\Return) remainder))
+         (space (position-if (lambda (character) (find character '(#\Space #\Tab #\Newline #\Return))) text))
+         (name (subseq text 0 space))
+         (argument (and space (string-left-trim '(#\Space #\Tab) (subseq text (1+ space))))))
+    (cond
+      ((member name '("" "status" "run" "verify" "resume") :test #'string-equal)
+       (when (and argument (plusp (length argument)))
+         (mission--reject ':invalid "This mission action takes no arguments."))
+       (list (if (equal name "") ':status
+                 (find name '(:status :run :verify :resume) :test #'string-equal :key #'symbol-name))))
+      ((string-equal name "start") (list ':start (mission--read-data (or argument ""))))
+      ((string-equal name "cancel")
+       (if argument (list ':cancel argument) (list ':cancel)))
+      ((member name '("accept" "invalidate") :test #'string-equal)
+       (let ((fields (mission--read-data (or argument ""))))
+         (unless (and (proper-list-p fields) (= (length fields) 2))
+           (mission--reject ':invalid "Expected (\"ID\" \"EVIDENCE\")."))
+         (cons (if (string-equal name "accept") ':accept ':invalidate) fields)))
+      (t (mission--reject ':invalid "Unknown mission action.")))))
+
+(-> mission--command-specification-p (t) boolean)
+(defun mission--command-specification-p (specification)
+  "Check finite native specification shapes before the existing policy validator."
+  (labels ((plist-p (value)
+             (and (proper-list-p value) (evenp (length value))
+                  (let ((keys (loop for (key item) on value by #'cddr collect key)))
+                    (and (every #'keywordp keys)
+                         (= (length keys) (length (remove-duplicates keys))))))))
+    (and (plist-p specification)
+         (proper-list-p (getf specification :criteria))
+         (every (lambda (criterion)
+                  (and (plist-p criterion) (proper-list-p (getf criterion :gates))))
+                (getf specification :criteria))
+         (proper-list-p (getf specification :gates))
+         (every (lambda (gate)
+                  (and (plist-p gate) (proper-list-p (getf gate :inputs))))
+                (getf specification :gates))
+         t)))
+
+(-> application-mission-command (application &optional t &rest t) null)
+(defun application-mission-command (application &optional (action ':status) &rest arguments)
+  "Apply a native mission action, preserving specifications and literal evidence."
+  (unless (and (member action '(:status :start :run :verify :resume :cancel :accept :invalidate))
+               (case action
+                 ((:status :run :verify :resume) (null arguments))
+                 (:start
+                  (and (= (length arguments) 1)
+                       (mission--command-specification-p (first arguments))))
+                 (:cancel (or (null arguments)
+                              (and (= (length arguments) 1) (non-empty-string-p (first arguments)))))
+                 ((:accept :invalidate)
+                  (and (= (length arguments) 2) (every #'non-empty-string-p arguments)))))
+    (mission--reject ':invalid "Invalid mission action or arguments."))
+  (case action
+    (:status (application-present application (format nil "~S" (application-goal application))))
+    (:start
+     (application-mission-start application (first arguments))
+     (application-present application "Mission installed. Use (mission :run) to begin."))
+    (:run
+     (let ((goal (application-goal application)))
+       (unless (and (mission-goal-p goal) (eq (getf goal :status) ':active))
+         (mission--reject ':invalid "No active mission. Use (mission :resume) for paused or blocked missions."))
+       (application--start-goal-work application)))
+    (:verify (application-mission-verify application))
+    (:resume (application-mission-resume application))
+    (:cancel (application-mission-stop application ':cancelled
+                                       (or (first arguments) "User cancelled the mission.")))
+    (:accept (application-mission-accept application (first arguments) (second arguments)))
+    (:invalidate (application-mission-invalidate application (first arguments) (second arguments))))
   nil)
 
 (define-application-command application--builtin-mission-command
@@ -111,7 +153,8 @@
      :tip "start with objective, criteria and turn/token/wall budgets; use status for durable gate evidence."
      :busy-behavior :hold
      :terminal-behavior :shared
+     :slash-parser application-mission-slash-arguments
      :callable t)
-    (application &optional (remainder ""))
-  (application-mission-command application remainder)
+    (application &optional (action ':status) &rest arguments)
+  (apply #'application-mission-command application action arguments)
   ':continue)

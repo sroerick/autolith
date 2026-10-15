@@ -2968,19 +2968,6 @@ The current value and its source sit in aligned columns of their own."
   (application-present application (application-task-inspector application remainder))
   ':continue)
 
-
-(define-application-command application--builtin-mission-wakeup-command
-    (:name "/mission-wakeup"
-     :argument "TICKET"
-     :description "consume an admitted durable mission wakeup"
-     :tip "rechecks the current mission version and records uncertain execution before effects."
-     :busy-behavior :hold
-     :terminal-behavior :shared
-     :callable t)
-    (application &optional (remainder ""))
-  (application-mission-wakeup-command application remainder)
-  ':continue)
-
 (define-application-command application--builtin-refine-command
     (:name "/refine"
      :argument "[(:assess ID REVISION VERDICT EVIDENCE)]"

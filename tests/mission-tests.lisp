@@ -390,10 +390,37 @@
     (let* ((application (mission-test--application configuration))
            (registry (application-tool-registry application)))
       (test-assert (application-command-find "/mission") "mission command participates in operation lookup")
-      (test-assert
-       (eq ':continue (application-command application
-                                           (format nil "/mission start ~S" (mission-test--specification))))
-       "the complete mission policy is one free-form command argument")
+      (let ((specification (mission-test--specification)))
+        (setf (getf specification :objective) "Keep Case, quotes \" and  spaces")
+        (test-call-with-function-replacements
+         (list (list 'application-mission-start
+                     (lambda (owner supplied)
+                       (test-assert (eq owner application) "native mission retains its application")
+                       (test-assert (eq supplied specification) "native mission passes the actual specification"))))
+         (lambda () (application-operation-call application "mission" ':start specification)))
+        (application-operation-call application "mission" ':start specification)
+        (test-assert (equal (getf specification :objective)
+                            (getf (application-goal application) :objective))
+                     "native mission preserves literal mixed-case objective text"))
+      (let ((before (copy-tree (application-goal application))))
+        (dolist (arguments '(("status") (:unknown) (:status "extra") (:cancel 1)
+                             (:accept "delivery") (:invalidate "delivery" nil)))
+          (test-assert
+           (handler-case
+               (progn (apply #'application-operation-call application "mission" arguments) nil)
+             (mission-error () t))
+           "invalid native mission arguments signal a typed rejection"))
+        (test-assert (equal before (application-goal application))
+                     "rejected native mission calls do not change durable goal state"))
+      (test-assert (eq ':ok (application-lisp-evaluation-status
+                            (application-lisp-evaluate "(mission :status)" :application application)))
+                   "mission keyword control is callable from the Lisp prompt")
+      (dolist (text '("/mission start #.(error \"reader evaluated\")"
+                       "/mission start (:objective \"first\") (:objective \"extra\")"
+                       "/mission accept (\"delivery\" . \"bad\")"))
+        (test-assert (handler-case (progn (application-command application text) nil)
+                       (mission-error () t))
+                     "slash mission data rejects evaluation, extra forms and malformed fields"))
       (test-call-with-function-replacements
        (list (list 'mission--tool-context (lambda (app) (mission-test--context app))))
        (lambda ()
@@ -407,8 +434,9 @@
                       "the model cannot prove a human acceptance criterion")
          (test-assert (null (tool-registry-find registry "mission" "accept"))
                       "user acceptance is not model authority")
-         (application-command application "/mission accept (\"delivery\" \"Inspected by the operator\")")
-         (application-command application "/mission resume")
+          (application-operation-call application "mission" ':accept "delivery"
+                                      "Inspected by the operator: quote \"  Keep Case")
+          (application-operation-call application "mission" ':resume)
          (application-command application "/mission verify")))
       (test-assert (eq ':verified (getf (application-goal application) :status)) "user commands complete verification")
       (let* ((conversation (application-conversation application))

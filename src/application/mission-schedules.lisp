@@ -322,8 +322,32 @@
             (otherwise (mission--reject ':schedule-resolution "Expected completed, failed or retry."))))
       (mission-schedule--notify service))))
 
-(-> application-mission-wakeup-command (application string) null)
-(defun application-mission-wakeup-command (application remainder)
-  "Consume a persisted scheduler ticket through the ordinary local command queue."
-  (application-mission-schedule-execute application (mission--read-data remainder))
+(-> application-mission-wakeup-slash-arguments (string) list)
+(defun application-mission-wakeup-slash-arguments (remainder)
+  "Read the serialized ticket only at the slash command boundary."
+  (list (mission--read-data remainder)))
+
+(-> application-mission-wakeup-command (application t &rest t) null)
+(defun application-mission-wakeup-command (application ticket &rest extra)
+  "Validate and consume a native persisted scheduler ticket."
+  (unless (and (null extra) (proper-list-p ticket) (= (length ticket) 4)
+               (every (lambda (key) (member key '(:id :token)))
+                      (loop for (key value) on ticket by #'cddr collect key))
+               (proper-list-p (getf ticket :id)) (getf ticket :id)
+               (integerp (getf ticket :token)) (plusp (getf ticket :token)))
+    (mission--reject ':schedule-ticket "Expected a ticket with :id and a positive integer :token."))
+  (application-mission-schedule-execute application ticket)
   nil)
+
+(define-application-command application--builtin-mission-wakeup-command
+    (:name "/mission-wakeup"
+     :argument "TICKET"
+     :description "consume an admitted durable mission wakeup"
+     :tip "rechecks the current mission version and records uncertain execution before effects."
+     :busy-behavior :hold
+     :terminal-behavior :shared
+     :slash-parser application-mission-wakeup-slash-arguments
+     :callable t)
+    (application &optional ticket &rest extra)
+  (apply #'application-mission-wakeup-command application ticket extra)
+  ':continue)

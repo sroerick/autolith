@@ -37,7 +37,7 @@
   "Exercise missed interval policy and persistent duplicate admission through product authority."
   (mission-schedule-tests--fixture
    (lambda (application service path clock commands executions)
-     (declare (ignore path executions))
+     (declare (ignore path))
      (dolist (policy '(:latest :skip :all))
        (application-mission-schedule-add application :id (symbol-name policy) :content "Inspect CI"
                                         :at 100 :interval 10 :missed-policy policy))
@@ -50,7 +50,39 @@
        (test-assert (null (application-mission-schedules-wake application)) "same wake produces no duplicate work")
        (test-assert (= 130 (application-mission-schedules-next-time application)) "host deadline advances without polling")
        (test-assert (= 4 (length (getf (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler service)) :wakeups)))
-                    "occurrence history retains duplicate proof")))))
+                    "occurrence history retains duplicate proof")
+       (let* ((scheduler (mission-schedule-scheduler service))
+              (before (cl-jobpond:scheduler-snapshot scheduler))
+              (ticket (mission-schedule-tests--ticket (first wakeups))))
+         (dolist (invalid (list nil "(:id (1) :token 1)" '(:id (1) :token "1")
+                               '(:id (1) :token 1 :extra t)))
+           (test-assert
+            (handler-case (progn (application-operation-call application "mission-wakeup" invalid) nil)
+              (mission-error () t))
+            "native wakeup rejects serialized or malformed tickets"))
+         (test-assert (equal before (cl-jobpond:scheduler-snapshot scheduler))
+                      "rejected tickets have no scheduler effects")
+         (test-call-with-function-replacements
+          (list (list 'application-mission-schedule-execute
+                      (lambda (owner supplied)
+                        (test-assert (eq owner application) "wakeup retains owning application")
+                        (test-assert (eq supplied ticket) "native wakeup retains the actual ticket"))))
+          (lambda () (application-operation-call application "mission-wakeup" ticket)))
+         (application-operation-call application "mission-wakeup" ticket)
+         (test-assert (= 1 (length (funcall executions))) "native ticket executes exactly once")
+         (test-assert
+          (handler-case (progn (application-operation-call application "mission-wakeup" ticket) nil)
+            (mission-error () t))
+          "a consumed native ticket cannot replay")
+         (application-command application
+                              (format nil "/mission-wakeup ~S"
+                                      (mission-schedule-tests--ticket (second wakeups))))
+         (test-assert (= 2 (length (funcall executions))) "slash ticket keeps ordinary execution semantics")
+         (dolist (text '("/mission-wakeup #.(error \"evaluated\")"
+                          "/mission-wakeup (:id (1) :token 1) nil"))
+           (test-assert (handler-case (progn (application-command application text) nil)
+                          (mission-error () t))
+                        "slash wakeup rejects read-time evaluation and trailing forms")))))))
 
 (-> test-mission-schedule-version-and-cancel () null)
 (defun test-mission-schedule-version-and-cancel ()
