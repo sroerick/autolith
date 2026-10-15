@@ -155,7 +155,7 @@
   "Exercise ordinary tool denial and stable external event identities."
   (mission-schedule-tests--fixture
    (lambda (application service path clock commands executions)
-     (declare (ignore service path clock commands executions))
+     (declare (ignore path clock))
      (let* ((registry (application-tool-registry application))
             (context (mission-test--context application))
             (other (agent-create :configuration (application-configuration application)
@@ -174,7 +174,30 @@
                                                 (agent-test-call :namespace "mission-schedule" :name "add"
                                                                  :arguments "{\"id\":\"ci\",\"content\":\"Inspect CI\",\"event\":\"ci\"}") context))
                     "the owning primary uses the normal tool registry")
-       (test-assert (= 1 (length (application-mission-schedule-event application "ci" "build-17"))) "observable event admits work")
+       (let* ((wakeup (first (application-mission-schedule-event application "ci" "build-17")))
+              (ticket (mission-schedule-tests--ticket wakeup))
+              (before (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler service)))
+              (caller (mission-test--application (application-configuration application))))
+         (test-assert wakeup "observable event admits work")
+         (unwind-protect
+              (progn
+                (setf (application-agent caller) other
+                      (application-conversation caller) (application-conversation application)
+                      (application-tool-registry caller) registry)
+                (test-assert
+                 (handler-case
+                     (progn (application-operation-call caller "mission-wakeup" ticket) nil)
+                   (mission-error (condition)
+                     (eq ':schedule-authority (mission-error-reason condition))))
+                 "the typed wakeup handler rejects a non-owning agent")
+                (test-assert (equal before (cl-jobpond:scheduler-snapshot (mission-schedule-scheduler service)))
+                             "authority rejection does not consume or settle the claimed ticket")
+                (test-assert (null (funcall executions)) "authority rejection has no provider effect")
+                (let ((evaluation (application-lisp-evaluate (first (funcall commands)) :application application)))
+                  (test-assert (eq ':ok (application-lisp-evaluation-status evaluation))
+                               "the generated queue form supplies a quoted native ticket, not serialized ticket text"))
+                (test-assert (= 1 (length (funcall executions))) "the owning primary consumes its queued native wakeup once"))
+           (terminal-ui-stop (application-ui caller))))
        (test-assert (null (application-mission-schedule-event application "ci" "build-17")) "duplicate event has no second admission")
        (test-assert (null (application-mission-schedules-next-time application)) "event-only work has no heartbeat deadline")))))
 
@@ -220,7 +243,7 @@
     (let* ((application (mission-test--application configuration
                                                    :results (list (mission-test--result "Hosted wakeup observed."))))
            (controller (application-input-controller-create application :load-pending-p nil
-                                                                        :pending-persistence-enabled-p nil :start-reader-p nil))
+                                                                         :pending-persistence-enabled-p t :start-reader-p nil))
            (runtime (image-daemon:daemon-runtime-create
                      :directory root :identifier (conversation-identifier (application-conversation application))
                      :publish-p nil :request-function
@@ -250,7 +273,7 @@
                           (error "The hosted scheduler did not enqueue its deadline."))
                         (sleep 0.01)))
              (let ((work (application-input-controller--next-work controller)))
-               (test-assert (eq (first work) ':command) "timer work uses the ordinary durable command queue")
+               (test-assert (eq (first work) ':lisp) "timer work uses the ordinary durable Lisp input queue")
                (application-input-controller--run-work controller work))
              (test-assert (= 1 (getf (application-goal application) :turns-used))
                           "the scheduled command enters ordinary mission provider admission")

@@ -51,10 +51,10 @@
     (snapshot-write-text path text)))
 
 (-> mission-schedule--queue (application string) boolean)
-(defun mission-schedule--queue (application command)
-  "Admit COMMAND through the existing primary input queue without steering a turn."
+(defun mission-schedule--queue (application form)
+  "Admit a native wakeup FORM through the primary Lisp input queue without steering."
   (let ((controller (application-input-controller application)))
-    (when (and controller (application-input-controller--enqueue controller ':command command))
+    (when (and controller (application-input-controller--enqueue controller ':lisp form))
       (application-input-controller--persist-pending controller)
       t)))
 
@@ -226,9 +226,10 @@
                  (let ((accepted-p
                          (funcall (mission-schedule-enqueue service)
                                   (mission-schedule-application service)
-                                  (format nil "/mission-wakeup ~A"
-                                          (task--write-readable-sexp
-                                           (list :id (getf wakeup :id) :token (getf wakeup :token)))))))
+                                  (task--write-readable-sexp
+                                   (list 'mission-wakeup
+                                         (list 'quote
+                                               (list :id (getf wakeup :id) :token (getf wakeup :token))))))))
                    (push (if accepted-p wakeup
                              (mission-schedule--settle service wakeup :outcome ':failed :result ':admission-refused)) results))
                (error ()
@@ -336,6 +337,9 @@
                (proper-list-p (getf ticket :id)) (getf ticket :id)
                (integerp (getf ticket :token)) (plusp (getf ticket :token)))
     (mission--reject ':schedule-ticket "Expected a ticket with :id and a positive integer :token."))
+  (unless (eq application
+              (mission-schedule--application (application-operation--tool-context application)))
+    (mission--reject ':schedule-authority "Only the owning primary application may consume a wakeup."))
   (application-mission-schedule-execute application ticket)
   nil)
 
