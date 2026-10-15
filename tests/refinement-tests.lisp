@@ -113,6 +113,55 @@
   (handler-case (progn (funcall function) nil)
     (refinement-error (condition) (refinement-error-code condition))))
 
+(-> refinement-tests--user-assess (tool-context list &optional boolean) list)
+(defun refinement-tests--user-assess (context proposal &optional slash-p)
+  "Assess through the public user API, retaining typed failure and slash coverage."
+  (let* ((configuration (tool-context-configuration context))
+         (terminal (make-instance 'recording-terminal :columns 100))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :configuration configuration
+                                    :conversation (tool-context-conversation context)
+                                    :tool-registry (tool-context-registry context)
+                                    :provider nil :worker nil :agent nil :ui ui))
+         (identifier (getf proposal :id))
+         (revision (getf proposal :revision))
+         (evidence "Observed 8 operations, quotes \" and  Keep Case"))
+    (unwind-protect
+         (progn
+           (test-assert (eq ':ok (application-lisp-evaluation-status
+                                 (application-lisp-evaluate "(refine)" :application application)))
+                        "refinement state is callable from the real Lisp prompt")
+           (dolist (arguments (list (list "assess" identifier)
+                                   (list ':assess identifier :revision (princ-to-string revision)
+                                         :verdict ':passed :evidence evidence)
+                                   (list ':assess identifier :revision revision
+                                         :verdict "passed" :evidence evidence)
+                                   (list ':assess identifier :revision revision
+                                         :verdict ':passed :evidence evidence :extra t)))
+             (test-assert
+              (eq ':invalid (refinement-tests--error-code
+                             (lambda () (apply #'application-operation-call application "refine" arguments))))
+              "malformed native assessment is a typed rejection"))
+           (dolist (text '("/refine #.(error \"evaluated\")"
+                            "/refine (:assess \"id\" 1 :passed \"evidence\") nil"))
+             (test-assert
+              (eq ':invalid (refinement-tests--error-code
+                             (lambda () (application-command application text))))
+              "slash refinement rejects read-time evaluation and trailing data"))
+           (test-assert (equal proposal (refinement-find configuration identifier))
+                        "rejected assessments leave the proposal unchanged")
+           (if slash-p
+               (application-command application
+                                    (format nil "/refine ~S" (list ':assess identifier revision ':passed evidence)))
+               (application-operation-call application "refine" ':assess identifier
+                                           :revision revision :verdict ':passed :evidence evidence))
+           (let ((assessed (refinement-find configuration identifier)))
+             (test-assert (getf assessed :task-evaluation) "local user assessment records accepted efficacy")
+             (test-assert (equal evidence (getf (getf assessed :task-evaluation) :evidence))
+                          "accepted evidence is retained")
+             assessed))
+      (terminal-ui-stop ui))))
+
 ;;;; -- Lifecycle Contracts --
 
 (-> test-refinement-progression nil null)
@@ -129,14 +178,14 @@
        (fiveam:is (eq (getf (first (getf observed :mechanical-checks)) :claim) :owner-execution-only))
        (fiveam:is (eq :invalid (refinement-tests--error-code
                                (lambda () (refinement-tests--run context observed :promote :scope :project)))))
-       (let* ((passed (refinement-tests--assess context observed :passed))
+       (let* ((passed (refinement-tests--user-assess context observed))
               (project (refinement-tests--run context passed :promote :scope :project)))
          (fiveam:is (eq (getf project :scope) :project))
          (fiveam:is (null (getf project :task-evaluation)))
          (fiveam:is (eq :invalid (refinement-tests--error-code
                                  (lambda () (refinement-tests--run context project :promote :scope :global)))))
          (let* ((observed (refinement-tests--run context project :evaluate))
-                (passed (refinement-tests--assess context observed :passed))
+                (passed (refinement-tests--user-assess context observed t))
                 (global (refinement-tests--run context passed :promote :scope :global)))
            (fiveam:is (eq (getf global :scope) :global))
            (fiveam:is (= 3 (refinement-test-changes state)))

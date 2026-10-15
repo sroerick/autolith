@@ -2971,18 +2971,6 @@ The current value and its source sit in aligned columns of their own."
   (application-present application (apply #'application-task-inspector application action id options))
   ':continue)
 
-(define-application-command application--builtin-refine-command
-    (:name "/refine"
-     :argument "[(:assess ID REVISION VERDICT EVIDENCE)]"
-     :description "inspect refinement proposals or assess task efficacy"
-     :tip "records a local task-level assessment before scoped promotion."
-     :busy-behavior :hold
-     :terminal-behavior :shared
-     :callable t)
-    (application &optional (remainder ""))
-  (application-refinement-command application remainder)
-  ':continue)
-
 (define-application-command application--builtin-goal-command
     (:name "/goal"
      :argument "[OBJECTIVE]"
