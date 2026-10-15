@@ -4178,7 +4178,13 @@
   "Test argument-free /goal remains available during an active model turn."
   (let* ((terminal (make-instance 'waiting-recording-terminal :columns 60))
          (ui (terminal-ui-create :terminal terminal))
-         (application (make-instance 'application :ui ui))
+         (configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation (conversation-create configuration
+                                            :identifier "responsive-goal-inspection"))
+         (application (make-instance 'application :ui ui
+                                                 :configuration configuration
+                                                 :conversation conversation))
          (controller nil))
     (setf (application-goal application)
           (list :objective "finish the migration"
@@ -4227,28 +4233,60 @@
                (deque-empty-p
                 (application-input-controller-pending-apply-items controller))
                "goal mutations never enter the active turn boundary queue")
-              (recording-terminal-reset terminal)
-              (let* ((invocation
-                       (application-command-invocation-parse
-                        "/timestamps sometimes"))
-                     (command
-                       (application-command-invocation-command invocation)))
-                (test-assert
-                 (eq (application-input-controller--run-responsive-command
-                      controller command invocation)
-                     ':failed)
-                 "responsive command errors remain recoverable")
-                (let* ((output (recording-terminal-output terminal))
-                       (command-position
-                         (search "/timestamps sometimes" output))
-                       (error-position (search "✗ error" output)))
+              (dolist (boundary '(:busy :recalled :idle))
+                (recording-terminal-reset terminal)
+                (let ((queued-work
+                        (application-input-controller--state controller :work-items)))
+                  (ecase boundary
+                    (:busy
+                     (application-input-controller--handle-submission
+                      controller "/timestamps sometimes"))
+                    (:recalled
+                     (setf (application-input-controller-follow-up-edit-index controller) 0
+                           (application-input-controller-follow-up-edit-work controller)
+                           '(:command "/goal pause"))
+                     (test-assert
+                      (application-input-controller--handle-recalled-submission
+                       controller "/timestamps sometimes")
+                      "invalid recalled commands are handled without escaping")
+                     (test-assert
+                      (and (eql (application-input-controller-follow-up-edit-index
+                                 controller)
+                                0)
+                           (equal (application-input-controller-follow-up-edit-work
+                                   controller)
+                                  '(:command "/goal pause")))
+                      "invalid recalled edits preserve the selected work")
+                     (setf (application-input-controller-follow-up-edit-index controller) nil
+                           (application-input-controller-follow-up-edit-work controller) nil))
+                    (:idle
+                     (test-assert
+                      (eq (application--run-command-input
+                           application "/timestamps sometimes")
+                          ':failed)
+                      "idle command parse errors remain recoverable")))
                   (test-assert
-                   (and command-position
-                        error-position
-                        (< command-position error-position))
-                   "responsive command errors retain their command heading"))))
+                   (equal queued-work
+                          (application-input-controller--state controller :work-items))
+                   "invalid commands do not enter the idle work queue")
+                  (test-assert
+                   (deque-empty-p
+                    (application-input-controller-pending-apply-items controller))
+                   "invalid commands do not enter the active turn boundary queue")
+                  (let* ((output (recording-terminal-output terminal))
+                         (command-position
+                           (search "/timestamps sometimes" output))
+                         (error-position (search "✗ error" output)))
+                    (test-assert
+                     (and command-position
+                          error-position
+                          (< command-position error-position))
+                     (format nil "~A command errors retain their command heading"
+                             boundary))))))
         (when controller
-          (application-input-controller-stop controller)))))
+          (application-input-controller-stop controller))
+        (platform-delete-directory-tree *platform* root
+                                        :validate t :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-responsive-command-scheduling () null)

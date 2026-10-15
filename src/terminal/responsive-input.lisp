@@ -2269,13 +2269,12 @@ reaches the very next provider request."
       (application-input-controller-application controller)
       input))))
 
-(-> application-input-controller--run-responsive-command
-    (application-input-controller application-command
-     application-command-invocation)
+(-> application-input-controller--call-with-responsive-command
+    (application-input-controller application-command-invocation function)
     keyword)
-(defun application-input-controller--run-responsive-command
-    (controller command invocation)
-  "Execute an immediate COMMAND through the local restart debugger."
+(defun application-input-controller--call-with-responsive-command
+    (controller invocation function)
+  "Call FUNCTION with responsive command presentation and error recovery."
   (application-input-controller--call-with-responsive-prompt-block
    controller
    (lambda ()
@@ -2288,8 +2287,7 @@ reaches the very next provider request."
            (multiple-value-bind (result condition)
                (application--call-with-command-debugger
                 application
-                (lambda ()
-                  (application-command-execute command application invocation))
+                 function
                 :source (application-command-invocation-input invocation)
                 :operation-kind ':command
                 :retry-p t
@@ -2303,6 +2301,35 @@ reaches the very next provider request."
              (application-user-operation-record-command-outcome
               application invocation :action result :condition condition)
              result)))))))
+
+(-> application-input-controller--run-responsive-command
+    (application-input-controller application-command
+     application-command-invocation)
+    keyword)
+(defun application-input-controller--run-responsive-command
+    (controller command invocation)
+  "Execute an immediate COMMAND through the local restart debugger."
+  (application-input-controller--call-with-responsive-command
+   controller invocation
+   (lambda ()
+     (application-command-execute
+      command (application-input-controller-application controller) invocation))))
+
+(-> application-input-controller--parse-responsive-command
+    (application-input-controller string)
+    (option application-command-invocation))
+(defun application-input-controller--parse-responsive-command (controller input)
+  "Parse INPUT, presenting expected failures locally instead of scheduling work."
+  (handler-case
+      (application-command-invocation-parse input)
+    (autolith-error (condition)
+      (application-input-controller--call-with-responsive-command
+       controller
+       (make-instance 'application-command-invocation
+                      :input input :name "" :remainder ""
+                      :argument nil :command nil)
+       (lambda () (error condition)))
+      nil)))
 
 (-> application-input-controller--handle-recalled-submission
     (application-input-controller (or string user-message-input)
@@ -2328,7 +2355,11 @@ may execute immediately; other Lisp waits for the idle boundary."
                 (not lisp-input-p)
                 (not async-p)
                 (non-empty-string-p text)
-                (application-command-invocation-parse text)))
+                 (or (application-input-controller--parse-responsive-command
+                      controller text)
+                     (return-from
+                         application-input-controller--handle-recalled-submission
+                       t))))
          (command
            (and invocation
                 (application-command-invocation-command invocation)))
@@ -2506,9 +2537,9 @@ may execute immediately; other Lisp waits for the idle boundary."
              controller input))
        nil)
       (t
-       (application-localgroup-resume application)
        (cond
          ((terminal-ui--lisp-draft-p text)
+          (application-localgroup-resume application)
           (if (application-input-controller-busy-p controller)
               (ecase (application-input-controller--lisp-active-turn-action
                       controller text)
@@ -2527,31 +2558,37 @@ may execute immediately; other Lisp waits for the idle boundary."
          ((not (non-empty-string-p text))
           nil)
          ((application-input-controller-busy-p controller)
-          (let* ((invocation (application-command-invocation-parse text))
-                 (command
-                   (application-command-invocation-command invocation))
-                 (action
-                   (if command
-                       (application-command-busy-action command invocation)
-                       ;; An unknown command can only ever error, so report
-                       ;; it immediately instead of scheduling the mistake.
-                       ':execute)))
-            (ecase action
-              (:cancel
-               (application-input-controller--request-exit controller ':quit))
-              (:execute
-               (when (eq (if command
-                             (application-input-controller--run-responsive-command
-                              controller command invocation)
-                             (application-input-controller--run-responsive-unknown
-                              controller text))
-                         ':quit)
-                 (application-input-controller--request-exit controller ':quit)))
-              (:apply
-               (application-input-controller--schedule-apply controller text))
-              (:hold
-               (application-input-controller--schedule-command controller text)))))
+           (let* ((invocation
+                    (application-input-controller--parse-responsive-command
+                     controller text))
+                  (command
+                    (and invocation
+                         (application-command-invocation-command invocation)))
+                  (action
+                    (when invocation
+                      (if command
+                          (application-command-busy-action command invocation)
+                          ;; Unknown commands fail immediately, without scheduling.
+                          ':execute))))
+             (when action
+              (application-localgroup-resume application)
+               (ecase action
+                 (:cancel
+                  (application-input-controller--request-exit controller ':quit))
+                 (:execute
+                  (when (eq (if command
+                                (application-input-controller--run-responsive-command
+                                 controller command invocation)
+                                (application-input-controller--run-responsive-unknown
+                                 controller text))
+                            ':quit)
+                    (application-input-controller--request-exit controller ':quit)))
+                 (:apply
+                  (application-input-controller--schedule-apply controller text))
+                 (:hold
+                  (application-input-controller--schedule-command controller text))))))
          (t
+          (application-localgroup-resume application)
           (application-input-controller--enqueue controller ':command text))))))
   nil)
 
@@ -3754,7 +3791,10 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
 
 (defun application--run-command-input (application input &key (interactive-p t))
   "Run command INPUT through the local restart debugger."
-  (let ((invocation (application-command-invocation-parse input)))
+  (let ((invocation
+          (make-instance 'application-command-invocation
+                         :input input :name "" :remainder ""
+                         :argument nil :command nil)))
     (application-command--call-with-presentation
      invocation
      (lambda ()
@@ -3762,6 +3802,8 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
            (application--call-with-command-debugger
             application
              (lambda ()
+               (setf invocation (application-command-invocation-parse input)
+                     *application-command-presentation-invocation* invocation)
                (application-handle-input
                 application input :interactive-p interactive-p))
             :source input
