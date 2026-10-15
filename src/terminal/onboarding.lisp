@@ -133,7 +133,7 @@
          (with-input-from-string (stream output)
            (loop for line = (read-line stream nil nil)
                  while line
-                 append (loop for row in (termdown:markdown-render-line renderer line)
+                 append (loop for row in (terminal-markdown-render-line renderer line)
                               append (append row (list (terminal-span ':plain (string #\Newline)))))))))
       ((terminal-styled-text-p output)
        output)

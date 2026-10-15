@@ -157,6 +157,54 @@
                        "literal help may run during a turn, while computed arguments wait")))))
   nil)
 
+(-> help-tests--heading-rendering (terminal) null)
+(defun help-tests--heading-rendering (terminal)
+  "Exercise heading styles through the shared Markdown and terminal boundaries."
+  (setf (terminal-styled-p terminal) t)
+  (dolist (theme *terminal-themes*)
+    (let ((*terminal-style-table* (terminal-theme-style-table theme)))
+      (loop for level from 1 to 6
+            for source = (format nil "~A Heading with *emphasis* and `code`"
+                                 (make-string level :initial-element #\#))
+            for renderer = (termdown:markdown-renderer-create :width 24)
+            for rows = (terminal-markdown-render-line renderer source)
+            for spans = (apply #'append rows)
+            for styles = (mapcar #'terminal-span-style spans)
+            do (test-assert (every #'terminal-styled-text-p rows)
+                            "heading rows use registered semantic styles")
+               (test-assert (and (member ':syntax-heading styles)
+                                 (member ':heading-emphasis styles)
+                                 (member ':code styles))
+                            "wrapped headings retain colored text, italic emphasis, and inline code")
+               (test-assert
+                (equal (mapcar #'terminal--spans-text rows)
+                       (mapcar #'terminal--spans-text
+                               (termdown:markdown-render-line
+                                (termdown:markdown-renderer-create :width 24) source)))
+                "heading colors preserve hierarchy markers, text, and wrapping")
+               (let* ((terminal-heading (find ':syntax-heading spans
+                                              :key #'terminal-span-style))
+                      (display (terminal--render-spans terminal (list terminal-heading))))
+                 (test-assert (search (terminal-style-sequence ':syntax-heading) display)
+                              "styled terminals render heading colors from the current theme"))
+               (test-assert
+                (every (lambda (row) (<= (terminal--spans-width row) 24)) rows)
+                "colored heading rows fit narrow viewports"))))
+  (let ((renderer (termdown:markdown-renderer-create :width 40)))
+    (dolist (source '("ordinary **strong** text" "#not-a-heading" "####### seven"))
+      (test-assert
+       (not (find ':syntax-heading
+                  (apply #'append (terminal-markdown-render-line renderer source))
+                  :key #'terminal-span-style))
+       "ordinary prose and nonheading hash prefixes do not receive heading color"))
+    (terminal-markdown-render-line renderer "```text")
+    (test-assert
+     (not (find ':syntax-heading
+                (apply #'append (terminal-markdown-render-line renderer "# literal code"))
+                :key #'terminal-span-style))
+     "hash-prefixed fenced source keeps its code styles"))
+  nil)
+
 (-> test-help-markdown-rendering () null)
 (defun test-help-markdown-rendering ()
   "Test semantic colors, Lisp highlighting, copy widgets, and narrow-terminal wrapping."
@@ -164,7 +212,8 @@
     (let* ((document (application-operation-help application))
            (items (application--markdown-body application document))
            (styles (mapcar #'terminal-span-style (remove-if #'termdown:widget-p items))))
-      (test-assert (and (member ':brand styles) (member ':code styles))
+      (test-assert (and (member ':brand styles) (member ':code styles)
+                        (member ':syntax-heading styles))
                    "help uses semantic colors for its menu and inline command forms")
       (test-assert (member ':syntax-function styles)
                    "Lisp examples go through the syntax highlighter")
@@ -176,4 +225,7 @@
                (lines (uiop:split-string text :separator '(#\Newline))))
           (test-assert (every (lambda (line) (<= (text-cell-width line) width)) lines)
                        "help prose and examples fit the current terminal width")))))
+  (with-help-tests-application (application terminal)
+    (declare (ignore application))
+    (help-tests--heading-rendering terminal))
   nil)

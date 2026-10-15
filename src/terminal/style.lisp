@@ -19,7 +19,7 @@
       :compaction-label :compaction-track :compaction-head
       :syntax-comment :syntax-keyword :syntax-string :syntax-escape
       :syntax-number :syntax-type :syntax-function :syntax-property
-      :syntax-heading :syntax-link)
+      :syntax-heading :heading-emphasis :syntax-link)
     "Every semantic style a theme must render."))
 
 (deftype terminal-style ()
@@ -98,6 +98,7 @@ background opt into indexed colors."
       (:syntax-function (:foreground :blue))
       (:syntax-property (:foreground :cyan))
       (:syntax-heading (:foreground :magenta :bold t))
+      (:heading-emphasis (:foreground :magenta :bold t :italic t))
       (:syntax-link (:foreground :cyan :underline t))))
    (list
     (cons ':child-name
@@ -204,6 +205,7 @@ secondary, and quiet text the soft blue."
         (:syntax-function (:foreground ,accent-light))
         (:syntax-property (:foreground ,secondary))
         (:syntax-heading (:foreground ,accent :bold t))
+        (:heading-emphasis (:foreground ,accent :bold t :italic t))
         (:syntax-link (:foreground ,secondary :underline t))))
      (loop for name in *terminal-brand-gradient-names*
            for hex in *almighty-gradient*
@@ -396,3 +398,41 @@ which only theme colors carrying RGB values make use of."
 (defun terminal--clip-spans (spans maximum-width)
   "Fit semantic SPANS to one terminal row."
   (termdown:fit-spans spans maximum-width))
+
+
+;;;; -- Markdown Heading Styles --
+
+(-> terminal--markdown-heading-p (string) boolean)
+(defun terminal--markdown-heading-p (line)
+  "Return true when LINE begins an ATX heading of level one through six."
+  (let* ((start (or (position-if-not (lambda (character) (char= character #\Space))
+                                    line)
+                    (length line)))
+         (end (or (position-if-not (lambda (character) (char= character #\#))
+                                  line :start start)
+                  (length line))))
+    (and (<= start 3)
+         (<= 1 (- end start) 6)
+         (or (= end (length line))
+             (not (null (find (char line end) '(#\Space #\Tab))))))))
+
+(-> terminal-markdown-render-line (termdown:markdown-renderer string) list)
+(defun terminal-markdown-render-line (renderer line)
+  "Render LINE through RENDERER with theme colors for Markdown headings.
+
+The pinned renderer emits headings as plain spans. Color those spans without
+changing their text, hierarchy markers, wrapping, inline code, or emphasis."
+  ;; The pinned renderer exposes fence state only through this internal accessor.
+  (let* ((heading-p (and (not (termdown::markdown-renderer-code-open-p renderer))
+                         (terminal--markdown-heading-p line)))
+         (rows (termdown:markdown-render-line renderer line)))
+    (if heading-p
+        (loop for row in rows
+              collect (loop for span in row
+                            collect (terminal-span
+                                     (case (terminal-span-style span)
+                                       ((:plain :strong) ':syntax-heading)
+                                       (:emphasis ':heading-emphasis)
+                                       (otherwise (terminal-span-style span)))
+                                     (terminal-span-text span))))
+        rows)))

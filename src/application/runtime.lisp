@@ -1887,7 +1887,7 @@ command replaced the active conversation."
 
 cl-termdown marks the closing fence row with a :CODE-COPY span and exposes
 the fence's raw source; that span becomes a widget copying the source."
-  (let ((rows (termdown:markdown-render-line renderer line))
+  (let ((rows (terminal-markdown-render-line renderer line))
         (source (termdown:markdown-renderer-closed-code-source renderer)))
     (if (null source)
         rows
