@@ -4367,11 +4367,11 @@
                  (not picker-opened-p)
                  "boundary-applied commands never open interactive pickers"))
               (application-input-controller--handle-submission
-               controller "(timestamps \"off\")")
+               controller "(timestamps nil)")
               (test-assert
                (equal (deque->list
                        (application-input-controller-pending-apply-items controller))
-                      (list "(timestamps \"off\")"))
+                      (list "(timestamps nil)"))
                "canonical Lisp state changes queue for the next safe boundary")
               (application-input-controller--apply-pending-commands controller)
               (test-assert
@@ -5175,7 +5175,7 @@
             (not (config :session-title-generation-p configuration))
             "/titles off persists disabled provider title generation")
            (test-assert
-            (null (application-operation-call application "titles" "on"))
+            (null (application-operation-call application "titles" t))
             "the callable titles operation completes without a loop action")
            (test-assert
             (config :session-title-generation-p configuration)

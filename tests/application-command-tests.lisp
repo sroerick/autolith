@@ -513,11 +513,11 @@
        '(("/help" (&optional topic))
          ("/resume" (&optional (identifier nil identifier-supplied-p)))
          ("/cwd" (&optional pathname))
-         ("/trace" (&optional mode))
-         ("/timestamps" (&optional mode))
-         ("/ste" (&optional mode))
-         ("/titles" (&optional mode))
-         ("/hurry-up" (&optional mode))
+         ("/trace" (&optional (mode ':status)))
+         ("/timestamps" (&optional (mode ':status)))
+         ("/ste" (&optional (mode ':status)))
+         ("/titles" (&optional (mode ':status)))
+         ("/hurry-up" (&optional (mode ':status)))
          ("/papercut" (&optional identifier))
          ("/papercut-close" (&optional identifier))))
     (destructuring-bind (name lambda-list) case
@@ -529,7 +529,7 @@
                  name)))))
   (let ((command (application-command-find "/ste")))
     (test-assert
-     (and (equal (application-command-static-options command) '("on" "off"))
+     (and (equal (application-command-static-options command) '(:on :off))
           (string= (application-command-argument command) "[on|off]"))
      "finite options derive the optional argument hint from one metadata list"))
   (let* ((objective "fix argument mismatches without crashing the application")
@@ -604,17 +604,14 @@
       (test-assert
        (= (length (application-command--tokens input)) token-count)
        (format nil "~A tokenizes every supplied slash argument" input))
-      (let* ((invocation (application-command-invocation-parse input))
-             (command (application-command-invocation-command invocation)))
-        (test-assert
-         (handler-case
-             (progn
-               (application-command-execute command nil invocation)
-               nil)
-           (configuration-error ()
-             t))
-         (format nil "~A reports excess slash arguments during guarded dispatch"
-                 input)))))
+      (test-assert
+       (handler-case
+           (let* ((invocation (application-command-invocation-parse input))
+                  (command (application-command-invocation-command invocation)))
+             (application-command-execute command nil invocation)
+             nil)
+         (configuration-error () t))
+       (format nil "~A rejects excess slash arguments before handler effects" input))))
   (test-assert
    (handler-case
        (progn
@@ -646,9 +643,98 @@
      "nonmodal resume calls do not consume the interactive startup offer"))
   nil)
 
+(-> test-call-with-typed-control-application (function) null)
+(defun test-call-with-typed-control-application (function)
+  "Call FUNCTION with an isolated public-operation application and observed service actions."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (let ((observations (list nil)))
+      (unwind-protect
+          (with-test-environment (("AUTOLITH_CODEX_FAST_MODE" nil))
+            (test-call-with-function-replacements
+             (list
+              (list 'application-present
+                    (lambda (candidate entry) (declare (ignore candidate entry)) t))
+              (list 'application-publish-recovery-session
+                    (lambda (candidate) (declare (ignore candidate)) nil))
+              (list 'application-reset-history-pagination
+                    (lambda (candidate) (declare (ignore candidate)) nil))
+              (list 'application--install-configuration
+                    (lambda (candidate replacement &key conversation)
+                      (declare (ignore conversation))
+                      (setf (application-configuration candidate) replacement)))
+              (list 'slynk-start
+                    (lambda (configuration)
+                      (declare (ignore configuration))
+                      (push ':start (first observations))))
+              (list 'slynk-stop (lambda () (push ':stop (first observations))))
+              (list 'slynk-status (lambda () (list :state ':stopped)))
+              (list 'mcp-tool-registry-refresh
+                    (lambda (registry)
+                      (declare (ignore registry))
+                      (push ':refresh (first observations))))
+              (list 'application-reload-mcp
+                    (lambda (candidate)
+                      (declare (ignore candidate))
+                      (push ':reload (first observations))
+                      (values nil nil))))
+             (lambda () (funcall function application root observations))))
+        (tool-registry-close-runtime-state (application-tool-registry application))
+        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist
+                                        ':ignore))))
+  nil)
+
+(-> test-application-typed-boolean-controls () null)
+(defun test-application-typed-boolean-controls ()
+  "Test native booleans, query defaults, slash parsing, and invalid controls."
+  (test-call-with-typed-control-application
+   (lambda (application root observations)
+     (declare (ignore root observations))
+     (let ((configuration (application-configuration application)))
+       (dolist
+           (case
+            '(("fast" :codex-fast-mode-p) ("trace" :reasoning-traces-p)
+              ("timestamps" :turn-timestamps-p) ("cache-misses" :cache-miss-notices-p)
+              ("ste" :simple-technical-english-p) ("titles" :session-title-generation-p)
+              ("hurry-up" :hurry-up-p) ("compact-tool" :compact-view-p)))
+         (destructuring-bind
+             (name setting)
+             case
+           (dolist (value '(t nil :on :off))
+             (application-operation-call application name value)
+             (test-assert
+              (eq (config setting configuration) (not (null (member value '(t :on)))))
+              (format nil "~A applies the native boolean ~S" name value)))
+           (application-operation-call application name t)
+           (let ((saved
+                  (uiop/stream:read-file-string
+                   (configuration-preferences-path configuration))))
+             (application-operation-call application name)
+             (application-operation-call application name ':status)
+             (dolist (invalid '("on" 42 :unknown))
+               (test-assert
+                (handler-case
+                 (progn (application-operation-call application name invalid) nil)
+                 (configuration-error nil t))
+                (format nil "~A rejects non-native control ~S" name invalid)))
+             (test-assert
+              (and (eq (config setting configuration) t)
+                   (string= saved
+                            (uiop/stream:read-file-string
+                             (configuration-preferences-path configuration))))
+              "status and invalid controls do not change state or preferences"))
+           (application-command application (format nil "/~A \"ON\"" name))
+           (test-assert (config setting configuration) "slash on parses to a native action")
+           (application-command application (format nil "/~A off" name))
+           (test-assert (null (config setting configuration))
+                        "slash off parses to a native action"))))))
+  nil)
+
 (-> test-application-codex-fast-mode-command () null)
 (defun test-application-codex-fast-mode-command ()
   "Test /fast status, persistence, runtime installation, and validation."
+  (test-application-typed-boolean-controls)
   (let* ((configuration
            (configuration-copy (test-configuration) :codex-fast-mode-p nil))
          (root (test-configuration-root configuration))
@@ -697,14 +783,14 @@
                (search "Codex Fast mode is off." (first presented))
                "/fast reports the disabled state")
               (test-assert
-               (eq (application--builtin-fast-command application "status")
+               (eq (application--builtin-fast-command application ':status)
                    ':continue)
                "/fast status accepts its explicit spelling")
               (let ((codex-configuration
                       (application-configuration application)))
                 (setf (application-configuration application)
                       (configuration-copy codex-configuration :model "grok-4.5"))
-                (application--builtin-fast-command application "status")
+                (application--builtin-fast-command application ':status)
                 (test-assert
                  (and (search "preference is off" (first presented))
                       (search "standard path" (first presented)))
@@ -718,7 +804,7 @@
                     (zerop published-count))
                "/fast status has no persistence or runtime side effects")
               (test-assert
-               (eq (application--builtin-fast-command application "ON")
+               (eq (application--builtin-fast-command application t)
                    ':continue)
                "/fast on completes through the canonical command")
               (test-assert
@@ -730,7 +816,7 @@
                     (search "enabled and saved" (first presented)))
                "/fast on persists and installs the enabled state")
               (test-assert
-               (eq (application--builtin-fast-command application "off")
+               (eq (application--builtin-fast-command application nil)
                    ':continue)
                "/fast off completes through the canonical command")
               (test-assert
@@ -751,14 +837,14 @@
                    t))
                "/fast rejects unsupported modes")
               (platform-setenv "AUTOLITH_CODEX_FAST_MODE" "off")
-              (application--builtin-fast-command application "status")
+              (application--builtin-fast-command application ':status)
               (test-assert
                (search "AUTOLITH_CODEX_FAST_MODE controls it" (first presented))
                "/fast status reports the process environment override")
               (test-assert
                (handler-case
                    (progn
-                     (application--builtin-fast-command application "on")
+                     (application--builtin-fast-command application t)
                      nil)
                  (configuration-error ()
                    t))

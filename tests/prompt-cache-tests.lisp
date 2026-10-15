@@ -300,17 +300,17 @@
     (unwind-protect
          (progn
            (terminal-ui-start ui)
-           (application-cache-miss-notices-command application "on")
+           (application-cache-miss-notices-command application t)
            (test-assert
             (and (application-cache-miss-notices-p application)
                  (config :cache-miss-notices-p configuration))
             "/cache-misses on applies and persists the preference")
            (recording-terminal-reset terminal)
-           (application-cache-miss-notices-command application nil)
+           (application-cache-miss-notices-command application)
            (test-assert
             (search "notices are on" (recording-terminal-output terminal))
             "/cache-misses without an argument reports the current state")
-           (application-cache-miss-notices-command application "OFF")
+           (application-cache-miss-notices-command application nil)
            (test-assert
             (and (not (application-cache-miss-notices-p application))
                  (not (config :cache-miss-notices-p configuration)))

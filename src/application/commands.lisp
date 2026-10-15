@@ -743,18 +743,52 @@ the effort with the same model even when the model was never chosen."
     (application-publish-recovery-session application))
   nil)
 
-(-> application-codex-fast-mode-command
-    (application (option string))
-    null)
-(defun application-codex-fast-mode-command (application argument)
+(-> application--control-choice (t list) keyword)
+(defun application--control-choice (value choices)
+  "Require VALUE to name one of the keyword CHOICES before changing state."
+  (unless (member value choices)
+    (error 'configuration-error
+           :message (format nil "Expected one of ~{~S~^, ~}, not ~S." choices value)))
+  value)
+
+(-> application--boolean-control (t) keyword)
+(defun application--boolean-control (value)
+  "Return the explicit boolean or status action represented by VALUE."
+  (cond
+    ((eq value t) ':on)
+    ((null value) ':off)
+    (t
+     (application--control-choice value '(:on :off :status)))))
+
+(-> application--parse-control (string list) list)
+(defun application--parse-control (text choices)
+  "Parse one quoted slash-command action from TEXT into native CHOICES."
+  (let ((arguments (application-command--tokens text)))
+    (when arguments
+      (unless (= (length arguments) 1)
+        (error 'configuration-error :message "A control accepts one action."))
+      (let ((choice (find (first arguments) choices
+                          :test #'string-equal :key #'symbol-name)))
+        (unless choice
+          (error 'configuration-error
+                 :message (format nil "Expected ~{~(~A~)~^, ~}, not ~S." choices (first arguments))))
+        (list choice)))))
+
+(-> application--parse-boolean-control (string) list)
+(defun application--parse-boolean-control (text)
+  "Read a slash boolean mode without applying Lisp string coercion."
+  (application--parse-control text '(:on :off :status)))
+
+(-> application-codex-fast-mode-command (application &optional t) null)
+(defun application-codex-fast-mode-command (application &optional (argument ':status))
   "Set or report APPLICATION's persisted Codex Fast mode."
   (let* ((configuration (application-configuration application))
-         (mode (and argument (string-downcase argument)))
+         (mode (application--boolean-control argument))
          (enabled-p (config :codex-fast-mode-p configuration))
          (available-p
            (configuration-codex-fast-mode-available-p configuration)))
     (cond
-      ((or (null mode) (string= mode "status"))
+      ((eq mode ':status)
        (application-present
         application
         (cond
@@ -773,7 +807,7 @@ the effort with the same model even when the model was never chosen."
            (format nil
                    "Codex Fast mode preference is ~A. The current model uses the standard path."
                    (if enabled-p "on" "off"))))))
-      ((string= mode "on")
+      ((eq mode ':on)
        (application-set-codex-fast-mode application t)
        (application-present
         application
@@ -782,7 +816,7 @@ the effort with the same model even when the model was never chosen."
             (format nil
                     "Codex Fast mode preference is enabled and saved. ~
                      The current model uses the standard path."))))
-      ((string= mode "off")
+      ((eq mode ':off)
        (application-set-codex-fast-mode application nil)
        (application-present application "Codex Fast mode is disabled and saved."))
       (t
@@ -806,24 +840,24 @@ the effort with the same model even when the model was never chosen."
   (application-publish-recovery-session application)
   nil)
 
-(-> application-trace-command (application (option string)) null)
-(defun application-trace-command (application argument)
+(-> application-trace-command (application &optional t) null)
+(defun application-trace-command (application &optional (argument ':status))
   "Show or change APPLICATION's visible reasoning-summary setting."
-  (let ((mode (and argument (string-downcase argument))))
+  (let ((mode (application--boolean-control argument)))
     (cond
-      ((null mode)
+      ((eq mode ':status)
        (application-present
         application
         (format nil
                 "Reasoning summaries are ~:[hidden~;shown~]. This setting ~
                  persists across restarts."
                 (application-reasoning-traces-p application))))
-      ((string= mode "on")
+      ((eq mode ':on)
        (application-set-reasoning-traces application t)
        (application-present
         application
         "Visible reasoning summaries are enabled and saved."))
-      ((string= mode "off")
+      ((eq mode ':off)
        (application-set-reasoning-traces application nil)
        (application-present application "Reasoning summaries are hidden and saved."))
       (t
@@ -840,21 +874,21 @@ the effort with the same model even when the model was never chosen."
   (application-publish-recovery-session application)
   nil)
 
-(-> application-turn-timestamps-command (application (option string)) null)
-(defun application-turn-timestamps-command (application argument)
+(-> application-turn-timestamps-command (application &optional t) null)
+(defun application-turn-timestamps-command (application &optional (argument ':status))
   "Show or change APPLICATION's optional turn-timestamp presentation."
-  (let ((mode (and argument (string-downcase argument))))
+  (let ((mode (application--boolean-control argument)))
     (cond
-      ((null mode)
+      ((eq mode ':status)
        (application-present
         application
         (format nil
                 "Turn timestamps are ~:[hidden~;shown~]. This setting persists across restarts."
                 (application-turn-timestamps-p application))))
-      ((string= mode "on")
+      ((eq mode ':on)
        (application-set-turn-timestamps application t)
        (application-present application "Turn timestamps are enabled and saved."))
-      ((string= mode "off")
+      ((eq mode ':off)
        (application-set-turn-timestamps application nil)
        (application-present application "Turn timestamps are hidden and saved."))
       (t
@@ -868,23 +902,23 @@ the effort with the same model even when the model was never chosen."
   (setf (application-cache-miss-notices-p application) enabled-p)
   nil)
 
-(-> application-cache-miss-notices-command (application (option string)) null)
-(defun application-cache-miss-notices-command (application argument)
+(-> application-cache-miss-notices-command (application &optional t) null)
+(defun application-cache-miss-notices-command (application &optional (argument ':status))
   "Show or change APPLICATION's optional prompt-cache miss notices."
-  (let ((mode (and argument (string-downcase argument))))
+  (let ((mode (application--boolean-control argument)))
     (cond
-      ((null mode)
+      ((eq mode ':status)
        (application-present
         application
         (format nil
                 "Prompt-cache miss notices are ~:[off~;on~]. This setting persists across restarts."
                 (application-cache-miss-notices-p application))))
-      ((string= mode "on")
+      ((eq mode ':on)
        (application-set-cache-miss-notices application t)
        (application-present
         application
         "Prompt-cache miss notices are on and saved. Requests that re-read uncached context will be reported."))
-      ((string= mode "off")
+      ((eq mode ':off)
        (application-set-cache-miss-notices application nil)
        (application-present application "Prompt-cache miss notices are off and saved."))
       (t
@@ -893,26 +927,26 @@ the effort with the same model even when the model was never chosen."
   nil)
 
 (-> application-simple-technical-english-command
-    (application (option string))
+    (application &optional t)
     null)
-(defun application-simple-technical-english-command (application argument)
+(defun application-simple-technical-english-command (application &optional (argument ':status))
   "Show or change APPLICATION's Simple Technical English response style."
   (let* ((configuration (application-configuration application))
-         (mode (and argument (string-downcase argument))))
+         (mode (application--boolean-control argument)))
     (cond
-      ((null mode)
+      ((eq mode ':status)
        (application-present
         application
         (format nil
                 "Simple Technical English is ~:[disabled~;enabled~]. This ~
                  setting persists across restarts."
                 (config :simple-technical-english-p configuration))))
-      ((string= mode "on")
+      ((eq mode ':on)
        (setf (config :simple-technical-english-p configuration) t)
        (application-present
         application
         "Simple Technical English is enabled and saved. Future replies will use it."))
-      ((string= mode "off")
+      ((eq mode ':off)
        (setf (config :simple-technical-english-p configuration) nil)
        (application-present
         application
@@ -922,24 +956,24 @@ the effort with the same model even when the model was never chosen."
               :message "Usage: /ste on or /ste off."))))
   nil)
 
-(-> application-session-titles-command (application (option string)) null)
-(defun application-session-titles-command (application argument)
+(-> application-session-titles-command (application &optional t) null)
+(defun application-session-titles-command (application &optional (argument ':status))
   "Show or change automatic provider-generated session-title refreshes."
   (let* ((configuration (application-configuration application))
-         (mode (and argument (string-downcase argument))))
+         (mode (application--boolean-control argument)))
     (cond
-      ((null mode)
+      ((eq mode ':status)
        (application-present
         application
         (format nil
                 "Provider-generated session titles are ~:[disabled~;enabled~]. This setting persists across restarts."
                 (config :session-title-generation-p configuration))))
-      ((string= mode "on")
+      ((eq mode ':on)
        (setf (config :session-title-generation-p configuration) t)
        (application-present
         application
         "Provider-generated session titles are enabled and saved."))
-      ((string= mode "off")
+      ((eq mode ':off)
        (setf (config :session-title-generation-p configuration) nil)
        (application-present
         application
@@ -949,18 +983,23 @@ the effort with the same model even when the model was never chosen."
               :message "Usage: /titles on or /titles off."))))
   nil)
 
-(-> application-compact-tool-command (application (option string)) null)
-(defun application-compact-tool-command (application argument)
+(-> application-compact-tool-command (application &optional t) null)
+(defun application-compact-tool-command (application &optional (argument ':status))
   "Persist and apply APPLICATION's compact tool presentation mode."
-  (let ((mode (string-downcase argument)))
+  (let ((mode (application--boolean-control argument)))
     (cond
-      ((string= mode "on")
+      ((eq mode ':status)
+       (application-present
+        application
+        (format nil "Compact tool presentation is ~:[disabled~;enabled~]."
+                (application-compact-view-p application))))
+      ((eq mode ':on)
        (setf (application-compact-view-p application) t)
        (application-publish-recovery-session application)
        (application-present
         application
         "Compact tool presentation is enabled and saved."))
-      ((string= mode "off")
+      ((eq mode ':off)
        (when (application-compact-view-p application)
          (setf (application-compact-view-p application) nil)
          (application-reset-history-pagination application))
@@ -2340,19 +2379,19 @@ are forwarded to TERMINAL-UI-SELECT."
        :duration-seconds (if enabled-p 8 3))))
   nil)
 
-(-> application-hurry-up-command (application (option string)) null)
-(defun application-hurry-up-command (application argument)
+(-> application-hurry-up-command (application &optional t) null)
+(defun application-hurry-up-command (application &optional (argument ':status))
   "Show or change APPLICATION's session-scoped hurry-up mode."
-  (let ((mode (and argument (string-downcase argument))))
+  (let ((mode (application--boolean-control argument)))
     (cond
-      ((null mode)
+      ((eq mode ':status)
        (application-present
         application
         (format nil "Hurry-up mode is ~:[disabled~;enabled~]."
                 (application-hurry-up-p application))))
-      ((string= mode "on")
+      ((eq mode ':on)
        (application-set-hurry-up application t))
-      ((string= mode "off")
+      ((eq mode ':off)
        (application-set-hurry-up application nil))
       (t
        (error 'configuration-error
@@ -2867,84 +2906,91 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-fast-command
     (:name "/fast"
      :description "show or change Codex Fast mode"
-     :tip "sets Codex Fast mode: (fast \"on\") requests priority service, which counts more heavily against plan usage; (fast \"off\") requests normal service."
+     :tip "Use (fast t) to request priority service, which counts more heavily against plan usage; use (fast nil) for normal service."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
-     :static-options ("on" "off" "status"))
-    (application &optional mode)
+     :slash-parser application--parse-boolean-control
+     :static-options (:on :off :status))
+    (application &optional (mode ':status))
   (application-codex-fast-mode-command application mode)
   ':continue)
 
 (define-application-command application--builtin-trace-command
     (:name "/trace"
      :description "show visible reasoning summaries"
-     :tip "controls visible reasoning summaries: (trace \"on\") shows them, (trace \"off\") hides them. Use (effort) to change the reasoning budget."
+     :tip "Use (trace t) to show reasoning summaries or (trace nil) to hide them. Change the reasoning budget with (effort)."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
-     :static-options ("on" "off"))
-    (application &optional mode)
+     :slash-parser application--parse-boolean-control
+     :static-options (:on :off))
+    (application &optional (mode ':status))
   (application-trace-command application mode)
   ':continue)
 
 (define-application-command application--builtin-turn-timestamps-command
     (:name "/timestamps"
      :description "show local timestamps beside user and assistant turns"
-     :tip "controls local-time labels beside user and assistant turns: (timestamps \"on\") shows them, (timestamps \"off\") hides them."
+     :tip "Use (timestamps t) to show local-time labels beside user and assistant turns, or (timestamps nil) to hide them."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
-     :static-options ("on" "off"))
-    (application &optional mode)
+     :slash-parser application--parse-boolean-control
+     :static-options (:on :off))
+    (application &optional (mode ':status))
   (application-turn-timestamps-command application mode)
   ':continue)
 
 (define-application-command application--builtin-simple-technical-english-command
     (:name "/ste"
      :description "use Simple Technical English for replies"
-     :tip "sets reply style: (ste \"on\") requests short, direct Simple Technical English; (ste \"off\") removes that style instruction."
+     :tip "Use (ste t) to request short, direct Simple Technical English, or (ste nil) to remove that style instruction."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
-     :static-options ("on" "off"))
-    (application &optional mode)
+     :slash-parser application--parse-boolean-control
+     :static-options (:on :off))
+    (application &optional (mode ':status))
   (application-simple-technical-english-command application mode)
   ':continue)
 
 (define-application-command application--builtin-session-titles-command
     (:name "/titles"
      :description "allow provider-generated session-title refreshes"
-     :tip "controls session naming: (titles \"on\") allows provider-generated title refreshes; (titles \"off\") uses locally derived titles."
+     :tip "Use (titles t) to allow provider-generated title refreshes, or (titles nil) for locally derived titles."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
-     :static-options ("on" "off"))
-    (application &optional mode)
+     :slash-parser application--parse-boolean-control
+     :static-options (:on :off))
+    (application &optional (mode ':status))
   (application-session-titles-command application mode)
   ':continue)
 
 (define-application-command application--builtin-cache-misses-command
     (:name "/cache-misses"
      :description "notify when a request re-reads uncached context"
-     :tip "controls cache diagnostics: (cache-misses \"on\") reports uncached context and likely causes; (cache-misses \"off\") hides these notices."
+     :tip "Use (cache-misses t) to report uncached context and likely causes, or (cache-misses nil) to hide these notices."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
-     :static-options ("on" "off"))
-    (application &optional mode)
+     :slash-parser application--parse-boolean-control
+     :static-options (:on :off))
+    (application &optional (mode ':status))
   (application-cache-miss-notices-command application mode)
   ':continue)
 
 (define-application-command application--builtin-hurry-up-command
     (:name "/hurry-up"
      :description "show or change hurry-up mode"
-     :tip "sets execution style: (hurry-up \"on\") favors direct work and limits delegation to two child agents; (hurry-up \"off\") uses normal delegation limits."
+     :tip "Use (hurry-up t) to favor direct work with at most two child agents, or (hurry-up nil) for normal delegation limits."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
-     :static-options ("on" "off"))
-    (application &optional mode)
+     :slash-parser application--parse-boolean-control
+     :static-options (:on :off))
+    (application &optional (mode ':status))
   (application-hurry-up-command application mode)
   ':continue)
 
@@ -3255,12 +3301,13 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-compact-tool-command
     (:name "/compact-tool"
      :description "collapse or expand tool call detail in the transcript"
-     :tip "(compact-tool \"on\") collapses tool details; (compact-tool \"off\") shows expanded details."
+     :tip "Use (compact-tool t) to collapse tool details or (compact-tool nil) to expand them."
      :busy-behavior :hold
      :terminal-behavior :shared
      :callable t
-     :static-options ("on" "off"))
-    (application &optional mode)
+     :slash-parser application--parse-boolean-control
+     :static-options (:on :off))
+    (application &optional (mode ':status))
   (application-compact-tool-command application mode)
   ':continue)
 
