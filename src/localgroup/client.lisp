@@ -819,6 +819,7 @@ that action to the controlling terminal."
   "Return the localgroup command definition and its sub-commands."
   (make-command
    :name "localgroup"
+   :aliases '("lg")
    :description "inspect and control detached Autolith sessions"
    :sub-commands
    (list (localgroup--status-command)
