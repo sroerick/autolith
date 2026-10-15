@@ -167,15 +167,71 @@ clamped at EOF. Live children use their deterministic conversation identity."
     (t
      (task-continuity--fail "Unknown task inspector action."))))
 
-(-> application-task-inspector (application string) string)
-(defun application-task-inspector (application arguments)
-  "Implement optional /tasks with a compact nonmodal command interface."
-  (let* ((agent (application-agent application))
-         (words (remove "" (uiop:split-string
-                            (string-trim '(#\Space #\Tab) arguments)
-                            :separator '(#\Space #\Tab)) :test #'equal))
-         (action (or (first words) "list"))
-         (id (second words)))
+(-> application-task-inspector-slash-arguments (string) list)
+(defun application-task-inspector-slash-arguments (text)
+  "Parse legacy task text at the slash boundary, preserving the message tail."
+  (let ((position 0) (size (length text)))
+    (labels ((skip-space ()
+               (loop while (and (< position size) (find (char text position) '(#\Space #\Tab)))
+                     do (incf position)))
+
+             (word ()
+               (skip-space)
+               (let ((start position))
+                 (loop while (and (< position size) (not (find (char text position) '(#\Space #\Tab))))
+                       do (incf position))
+                 (unless (= start position) (subseq text start position)))))
+      (let* ((name (or (word) "list"))
+             (action (find name '(:list :get :transcript :send :cancel :revive :abandon)
+                           :key #'symbol-name :test #'string-equal))
+             (id (word)))
+        (unless action (task-continuity--fail "Unknown task inspector action."))
+        (skip-space)
+        (case action
+          (:send (list action id :message (subseq text position)))
+          (:transcript
+           (let* ((offset (word)) (limit (word)) (extra (word)))
+             (when extra (task-continuity--fail "Too many transcript arguments."))
+             (flet ((parse-bound (value default)
+                      (if value
+                          (or (ignore-errors (parse-integer value :junk-allowed nil))
+                              (task-continuity--fail "Transcript bounds must be integers."))
+                          default)))
+               (list action id :offset (parse-bound offset 0) :limit (parse-bound limit 4000)))))
+          ((:revive :abandon)
+           (let ((authorization (word)))
+             (when (or (word) (and authorization (not (string-equal authorization "authorize"))))
+               (task-continuity--fail "Expected authorize after the task ID."))
+             (list action id :authorize (and authorization t))))
+          (otherwise
+           (when (word) (task-continuity--fail "Unexpected task arguments."))
+           (if id (list action id) (list action))))))))
+
+(-> application-task-inspector (application &optional t t &rest t) string)
+(defun application-task-inspector (application &optional (action ':list) id &rest options)
+  "Inspect and control tasks using native actions, identifiers and keyword values."
+  (unless (and (member action '(:list :get :transcript :send :cancel :revive :abandon))
+               (if (eq action ':list) (null id) (non-empty-string-p id))
+               (evenp (length options))
+               (let ((keys (loop for (key value) on options by #'cddr collect key)))
+                 (and (= (length keys) (length (remove-duplicates keys)))
+                      (every (lambda (key)
+                               (member key (case action
+                                             (:send '(:message))
+                                             (:transcript '(:offset :limit))
+                                             ((:revive :abandon) '(:authorize)))))
+                             keys)))
+               (case action
+                 (:send (non-empty-string-p (getf options :message)))
+                 (:transcript
+                  (and (integerp (getf options :offset 0))
+                       (<= 0 (getf options :offset 0) 1000000)
+                       (integerp (getf options :limit 4000))
+                       (<= 1 (getf options :limit 4000) *task-inspector-transcript-maximum-characters*)))
+                 ((:revive :abandon) (member (getf options :authorize) '(t nil)))
+                 (otherwise t)))
+    (task-continuity--fail "Invalid task action or arguments."))
+  (let ((agent (application-agent application)))
     (unless agent
       (task-continuity--fail "Connect an agent before inspecting tasks."))
     (let* ((registry (agent-tool-registry agent))
@@ -195,14 +251,6 @@ clamped at EOF. Live children use their deterministic conversation identity."
       (unless (typep tool 'task-job-tool)
         (task-continuity--fail "Task inspection is not registered in this session."))
       (task-inspector-action
-       context (task-job-tool-orchestrator tool) action :id id
-       :message (when (and (equal action "send") (third words))
-                  (let ((position (search (third words) arguments
-                                          :start2 (+ (or (search id arguments) 0)
-                                                     (length id)))))
-                    (and position (subseq arguments position))))
-       :authorized-p (equal (third words) "authorize")
-       :offset (if (and (equal action "transcript") (third words))
-                   (or (ignore-errors (parse-integer (third words))) -1) 0)
-       :limit (if (and (equal action "transcript") (fourth words))
-                  (or (ignore-errors (parse-integer (fourth words))) 0) 4000)))))
+       context (task-job-tool-orchestrator tool) (string-downcase (symbol-name action)) :id id
+       :message (getf options :message) :authorized-p (getf options :authorize)
+       :offset (getf options :offset 0) :limit (getf options :limit 4000)))))

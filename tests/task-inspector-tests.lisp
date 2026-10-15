@@ -141,6 +141,54 @@
                  (setf (application-agent application) parent
                        (application-tool-registry application) (agent-tool-registry parent)
                        (application-conversation application) (agent-conversation parent))
+                 (test-assert (eq ':ok (application-lisp-evaluation-status
+                                       (application-lisp-evaluate "(tasks)" :application application)))
+                              "native tasks list is callable from the Lisp prompt")
+                 (let ((id (session-job-identifier job))
+                       (literal "Keep Case, \"quotes\",  doubled spaces and an unmatched \""))
+                   (dolist (arguments (list (list "send" id :message literal)
+                                           (list ':send id :message nil)
+                                           (list ':transcript id :offset "2" :limit 3)
+                                           (list ':transcript id :offset 0 :limit 0)
+                                           (list ':revive id :authorize "authorize")
+                                           (list ':cancel id :extra t)))
+                     (test-assert
+                      (handler-case
+                          (progn (apply #'application-operation-call application "tasks" arguments) nil)
+                        (task-continuity-error () t))
+                      "invalid native task values receive typed rejections"))
+                   (test-assert (zerop (task-job-steering-pending-count job))
+                                "rejected task calls do not enqueue steering")
+                   (test-assert (not (job-cancellation-requested-p job))
+                                "rejected task calls do not cancel the job")
+                   (application-operation-call application "tasks" ':send id :message literal)
+                   (test-assert (= 1 (task-job-steering-pending-count job))
+                                "native send enters the ordinary child queue once")
+                   (let ((entry (first (task-job-take-steering job))))
+                     (test-assert
+                      (search literal (user-message-input-text (agent-steering-input-content entry)))
+                      "native task message retains quotes, case and whitespace")
+                     (task-job-acknowledge-steering job (agent-steering-input-identifier entry))))
+                 (let ((observed nil))
+                   (test-call-with-function-replacements
+                    (list (list 'task-inspector-action
+                                (lambda (owner-context owner-orchestrator action &rest options)
+                                  (declare (ignore owner-context owner-orchestrator))
+                                  (push (cons action options) observed)
+                                  "inspected")))
+                    (lambda ()
+                      (application-operation-call application "tasks" ':revive
+                                                  (session-job-identifier job) :authorize nil)
+                      (application-operation-call application "tasks" ':abandon
+                                                  (session-job-identifier job) :authorize t)
+                      (application-operation-call application "tasks" ':transcript
+                                                  (session-job-identifier job) :offset 2 :limit 3)))
+                   (test-assert
+                    (and (= 2 (getf (rest (first observed)) :offset))
+                         (= 3 (getf (rest (first observed)) :limit))
+                         (eq t (getf (rest (second observed)) :authorized-p))
+                         (null (getf (rest (third observed)) :authorized-p)))
+                    "native transcript integers and explicit true/false authority reach ordinary task dispatch"))
                  (application-command-execute
                   (application-command-invocation-command invocation) application invocation)
                  (test-assert (= 1 (task-job-steering-pending-count job))

@@ -2963,9 +2963,12 @@ The current value and its source sit in aligned columns of their own."
      :tip "shows compact activity and routes steering through ordinary job authority."
      :busy-behavior :inspect
      :terminal-behavior :shared
+     :slash-parser application-task-inspector-slash-arguments
      :callable t)
-    (application &optional (remainder ""))
-  (application-present application (application-task-inspector application remainder))
+    (application &optional (action ':list) id &rest options
+                 &key message offset limit authorize &allow-other-keys)
+  (declare (ignore message offset limit authorize))
+  (application-present application (apply #'application-task-inspector application action id options))
   ':continue)
 
 (define-application-command application--builtin-refine-command
