@@ -512,7 +512,7 @@
       (case
        '(("/help" (&optional topic))
          ("/resume" (&optional (identifier nil identifier-supplied-p)))
-         ("/cwd" (&optional (pathname "")))
+         ("/cwd" (&optional pathname))
          ("/trace" (&optional mode))
          ("/timestamps" (&optional mode))
          ("/ste" (&optional mode))
