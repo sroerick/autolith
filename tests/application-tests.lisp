@@ -757,7 +757,7 @@
                   (test-assert
                    (handler-case
                        (progn
-                         (application-permissions-command application "sandbox")
+                         (application-permissions-command application ':sandbox)
                          nil)
                      (configuration-error ()
                        t))

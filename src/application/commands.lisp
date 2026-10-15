@@ -779,6 +779,21 @@ the effort with the same model even when the model was never chosen."
   "Read a slash boolean mode without applying Lisp string coercion."
   (application--parse-control text '(:on :off :status)))
 
+(-> application--parse-slynk-control (string) list)
+(defun application--parse-slynk-control (text)
+  "Read a slash Slynk action."
+  (application--parse-control text '(:start :stop :status)))
+
+(-> application--parse-mcp-control (string) list)
+(defun application--parse-mcp-control (text)
+  "Read a slash MCP action."
+  (application--parse-control text '(:refresh :reload :status)))
+
+(-> application--parse-permissions-control (string) list)
+(defun application--parse-permissions-control (text)
+  "Read a slash command-permission action."
+  (application--parse-control text '(:ask :auto :sandbox :full :list :clear)))
+
 (-> application-codex-fast-mode-command (application &optional t) null)
 (defun application-codex-fast-mode-command (application &optional (argument ':status))
   "Set or report APPLICATION's persisted Codex Fast mode."
@@ -2312,26 +2327,27 @@ are forwarded to TERMINAL-UI-SELECT."
     (setf (config :permission-mode (application-configuration application)) mode))
   nil)
 
-(-> application-permissions-command (application (option string)) null)
+(-> application-permissions-command (application t) null)
 (defun application-permissions-command (application argument)
   "Apply ARGUMENT to APPLICATION's session command permissions."
-  (let ((choice (and argument (string-downcase argument))))
+  (let ((choice (and argument
+                     (application--control-choice argument '(:ask :auto :sandbox :full :list :clear)))))
     (cond
       ((null choice)
        nil)
-      ((string= choice "ask")
+      ((eq choice ':ask)
        (application--set-durable-permission-mode application ':ask)
        (application-present
         application
         "Commands will ask before running unless the exact command was saved."))
-      ((string= choice "auto")
+      ((eq choice ':auto)
        (application--set-durable-permission-mode application ':auto)
        (application-present
         application
          (if (application--command-sandbox-available-p)
              "Commands will be classified automatically as sandboxed, full access, or denied."
              "Commands will be classified automatically as full access or denied.")))
-      ((string= choice "sandbox")
+      ((eq choice ':sandbox)
        (unless (application--command-sandbox-available-p)
          (error 'configuration-error
                 :message (application--command-sandbox-unavailable-message)))
@@ -2339,15 +2355,15 @@ are forwarded to TERMINAL-UI-SELECT."
        (application-present
         application
         "Commands may run for this session inside the workspace sandbox."))
-      ((string= choice "full")
+      ((eq choice ':full)
        (setf (application-permission-mode application) ':full-access)
        (application-present
         application
         "Commands may run for this session with your full user privileges."))
-      ((string= choice "list")
+      ((eq choice ':list)
        (application-present application
                             (application--saved-permissions-text application)))
-      ((string= choice "clear")
+      ((eq choice ':clear)
        (permissions-clear
         (application-configuration application)
         (application-permission-state application))
@@ -2623,22 +2639,22 @@ The current value and its source sit in aligned columns of their own."
                                 (and value (if (stringp value) value (string-downcase (string value)))))
   ':continue)
 
-(-> application-slynk-command (application (option string)) null)
-(defun application-slynk-command (application action)
-  "Report APPLICATION's Slynk endpoint, starting it, or stopping it when ACTION is \"stop\"."
+(-> application-slynk-command (application &optional t) null)
+(defun application-slynk-command (application &optional (action ':start))
+  "Start, stop, or show APPLICATION's Slynk endpoint using a keyword ACTION."
+  (application--control-choice action '(:start :stop :status))
   (let ((configuration (application-configuration application)))
     (cond
-      ((equal action "stop")
+      ((eq action ':stop)
        (slynk-stop)
        (application-present application "Slynk stopped. sly connections to this image are closed."))
-      (action
-       (application-present application "Use (slynk) to start or show Slynk and (slynk \"stop\") to stop it."))
-      ((null (config :slynk-directory configuration))
+      ((and (eq action ':start) (null (config :slynk-directory configuration)))
        (application-present
         application
-        "Slynk is unavailable: set AUTOLITH_SLYNK_DIRECTORY or (setf (config :slynk-directory) ...) to your sly installation's slynk/ directory, or start Autolith from M-x autolith-ide."))
+        "Slynk is unavailable: set AUTOLITH_SLYNK_DIRECTORY to your sly installation's slynk/ directory, or start Autolith from M-x autolith-ide."))
       (t
-       (slynk-start configuration)
+       (when (eq action ':start)
+         (slynk-start configuration))
        (destructuring-bind (&key state port message &allow-other-keys) (slynk-status)
          (application-present
           application
@@ -2650,15 +2666,15 @@ The current value and its source sit in aligned columns of their own."
 
 (define-application-command application--builtin-slynk-command
     (:name "/slynk"
-     :argument "[stop]"
      :description "serve this image to sly"
-     :tip "starts Slynk from your sly installation and shows the port for M-x sly-connect; (slynk \"stop\") closes it."
+     :tip "Use (slynk) to start Slynk and show its port for M-x sly-connect, or (slynk :stop) to close it."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :callable t)
-    (application &optional action)
-  (application-slynk-command application
-                             (and action (string-downcase (string action))))
+     :callable t
+     :slash-parser application--parse-slynk-control
+     :static-options (:start :stop :status))
+    (application &optional (action ':start))
+  (application-slynk-command application action)
   ':continue)
 
 ;;;; -- Installed Release Update --
@@ -2997,12 +3013,15 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-permissions-command
     (:name "/permissions"
      :description "choose command access for this session"
-     :tip "sets command authorization: ask prompts for approval, auto authorizes autonomously, sandbox confines commands, and full grants session-wide host access."
+     :tip "Use (permissions :ask) for approval prompts, :auto for automatic authorization, :sandbox for workspace confinement, or :full for session-wide host access."
      :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
      :callable t
-     :static-options ("ask" "auto" "sandbox" "full" "list" "clear"))
+     :slash-parser application--parse-permissions-control
+     :static-options (:ask :auto :sandbox :full :list :clear))
     (application &optional (choice nil choice-supplied-p))
+  (when choice-supplied-p
+    (application--control-choice choice '(:ask :auto :sandbox :full :list :clear)))
   (let ((choice
           (if choice-supplied-p
               choice
@@ -3013,7 +3032,11 @@ The current value and its source sit in aligned columns of their own."
                     :items (application--permission-mode-items application)
                     :usage "Usage: /permissions [ask|auto|sandbox|full|list|clear]"
                     :empty-notice "No command permission modes exist.")))))
-    (application-permissions-command application choice))
+    (application-permissions-command
+     application
+     (if (and (not choice-supplied-p) choice)
+         (first (application--parse-permissions-control choice))
+         choice)))
   ':continue)
 
 (define-application-command application--builtin-tasks-command
@@ -3137,22 +3160,23 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-mcp-command
     (:name "/mcp"
      :description "show or refresh configured MCP servers"
-     :tip "shows MCP connections; refresh rediscovers, reload rereads configuration."
+     :tip "Inspect connections with (mcp), rediscover tools with (mcp :refresh), or reread configuration with (mcp :reload)."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
-     :static-options ("refresh" "reload"))
-    (application &optional mode)
-  (let ((mode (and mode (string-downcase mode)))
+     :slash-parser application--parse-mcp-control
+     :static-options (:refresh :reload))
+    (application &optional (mode ':status))
+  (let ((mode (application--control-choice mode '(:status :refresh :reload)))
         (added-tools nil)
         (removed-tools nil))
     (cond
-      ((null mode)
+      ((eq mode ':status)
        nil)
-      ((string= mode "refresh")
+      ((eq mode ':refresh)
        (mcp-tool-registry-refresh
         (application-tool-registry application)))
-      ((string= mode "reload")
+      ((eq mode ':reload)
        (multiple-value-setq (added-tools removed-tools)
          (application-reload-mcp application)))
       (t

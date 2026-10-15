@@ -1274,9 +1274,61 @@
       (terminal-ui-stop ui)))
   nil)
 
+(-> test-application-typed-action-controls () null)
+(defun test-application-typed-action-controls ()
+  "Test keyword service and permission actions at public Lisp and slash boundaries."
+  (test-call-with-typed-control-application
+   (lambda (application root observations)
+     (let ((configuration (application-configuration application)))
+       (setf (config :slynk-directory configuration) root)
+       (dolist
+           (source
+            '("(slynk :start)" "(slynk :status)" "(slynk :stop)" "(mcp :refresh)"
+              "(mcp :reload)" "(mcp :status)"))
+         (test-assert
+          (eq
+           (application-lisp-evaluation-status
+            (application-lisp-evaluate source :application application))
+           ':ok)
+          "keyword service controls execute through local Lisp"))
+       (test-assert (equal (reverse (first observations)) '(:start :stop :refresh :reload))
+                    "status does not start, stop, refresh, or reload a service")
+       (setf (first observations) nil)
+       (dolist (source '("/slynk start" "/slynk stop" "/mcp refresh" "/mcp reload"))
+         (application-command application source))
+       (test-assert (equal (reverse (first observations)) '(:start :stop :refresh :reload))
+                    "slash service actions use the same native handlers")
+       (let ((before (first observations)))
+         (dolist
+             (call
+              '((slynk "stop") (slynk :unknown) (mcp "refresh") (mcp nil) (permissions "full")
+                (permissions nil)))
+           (test-assert
+            (handler-case
+             (progn
+              (apply #'application-operation-call application (first call) (rest call))
+              nil)
+             (configuration-error nil t))
+            "invalid service and permission actions signal before effects"))
+         (test-assert (eq (first observations) before)
+                      "invalid service actions leave services untouched"))
+       (application-operation-call application 'permissions ':ask)
+       (test-assert (eq (config :permission-mode configuration) ':ask)
+                    "keyword ask uses durable permission policy")
+       (application-operation-call application 'permissions ':auto)
+       (test-assert (eq (config :permission-mode configuration) ':auto)
+                    "keyword auto uses durable permission policy")
+       (application-operation-call application 'permissions ':full)
+       (test-assert (eq (application-permission-mode application) ':full-access)
+                    "keyword full uses session authority")
+       (application-operation-call application 'permissions ':list)
+       (application-operation-call application 'permissions ':clear))))
+  nil)
+
 (-> test-application-mcp-reload-capability-change () null)
 (defun test-application-mcp-reload-capability-change ()
   "Test /mcp reload reports only a changed deterministic tool-name set."
+  (test-application-typed-action-controls)
   (let ((application
           (make-instance 'application
                          :tool-registry (make-instance 'tool-registry)))
@@ -1300,7 +1352,7 @@
          t)))
      (lambda ()
        (test-assert
-        (eq (application--builtin-mcp-command application "reload") ':continue)
+        (eq (application--builtin-mcp-command application ':reload) ':continue)
         "/mcp reload completes after reporting capability changes")
        (let* ((entries (nreverse presented))
               (change-entry (first entries)))
@@ -1317,7 +1369,7 @@
                (string= (second entries) "No MCP servers are configured."))
           "/mcp reload renders one deterministic added and removed tool chip"))
        (setf presented nil)
-       (application--builtin-mcp-command application "reload")
+       (application--builtin-mcp-command application ':reload)
        (test-assert
         (equal presented '("No MCP servers are configured."))
         "/mcp reload omits the capability chip when the tool-name set is unchanged")))
