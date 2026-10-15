@@ -7546,6 +7546,23 @@
                                  :worker nil
                                  :agent agent
                                  :ui ui)))
+           (let ((received nil))
+             (test-call-with-function-replacements
+              (list (list 'application-set-working-directory
+                          (lambda (target location)
+                            (test-assert (eq target application) "CWD uses the current application")
+                            (setf received location)
+                            lisp-workspace)))
+              (lambda ()
+                (application-operation-call application "cwd" lisp-workspace)
+                (test-assert (eq received lisp-workspace)
+                             "a native workspace pathname reaches workspace switching intact")
+                (setf received nil)
+                (test-assert
+                 (handler-case (progn (application-operation-call application "cwd" "") nil)
+                   (configuration-error () t))
+                 "an explicit empty workspace pathname is rejected")
+                (test-assert (null received) "invalid workspace input cannot switch the workspace"))))
            (terminal-ui-start ui)
            (let ((entry
                    (application-command-completion-entry

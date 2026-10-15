@@ -1843,11 +1843,13 @@ are forwarded to TERMINAL-UI-SELECT."
 
 ;;;; -- Working Directory Command --
 
-(-> application-working-directory-command (application string) null)
-(defun application-working-directory-command (application remainder)
-  "Show or change APPLICATION's workspace from the /cwd command REMAINDER."
-  (if (non-empty-string-p remainder)
-      (let ((directory (application-set-working-directory application remainder)))
+(-> application-working-directory-command (application (or pathname string null)) null)
+(defun application-working-directory-command (application location)
+  "Show APPLICATION's workspace, or change it to the native pathname LOCATION."
+  (when (and (stringp location) (not (non-empty-string-p location)))
+    (error 'configuration-error :message "A workspace pathname must not be empty."))
+  (if location
+      (let ((directory (application-set-working-directory application location)))
         (application-present
          application
          (format nil "Working directory is now ~A" (namestring directory))))
@@ -1856,7 +1858,7 @@ are forwarded to TERMINAL-UI-SELECT."
        (format nil "Working directory: ~A"
                (namestring
                 (config :working-directory
-                 (application-configuration application))))))
+                        (application-configuration application))))))
   nil)
 
 
@@ -2751,16 +2753,12 @@ The current value and its source sit in aligned columns of their own."
     (:name "/cwd"
      :argument "[PATH]"
      :description "show or change the active workspace"
-     :tip "shows or moves the active workspace without restarting Autolith."
+     :tip "Use (cwd pathname) to change the active workspace, or (cwd) to inspect it."
      :busy-behavior :inspect
      :terminal-behavior :shared
      :callable t)
-    (application &optional (pathname ""))
-  (application-working-directory-command
-   application
-   (etypecase pathname
-     (string pathname)
-     (pathname (namestring pathname))))
+    (application &optional pathname)
+  (application-working-directory-command application pathname)
   ':continue)
 
 (define-application-command application--builtin-authentication-command
