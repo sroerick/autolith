@@ -103,8 +103,8 @@
   (case exercise
     (:continue "Type continue and press Enter.")
     (:help (if (eq stage ':help-output)
-               "Type continue and press Enter."
-               "Type (help) and press Enter."))
+               "Explore with (help :workspace), (help \"topic\"), or /help TOPIC. Type continue to proceed."
+               "Type (help) or (help \"topic\") and press Enter."))
     (:async (if (eq stage ':result)
                 "Safe result shown. Press Space or Enter to continue."
                 "Type ? (+ 1 2) and press Enter."))
@@ -145,8 +145,8 @@
 (-> terminal-ui-onboarding--body-spans (list keyword function &key (:width integer)) list)
 (defun terminal-ui-onboarding--body-spans (page stage help-function &key (width 76))
   "Return the current lesson or the result of its exercise."
-  (if (and (eq (getf page :exercise) ':help) (eq stage ':help-output))
-      (append (list (terminal-span ':strong (format nil "Basic help~2%")))
+  (if (and (eq (getf page :exercise) ':help) (member stage '(:help-output :help-error)))
+      (append (list (terminal-span ':strong (format nil "Help~2%")))
               (terminal-ui-onboarding--help-spans help-function :width width))
       (append
        (terminal-ui-onboarding--spans (getf page :body))
@@ -347,6 +347,45 @@ Body scrolling never hides the exercise prompt. Recompute geometry each paint."
                          (line-editor-text (terminal-ui-editor ui)))
            target))
 
+(-> terminal-ui-onboarding--help-request (string) (values t boolean))
+(defun terminal-ui-onboarding--help-request (input)
+  "Decode only help requests, returning a native topic and a valid-request flag.
+
+Accept the help command's literal Lisp arguments and its slash spelling. Disable
+reader dispatch and never evaluate input, including quoted topic arguments."
+  (let ((text (string-trim '(#\Space #\Tab #\Newline #\Return) input)))
+    (when (and (>= (length text) 5)
+               (string-equal "/help" text :end2 5)
+               (or (= (length text) 5) (find (char text 5) '(#\Space #\Tab))))
+      (let ((topic (string-trim '(#\Space #\Tab) (subseq text 5))))
+        (return-from terminal-ui-onboarding--help-request
+          (values (unless (zerop (length topic)) topic) t))))
+    (handler-case
+        (let ((*read-eval* nil)
+              (*readtable* (copy-readtable nil))
+              (*package* (find-package '#:autolith))
+              (end (gensym "END")))
+          (set-macro-character #\#
+                               (lambda (stream character)
+                                 (declare (ignore character))
+                                 (error 'reader-error :stream stream)))
+          (with-input-from-string (stream text)
+            (let ((form (read stream nil end)))
+              (when (and (listp form) (<= 1 (length form) 2)
+                         (symbolp (first form))
+                         (string-equal (symbol-name (first form)) "HELP")
+                         (eq (read stream nil end) end))
+                (let* ((argument (second form))
+                       (quoted-p (and (consp argument) (eq (first argument) 'quote)
+                                      (= (length argument) 2)))
+                       (topic (if quoted-p (second argument) argument)))
+                  (when (or (null topic) (stringp topic) (keywordp topic)
+                            (and quoted-p (symbolp topic)))
+                    (return-from terminal-ui-onboarding--help-request
+                      (values topic t))))))))
+      (error () nil)))
+  (values nil nil))
+
 
 ;;;; -- Modal Session --
 
@@ -365,8 +404,10 @@ Return outcome :COMPLETED, :REFUSED (Escape), or :INTERRUPTED (Ctrl-C/EOF),
 and completed page IDs. Call PAGE-COMPLETED-FUNCTION once per page, with its
 plist. Hold exclusive input through snapshot, presentation and restoration;
 defer concurrent live output without dropping it. Only check exercises on Enter.
-Call SETTINGS-FUNCTION for the settings lesson. Poll RESIZE-CALLBACK while idle;
-it returns pending dimensions as (ROWS . COLUMNS). Never evaluate demo input."
+Call HELP-FUNCTION once per accepted help request, with its optional native topic;
+cache its output across paints. Call SETTINGS-FUNCTION for the settings lesson.
+Poll RESIZE-CALLBACK while idle; it returns pending dimensions as (ROWS . COLUMNS).
+Never evaluate demo input."
   (terminal-ui-onboarding--validate-pages pages)
   (unless (and (typep ui 'fullscreen-terminal-ui)
                (functionp help-function)
@@ -399,6 +440,8 @@ it returns pending dimensions as (ROWS . COLUMNS). Never evaluate demo input."
             (scroll-offset 0)
             (link-regions nil)
             (stage ':input)
+             (help-output "")
+             (help-seen-p nil)
             (seen-identifiers nil)
             (outcome ':running))
        (labels ((page ()
@@ -411,11 +454,11 @@ it returns pending dimensions as (ROWS . COLUMNS). Never evaluate demo input."
                   (with-terminal-ui-locked (ui)
                     (multiple-value-setq (scroll-offset link-regions)
                       (terminal-ui-onboarding--paint
-                       ui pages :index index :stage stage :help-function help-function
+                       ui pages :index index :stage stage :help-function (lambda () help-output)
                        :introduction-title introduction-title :scroll-offset scroll-offset))))
 
                 (reset-page ()
-                  (setf scroll-offset 0 stage ':input)
+                  (setf scroll-offset 0 stage ':input help-output "" help-seen-p nil)
                   (when (exercise)
                     (terminal-ui-onboarding--reset-exercise ui)))
 
@@ -433,15 +476,30 @@ it returns pending dimensions as (ROWS . COLUMNS). Never evaluate demo input."
                     (decf index)
                     (reset-page)))
 
+                (submit-help ()
+                  (cond
+                    ((and help-seen-p
+                          (terminal-ui-onboarding--exercise-submitted-p ui "continue"))
+                     (advance))
+                    (t
+                     (multiple-value-bind (topic valid-p)
+                         (terminal-ui-onboarding--help-request
+                          (line-editor-text (terminal-ui-editor ui)))
+                       (setf scroll-offset 0)
+                       (if valid-p
+                           (progn
+                             (setf help-output (if topic
+                                                   (funcall help-function topic)
+                                                   (funcall help-function))
+                                   help-seen-p t
+                                   stage ':help-output)
+                             (terminal-ui-onboarding--reset-exercise ui))
+                           (setf help-output "Use (help), (help :workspace), (help 'resume), or /help TOPIC. No other Lisp is evaluated here."
+                                 stage (if help-seen-p ':help-output ':help-error)))))))
+
                 (submit-exercise (target)
                   (when (terminal-ui-onboarding--exercise-submitted-p ui target)
                     (case (exercise)
-                      (:help
-                       (if (eq stage ':input)
-                           (progn
-                             (setf stage ':help-output scroll-offset 0)
-                             (terminal-ui-onboarding--reset-exercise ui))
-                           (advance)))
                       (:settings
                        (terminal-ui-onboarding--reset-exercise ui)
                        (funcall settings-function)
@@ -485,6 +543,8 @@ it returns pending dimensions as (ROWS . COLUMNS). Never evaluate demo input."
                        (let ((action (terminal-ui-onboarding--link-action
                                       link-regions (second event) (third event))))
                          (when action (terminal-ui-activate ui action))))
+                      ((and (eq (exercise) ':help) (eq event ':submit))
+                       (submit-help))
                       ((and target (eq event ':submit))
                        (submit-exercise target))
                       (target

@@ -35,6 +35,57 @@
         (test-assert (search "Actual basic help" (recording-terminal-output terminal)) "help is presented")
         (test-assert (zerop (length (line-editor-history (terminal-ui-editor ui)))) "demo adds no command history"))))
   (onboarding-ui-test--navigation)
+  (onboarding-ui-test--help-exploration)
+  nil)
+
+(-> onboarding-ui-test--help-exploration () null)
+(defun onboarding-ui-test--help-exploration ()
+  "Explore native and slash help topics without evaluating lesson input."
+  (let* ((requests nil)
+         (effects 0)
+         (completed nil)
+         (terminal
+           (make-instance
+            'scripted-terminal :columns 80 :rows 24
+            :events '((:paste "(help #.(incf effects))") :submit
+                      :home :kill-to-end (:paste "continue") :submit
+                      :home :kill-to-end (:paste "(help)") :submit
+                      :page-down (:resize 60 18)
+                      (:paste "(help :workspace)") :submit
+                      (:paste "(help \"model\")") :submit
+                      (:paste "(help 'resume)") :submit
+                      (:paste "/help not-a-topic") :submit
+                      (:paste "(help (incf effects))") :submit
+                      :home :kill-to-end (:paste "(help \"unfinished)") :submit
+                      :home :kill-to-end (:paste "(help) (incf effects)") :submit
+                      :home :kill-to-end (:paste "(help)") :submit
+                      (:paste "continue") :submit))))
+    (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
+      (line-editor-set-text (terminal-ui-editor ui) "saved draft" :cursor 4)
+      (clinedi:line-editor-replace-history (terminal-ui-editor ui) '("prior command"))
+      (multiple-value-bind (outcome ids)
+          (terminal-ui-onboard
+           ui (list (onboarding-ui-test--page "help" ':help))
+           :help-function (lambda (&optional topic)
+                            (push topic requests)
+                            (format nil "Selected help: ~A" (or topic "overview")))
+           :page-completed-function (lambda (page) (push (getf page :id) completed)))
+        (test-assert (eq outcome ':completed) "exploration ends with continue")
+        (test-assert (equal ids '("help")) "help lesson acknowledges once")
+        (test-assert (equal completed '("help")) "topic requests do not acknowledge pages"))
+      (test-assert (equal (reverse requests) '(nil :workspace "model" resume "not-a-topic" nil))
+                   "only literal help requests reach the callback, once per request")
+      (test-assert (zerop effects) "reader and nested forms have no effects")
+      (test-assert (null (scripted-terminal-events terminal)) "invalid requests leave lesson active")
+      (let ((output (clinedi:ansi-strip (recording-terminal-output terminal))))
+        (dolist (topic '("overview" "WORKSPACE" "model" "RESUME" "not-a-topic"))
+          (test-assert (search (format nil "Selected help: ~A" topic) output)
+                       "each selected topic is presented")))
+      (test-assert (string= "saved draft" (line-editor-text (terminal-ui-editor ui)))
+                   "help exploration restores the draft")
+      (test-assert (= 4 (line-editor-cursor (terminal-ui-editor ui))) "draft cursor restored")
+      (test-assert (equalp #("prior command") (line-editor-history (terminal-ui-editor ui)))
+                   "help exploration does not add history")))
   nil)
 
 (-> test-onboarding-ui-restoration () null)

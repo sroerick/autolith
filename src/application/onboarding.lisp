@@ -404,7 +404,8 @@ remaining selected revisions; interruption leaves them pending."
                      (if (and new-only-p (< (length selected) (length pages)))
                          "Here's what's new in Autolith"
                          "Getting started")
-                     :help-function (lambda () (application-operation-help application))
+                     :help-function (lambda (&optional topic)
+                                      (application-operation-help application topic))
                       :settings-function (lambda () (application-onboarding--settings application))
                       :resize-callback #'application-pending-terminal-size
                      :page-completed-function
