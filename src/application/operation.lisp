@@ -56,18 +56,20 @@
   (:documentation "Return OPERATION's completion argument suffix, when present."))
 
 (-> application-operation-active-turn-action
-    (application-operation list) (member :apply :cancel :execute :hold))
-(defgeneric application-operation-active-turn-action (operation argument-forms)
-  (:documentation "Return OPERATION's active-turn admission for ARGUMENT-FORMS."))
+    (application-operation (or list application-command-invocation))
+    (member :apply :cancel :execute :hold))
+(defgeneric application-operation-active-turn-action (operation arguments)
+  (:documentation "Return OPERATION's active-turn admission for native arguments or a parsed command invocation."))
 
 (-> application-operation-immediate-arguments-p (application-operation list) boolean)
 (defgeneric application-operation-immediate-arguments-p (operation argument-forms)
   (:documentation "Return whether OPERATION may inspect ARGUMENT-FORMS immediately."))
 
 (-> application-operation-invoke
-    (application-operation application (or list hash-table) &key (:context (option tool-context))) t)
+    (application-operation application (or list hash-table application-command-invocation)
+     &key (:context (option tool-context))) t)
 (defgeneric application-operation-invoke (operation application arguments &key context)
-  (:documentation "Invoke OPERATION with evaluated arguments or a tool's JSON object and explicit CONTEXT."))
+  (:documentation "Invoke OPERATION with native arguments, a parsed command invocation, or a tool's JSON object and explicit CONTEXT."))
 
 (-> application-operation-binding-eligible-p (application-operation) boolean)
 (defgeneric application-operation-binding-eligible-p (operation)
@@ -763,23 +765,30 @@ paths that do not contain QUERY as a contiguous substring."
     object))
 
 (-> application-operation--command-invocation
-    (application-command list) application-command-invocation)
+    (application-command (or list application-command-invocation))
+    application-command-invocation)
 (defun application-operation--command-invocation (command arguments)
-  "Preserve evaluated ARGUMENTS in COMMAND's Lisp invocation.
+  "Return a parsed invocation or preserve evaluated ARGUMENTS for COMMAND.
 
-The command name alone labels presentation. Never print or traverse argument
-objects to construct a label: values may be cyclic, mutable, or have printers
-with side effects. Only the outer argument list is copied."
-  (let ((name (application-command-name command)))
-    (make-instance 'application-command-invocation
-                   :input name
-                   :syntax ':lisp
-                   :name name
-                   :remainder ""
-                   :argument nil
-                   :arguments (copy-list arguments)
-                   :supplied-argument-count (length arguments)
-                   :command command)))
+The command name alone labels Lisp presentation. Never print or traverse
+argument objects to construct a label; only the outer argument list is copied."
+  (etypecase arguments
+    (application-command-invocation
+     (unless (eq command (application-command-invocation-command arguments))
+       (error 'configuration-error
+              :message "The parsed invocation belongs to a different command registration."))
+     arguments)
+    (list
+     (let ((name (application-command-name command)))
+       (make-instance 'application-command-invocation
+                      :input name
+                      :syntax ':lisp
+                      :name name
+                      :remainder ""
+                      :argument nil
+                      :arguments (copy-list arguments)
+                      :supplied-argument-count (length arguments)
+                      :command command)))))
 
 
 ;;;; -- Active-Turn Admission --
@@ -794,7 +803,7 @@ with side effects. Only the outer argument list is copied."
 
 (defmethod application-operation-active-turn-action
     ((operation application-command-operation) argument-forms)
-  "Return a command's existing busy action for literal ARGUMENT-FORMS."
+  "Return command busy policy for native arguments or a parsed invocation."
   (let* ((command (application-operation-backend operation))
          (invocation
            (application-operation--command-invocation command argument-forms))

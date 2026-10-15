@@ -81,6 +81,8 @@
               (or (not (string= "skills" (agentcomms:json-get request "operation")))
                   (and (stringp text) (plusp (length text))))
                 "ordinary command invocation returns presented text when it presents")))
+          (test-assert (not (application-hurry-up-p (acp-session-application session)))
+                       "the textual off action disables hurry-up")
          (let ((request (agentcomms:json-object
                          "sessionId" identifier
                          "operation" "permissions"
@@ -95,13 +97,34 @@
           client
           '("invoke" "invoke" "invoke" "invoke" "invoke" "invoke")
           '("end-turn" "end-turn" "end-turn" "end-turn" "end-turn" "end-turn"))
-         (dolist (request (list (agentcomms:json-object "operation" "settings")
+          (dolist (request (list (agentcomms:json-object "operation" "settings")
+                                (agentcomms:json-object "operation" "auth"
+                                                       "arguments" (agentcomms:json-object "input" "chatgpt invalid"))
                                 (agentcomms:json-object "operation" "missing-operation")))
            (setf (gethash "sessionId" request) identifier)
            (test-assert (equal "unsupported"
                                (agentcomms:json-get
                                 (agentcomms:client-agent-request client "_autolith/invoke" request) "outcome"))
                         "unavailable adapters return an explicit unsupported outcome"))
+          (let ((result
+                  (agentcomms:client-agent-request
+                   client "_autolith/invoke"
+                   (agentcomms:json-object
+                    "sessionId" identifier "operation" "settings"
+                    "arguments" (agentcomms:json-object "input" "boot-screen-seconds 2")))))
+            (test-assert (and (equal "ok" (agentcomms:json-get result "outcome"))
+                              (= 2 (config :boot-screen-seconds
+                                           (application-configuration (acp-session-application session)))))
+                         "textual settings use the executing application's schema"))
+          (let ((result
+                  (agentcomms:client-agent-request
+                   client "_autolith/invoke"
+                   (agentcomms:json-object
+                    "sessionId" identifier "operation" "hurry-up"
+                    "arguments" (agentcomms:json-object "input" "sometimes")))))
+            (test-assert (and (equal "condition" (agentcomms:json-get result "outcome"))
+                              (not (application-hurry-up-p (acp-session-application session))))
+                         "invalid text actions fail before state changes"))
          (test-assert (equal "condition"
                              (agentcomms:json-get
                               (agentcomms:client-agent-request

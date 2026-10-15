@@ -274,8 +274,8 @@ Terminal-only operations return an explicit unsupported outcome. Workspace resou
 windows use =startLine= and =lineCount= and include the observed revision. Shell-log
 windows use =byteOffset= and =byteCount= and require session ownership.
 
-Invoke ordinary commands with =arguments: {"input": "..."}=, using native command
-arguments without the command name. =text= is an alias for =input=. Commands such
+Invoke ordinary commands with =arguments: {"input": "..."}=, using slash-command
+text without the command name. =text= is an alias for =input=. Commands such
 as =skills=, =hurry-up= and =papercuts= return their presented text. Operations with
 =terminalWithoutArguments= require an argument to avoid a terminal picker. During
 an active turn, native inspection and execution policies apply; boundary-applied

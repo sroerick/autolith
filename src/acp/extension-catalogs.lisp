@@ -10,19 +10,15 @@
             (application-operation-backend operation)) ':exclusive)))
 
 (-> acp-catalog--operation-admitted-p
-    (application-operation &optional hash-table) boolean)
+    (application-operation &optional t) boolean)
 (defun acp-catalog--operation-admitted-p (operation &optional (arguments nil supplied-p))
-  "Return whether OPERATION supports headless use, checking supplied arguments."
+  "Return whether OPERATION supports headless use of decoded ARGUMENTS."
   (or (typep operation 'application-tool-operation)
       (and (typep operation 'application-command-operation)
            (not (acp-catalog--operation-terminal-p operation))
            (or (not supplied-p)
                (not (application-command-terminal-owner-p
-                     (application-operation-backend operation)
-                     (application-operation--command-invocation
-                      (application-operation-backend operation)
-                      (acp-catalog--command-arguments
-                       (application-operation-backend operation) arguments))))))))
+                     (application-operation-backend operation) arguments))))))
 
 (-> acp-catalog--operation-schema (application-operation) t)
 (defun acp-catalog--operation-schema (operation)
@@ -35,7 +31,7 @@
        "properties"
        (agentcomms:json-object
         "input" (agentcomms:json-object "type" "string"
-                                          "description" "Native command arguments without the command name.")
+                                           "description" "Slash command arguments without the command name.")
         "text" (agentcomms:json-object "type" "string"
                                          "description" "Alias for input."))
        "additionalProperties" (argo:json-false))))
@@ -60,10 +56,10 @@
      (if (and command (eq (application-command-terminal-behavior command)
                           ':exclusive-without-arguments)) t (argo:json-false)))))
 
-(-> acp-catalog--command-arguments (application-command hash-table) list)
-(defun acp-catalog--command-arguments (command arguments)
-  "Decode and validate native textual arguments for COMMAND."
-  (declare (ignore command))
+(-> acp-catalog--command-invocation
+    (application-command hash-table) application-command-invocation)
+(defun acp-catalog--command-invocation (command arguments)
+  "Decode ACP text at COMMAND's slash boundary, retaining the parsed invocation."
   (let ((keys (loop for key being the hash-keys of arguments collect key)))
     (unless (every (lambda (key) (member key '("input" "text") :test #'string=)) keys)
       (error 'configuration-error
@@ -75,7 +71,12 @@
     (let ((input (or (agentcomms:acp-field arguments "input" :type ':string)
                      (agentcomms:acp-field arguments "text" :type ':string)
                      "")))
-      (application-command--tokens input))))
+      (let ((invocation
+              (application-command-invocation-parse
+               (if (zerop (length input))
+                   (application-command-name command)
+                   (format nil "~A ~A" (application-command-name command) input)))))
+        (application-operation--command-invocation command invocation)))))
 
 (-> acp-extension-operations (acp-session hash-table) hash-table)
 (defun acp-extension-operations (session params)
@@ -150,7 +151,8 @@
         (acp-extension-notify session "state")
         (acp-completion-wake session)))))
 
-(-> acp-catalog--invoke-active (acp-session application-command-operation list) hash-table)
+(-> acp-catalog--invoke-active
+    (acp-session application-command-operation application-command-invocation) hash-table)
 (defun acp-catalog--invoke-active (session operation arguments)
   "Honor a command's native active-turn policy without claiming another prompt."
   (let ((application (acp-session-application session)))
@@ -183,16 +185,19 @@
                         (agentcomms:json-object)))
          (operation (application-operation-find application name))
          (service (acp-session-service session)))
-    (unless (and operation (acp-catalog--operation-admitted-p operation arguments))
+    (unless (and operation (acp-catalog--operation-admitted-p operation))
       (error 'acp-extension-unavailable
              :reason "This operation requires terminal ownership or has no headless adapter."))
     (let* ((command-p (typep operation 'application-command-operation))
            (decoded (if command-p
-                        (acp-catalog--command-arguments
+                        (acp-catalog--command-invocation
                          (application-operation-backend operation) arguments)
                         arguments))
            (owner (with-lock-held ((acp-service-lock service))
                     (acp-service-busy-owner service))))
+      (unless (acp-catalog--operation-admitted-p operation decoded)
+        (error 'acp-extension-unavailable
+               :reason "This operation requires terminal ownership or has no headless adapter."))
       (if (and command-p (eq owner session))
           (acp-catalog--invoke-active session operation decoded)
           (acp-service--call-with-operation
