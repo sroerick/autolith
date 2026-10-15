@@ -35,6 +35,17 @@
       (test-assert (and widget (eq ':brand (termdown:widget-role widget))
                         (equal '(:open-url "https://example.org") (termdown:widget-action widget)))
                    "links retain semantic styling and executable URL actions")))
+  (let* ((source (onboarding-source-test--lesson
+                  "Use x=1 and y=2; *Read [[https://example.org][docs]]* and =x=1=."))
+         (body (getf (first (onboarding-source-pages source (make-hash-table :test #'eq))) :body))
+         (widget (find-if #'termdown:widget-p body)))
+    (test-assert (search "Use x=1 and y=2; " (terminal--spans-text body))
+                 "literal equals signs inside words are ordinary prose")
+    (test-assert (and widget (eq ':strong (termdown:widget-role widget))
+                      (equal '(:open-url "https://example.org") (termdown:widget-action widget)))
+                 "strong text preserves embedded link actions")
+    (test-assert (find '(:code . "x=1") body :test #'equal)
+                 "only a boundary delimiter closes verbatim code"))
   nil)
 
 (-> test-onboarding-source-validation () null)

@@ -20,10 +20,10 @@
 
 (-> onboarding-source--inline (string) list)
 (defun onboarding-source--inline (text)
-  "Decode the small authored Org inline vocabulary into span fragments.
+  "Decode strong emphasis, verbatim code, links, and semantic spans.
 
-Support strong emphasis, verbatim code, links and named semantic spans.
-Verbatim and semantic spans preserve their contents, including newlines."
+Recognize emphasis at Org word boundaries. Preserve literal punctuation and
+newlines; decode links within strong text without treating code as markup."
   (let ((cursor 0)
         (plain-start 0)
         (fragments nil)
@@ -42,6 +42,27 @@ Verbatim and semantic spans preserve their contents, including newlines."
                    (onboarding-source--fail
                     (format nil "Unclosed ~A in ~S" delimiter text))))
 
+             (markup-start-p ()
+               (and (< (1+ cursor) length)
+                    (not (find (char text (1+ cursor)) '(#\Space #\Tab #\Newline)))
+                    (or (zerop cursor)
+                        (find (char text (1- cursor))
+                              '(#\Space #\Tab #\Newline #\- #\( #\" #\' #\{)))))
+
+             (markup-end (delimiter)
+               (or (loop for end = (position delimiter text :start (1+ cursor))
+                           then (position delimiter text :start (1+ end))
+                         while end
+                         when (and (> end (1+ cursor))
+                                   (not (find (char text (1- end)) '(#\Space #\Tab #\Newline)))
+                                   (or (= (1+ end) length)
+                                       (find (char text (1+ end))
+                                             '(#\Space #\Tab #\Newline #\- #\. #\, #\: #\!
+                                               #\? #\; #\' #\" #\) #\} #\[ #\] #\\))))
+                           return end)
+                   (onboarding-source--fail
+                    (format nil "Unclosed ~A in ~S" delimiter text))))
+
              (emit (fragment end)
                (flush-plain)
                (push fragment fragments)
@@ -56,6 +77,8 @@ Verbatim and semantic spans preserve their contents, including newlines."
                                  (subseq text (+ label 2) end))))
                     (flush-plain)
                     (dolist (part parts)
+                      (when (and (listp part) (third part))
+                        (onboarding-source--fail "Nested links are not supported."))
                       (push (if (stringp part)
                                 (list ':strong part url)
                                 (append part (list url)))
@@ -73,12 +96,17 @@ Verbatim and semantic spans preserve their contents, including newlines."
                     (unless style
                       (onboarding-source--fail (format nil "Unknown style ~S" name)))
                     (emit (list style (subseq text (1+ colon) end)) (+ end 2))))
-                 ((or (at-p "=") (at-p "*"))
-                  (let* ((delimiter (subseq text cursor (1+ cursor)))
-                         (end (close-at delimiter (1+ cursor))))
-                    (emit (list (if (at-p "=") ':code ':strong)
-                                (subseq text (1+ cursor) end))
-                          (1+ end))))
+                 ((and (or (at-p "=") (at-p "*")) (markup-start-p))
+                  (let* ((code-p (at-p "="))
+                         (end (markup-end (char text cursor)))
+                         (contents (subseq text (1+ cursor) end)))
+                    (if code-p
+                        (emit (list ':code contents) (1+ end))
+                        (progn
+                          (flush-plain)
+                          (dolist (part (onboarding-source--inline contents))
+                            (push (if (stringp part) (list ':strong part) part) fragments))
+                          (setf cursor (1+ end) plain-start cursor)))))
                  (t
                   (incf cursor))))
       (flush-plain))
