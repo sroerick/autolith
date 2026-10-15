@@ -933,9 +933,11 @@ and its file may not even read on this host, so it contributes nothing."
              (if (probe-file pathname)
                  (list pathname)
                  nil)))
-          (t
+          ((typep component 'asdf:module)
            (mapcan #'self-source--component-pathnames
-                   (asdf:component-children component))))))
+                   (asdf:component-children component)))
+          (t
+           nil))))
 
 (-> self-source--dependency-names (t) list)
 (defun self-source--dependency-names (system)
@@ -1024,10 +1026,10 @@ Files shared with a loaded system are available through that system."
                       (withheld-p (or withheld-p
                                       (and feature (not (uiop:featurep feature))))))
                  (cond
-                   ((not (typep component 'asdf:cl-source-file))
+                   ((typep component 'asdf:module)
                     (mapcan (lambda (child) (collect child withheld-p))
                             (asdf:component-children component)))
-                   ((and withheld-p
+                   ((and (typep component 'asdf:cl-source-file) withheld-p
                          (not (member (asdf:component-pathname component) available
                                       :test #'uiop:pathname-equal)))
                     (list (enough-namestring (asdf:component-pathname component)
