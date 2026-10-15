@@ -269,11 +269,15 @@ Body scrolling never hides the exercise prompt. Recompute geometry each paint."
                                  (if (and exercise (>= height 6)) (length hint-rows) 0)
                                  (- prompt-row prompt-top)) overflow)))
           (values
-           (mapcar (lambda (row)
-                     (concatenate 'string (make-string left :initial-element #\Space)
-                                  (second (first (clinedi:wrap-styled-text
-                                                  (clinedi:ansi-strip row) row card-width)))))
-                   rows)
+           (loop for row in rows
+                 for row-index from 0
+                 for display = (second (first (clinedi:wrap-styled-text
+                                               (clinedi:ansi-strip row) row card-width)))
+                 for margin = (if (and (> height 1) (= row-index (1- (length rows))))
+                                  (floor (- width (text-cell-width (clinedi:ansi-strip display))) 2)
+                                  left)
+                 collect (concatenate 'string (make-string (max 0 margin) :initial-element #\Space)
+                                      display))
            (min (1- height) (max 0 cursor-row))
            (min (1- width) (+ left prompt-column))
            offset
