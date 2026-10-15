@@ -27,6 +27,27 @@ Autolith's prompt window can also evuluate lisp forms directly:
 This can be frequently helpful since you can use the exact same tools
 the clanker can, and the same machinery is exposed to you.
 
+* Command arguments
+
+Pass native Lisp values to commands. Use keyword actions, Boolean switches,
+integers, pathnames, and quoted data directly:
+
+#+BEGIN_SRC lisp
+(settings :boot-screen-seconds 2)
+(settings :onboarding-p nil)
+(trace t)
+(trace nil)
+(mcp :refresh)
+(permissions :ask)
+(tasks :transcript "ID" :offset 0 :limit 4000)
+(tasks :send "ID" :message "Keep the original message intact.")
+#+END_SRC
+
+Omit a switch argument to inspect its value; pass =t= to enable it or =nil=
+to disable it. Strings represent text such as objectives, messages, names,
+and identifiers. Pass structured arguments as Lisp data rather than source
+text inside a string.
+
 * Onboarding
 
 On your first interactive launch, try the prompt, =(help)=, background Lisp,
@@ -39,7 +60,7 @@ in your state directory. Ctrl-C interrupts the tour without acknowledging the
 unfinished lessons. Later launches show only new or revised lessons. Evaluate
 =(onboard)= to replay the whole tour.
 
-Disable automatic tours through =(settings "onboarding-p" "off")= or set
+Disable automatic tours through =(settings :onboarding-p nil)= or set
 =AUTOLITH_ONBOARDING= to =off=. If you disable the boot screen, enter the tour
 directly without its opening animation.
 
@@ -50,15 +71,12 @@ Use =(goal "OBJECTIVE")= for lightweight autonomous work. Inspect it with
 =(goal :clear)= to control it, and =(goal :update "NEW-OBJECTIVE")= to edit
 it in place. String arguments are literal objectives, including ="pause"=.
 Unknown keyword actions signal =application-goal-error= without changing the goal.
-The slash forms =/goal OBJECTIVE=, =/goal update NEW-OBJECTIVE=, =/goal pause=,
-=/goal resume= and =/goal clear= are also available.
 
 For externally verifiable work, install explicit acceptance policy with
-=(mission "start PLIST")=, or evaluate:
+=(mission :start specification)=:
 
 #+BEGIN_SRC lisp
-(application-mission-start
- *active-application*
+(mission :start
  '(:objective "Deliver the accepted build"
    :turn-limit 40 :token-limit 100000 :wall-seconds 3600
    :criteria ((:id "build" :description "The build passes" :gates ("build"))
@@ -68,8 +86,8 @@ For externally verifiable work, install explicit acceptance policy with
             :attempt-limit 3 :timeout-seconds 300))))
 #+END_SRC
 
-Use =(mission "run")= to begin, =(mission "status")= to inspect the complete
-durable state, and =(mission "verify")= to request harness verification. The model can
+Use =(mission :run)= to begin, =(mission :status)= to inspect the complete
+durable state, and =(mission :verify)= to request harness verification. The model can
 also call =mission.status=, =mission.verify=, =mission.stop= and
 =mission.invalidate=. Only the primary agent may mutate mission policy through
 these model operations. Configure acceptance criteria yourself; the model
@@ -79,9 +97,9 @@ Each criterion has a unique =:id=, a =:description= and optional ordered gate
 IDs in =:gates=. Criteria without gates require your explicit evidence:
 
 #+BEGIN_SRC lisp
-(mission "accept (\"review\" \"I inspected the artifact and accept the result\")")
-(mission "resume")
-(mission "verify")
+(mission :accept "review" "I inspected the artifact and accept the result")
+(mission :resume)
+(mission :verify)
 #+END_SRC
 
 The model's completion marker requests verification. Passing a gate proves
@@ -102,8 +120,8 @@ further inference. Install a new explicit budget to proceed after unknown usage.
 
 The wall-clock deadline includes gate execution, delegated tools, pauses and
 time away. Work runs under cl-jobpond supervision. Use =(goal :pause)= and
-=(mission "resume")= without resetting any mission budget; use
-=(mission "cancel REASON")= to terminate it. Terminal states are =verified=, =exhausted=, =cancelled=
+=(mission :resume)= without resetting any mission budget; use
+=(mission :cancel "REASON")= to terminate it. Terminal states are =verified=, =exhausted=, =cancelled=
 and =failed=. A =blocked= mission retains the evidence needed to resolve its
 blocker and resume. Interrupted inference restores as blocked when its usage
 cannot be recovered. Gate attempts, fingerprints and evidence restore with the
@@ -124,7 +142,7 @@ inputs. For remote state, omit deterministic policy or invalidate a particular
 gate explicitly:
 
 #+BEGIN_SRC lisp
-(mission "invalidate (\"build\" \"The remote build configuration changed\")")
+(mission :invalidate "build" "The remote build configuration changed")
 #+END_SRC
 
 Invalidation permits another execution without replenishing its attempt budget.
@@ -183,8 +201,8 @@ For recurring wakeups, choose =missed-policy= =latest= (the default), =all= or
 Use =mission-schedule.event= with an event name and stable external event =id=;
 repeated delivery of that ID is deduplicated. The local daemon listener hosts time
 wakeups. Due work enters the ordinary primary command queue as a persisted
-=(mission-wakeup "TICKET")= command and executes as a mission continuation under the existing
-turn, token and wall-clock budgets.
+=(mission-wakeup ticket)= command with a structured ticket and executes as a
+mission continuation under the existing turn, token and wall-clock budgets.
 
 Only the primary agent may use the =mission-schedule= tools. Each wakeup retains
 its exact mission identity and version, checked at admission and execution;
@@ -328,7 +346,7 @@ through agent-shell with three environment variables:
 without Slynk. The same variables, or the =:slynk-directory=,
 =:slynk-port-file= and =:emacs-server-socket= settings, work outside Emacs. In
 the terminal, =(slynk)= starts Slynk and shows the port for =M-x sly-connect=,
-and =(slynk "stop")= closes it.
+and =(slynk :stop)= closes it.
 
 The agent reaches your definitions with =lisp.describe=, =lisp.source= and
 =lisp.apropos= using target =self=, or with =self.eval=. While Slynk serves, a
@@ -797,7 +815,7 @@ autolith data import project.sexp --workspace /home/al/src/project
 #+END_SRC
 
 #+BEGIN_SRC lisp
-(data.export "all.sexp" :all)
+(data.export #P"all.sexp" :all t)
 (data.export "project.sexp" :workspace "/home/al/code/project")
 (data.import "project.sexp" :workspace "/home/al/src/project")
 #+END_SRC
@@ -826,7 +844,7 @@ replacement and persist it with the conversation. The local title does not depen
 on provider generation.
 
 Provider-generated refreshes are enabled by default. Use =(titles)=,
-=(titles "on")= or =(titles "off")= to inspect or change the durable global
+=(titles t)= or =(titles nil)= to inspect or change the durable global
 preference.
 
 =(resume)= displays titles in its picker while an explicit =(resume "ID")=
@@ -960,11 +978,12 @@ that value came from. Choosing an adjustable setting opens its options;
 choosing a read-only one explains why it cannot change in a running session.
 The page returns to the list after every change until you cancel.
 
-The same operations work without the page. =(settings "NAME")= describes one
-setting, =(settings "NAME" "VALUE")= changes it, and =(settings)= called from
-a script, where no picker can open, prints every setting grouped by area. Values are written as they appear on the page: =on=
-and =off= for switches, option names for choices, and integers or paths as
-text. A change to a durable setting is saved at once for future sessions.
+The same operations work without the page. =(settings :boot-screen-seconds)=
+describes one setting, and =(settings :boot-screen-seconds 2)= changes it.
+Use native values: =t= and =nil= for switches, integers for counts, and strings
+or pathnames for paths. Omit the value to inspect a setting; an explicit =nil=
+sets its value. A change to a durable setting is saved at once for future
+sessions. In a script, =(settings)= prints every setting grouped by area.
 
 Settings live in one of four scopes. Durable settings, such as the model,
 reasoning effort, Fast mode, reasoning traces, compact view, timestamps,
@@ -1274,7 +1293,7 @@ context.
 
 Providers bill context served from their prompt cache at a fraction of the
 uncached input price, so a request that re-reads context the previous request
-had cached costs noticeably more. =(cache-misses "on")=
+had cached costs noticeably more. =(cache-misses t)=
 enables a dim notice after any request whose cache reads fell below half of the
 previous prompt, and after any request whose cache reads stopped growing while
 the prompt grew and at least a sixteenth of the previous prompt, never less
@@ -1323,7 +1342,7 @@ providers that have no model-list endpoint.
 
 Built-in ChatGPT subscriptions use browser OAuth with PKCE and a local callback
 on =localhost:1455= or =localhost:1457= by default. Use
-=(auth "chatgpt" "device")= or
+=(auth "chatgpt" :device-code)= or
 =autolith auth chatgpt device= to select the device-code flow instead. The
 browser authorization URL is always printed for manual use. Grok and Nous
 Research use browser device flows. Gemini uses Google installed-application
@@ -1363,12 +1382,12 @@ so it may require updates when GitHub changes that service.
 ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
 advertises Fast support. Fast responses count more heavily against plan usage;
 the exact rate is set by OpenAI per model and is not tracked here. The built-in
-GPT-6.1, GPT-6, and GPT-5.6 models support it. Use =(fast)= or =(fast "status")= to inspect it, and =(fast "on")= or
-=(fast "off")= to change the saved preference. The activity status line displays
+GPT-6.1, GPT-6, and GPT-5.6 models support it. Use =(fast)= to inspect it, and
+=(fast t)= or =(fast nil)= to change the saved preference. The activity status line displays
 =FAST= while the active model uses Fast mode. Other providers and unknown Codex
 models keep the preference but use the standard path. Set
 =AUTOLITH_CODEX_FAST_MODE=on= or =off= to override the saved choice for one
-process; while it is set, =(fast "on")= and =(fast "off")= are unavailable.
+process; while it is set, =(fast t)= and =(fast nil)= are unavailable.
 
 A request that fails before the model has produced anything is retried up to
 six times with jittered delays, since the failed attempt cost only the wait.
@@ -1471,6 +1490,12 @@ Provider preference fields are sent as supplied, including =order=,
   :continue)
 #+END_SRC
 
+- Callable handlers accept ordinary Lisp lambda lists, including =&key= and
+  supplied-p parameters. Lisp argument values reach the handler directly.
+- Use =:slash-parser function-name= for commands with structured or action
+  arguments. Define the function before the command. It receives the complete
+  slash remainder and returns a list of native handler arguments. Parser and
+  handler functions are captured when you register the command.
 - Missing interactive arguments open the restart debugger. =supply-arguments=
   takes one Lisp form of replacement arguments. Excess slash arguments are
   rejected before dispatch. Programmatic calls keep ordinary Common Lisp arity
@@ -1487,7 +1512,8 @@ Provider preference fields are sent as supplied, including =order=,
   picker requires exclusive terminal input when open. The responsive reader
   continues animating until then.
 - =:static-options= replaces =:argument= for one finite positional parameter.
-  It derives the help hint and both slash and parenthesized completions.
+  Supply native strings or keywords to derive the help hint and completions.
+  Define a slash parser to translate text choices to keyword values.
 
 ** Live definitions
 
@@ -1528,7 +1554,8 @@ checks. Inspect proposals with =(refine)= and supply a local assessment before
 promotion:
 
 #+BEGIN_SRC lisp
-(refine "(:assess \"PROPOSAL-ID\" 3 :passed \"Evidence from a separate task\")")
+(refine :assess "PROPOSAL-ID" :revision 3 :verdict :passed
+        :evidence "Evidence from a separate task")
 #+END_SRC
 
 Promotion proceeds from session to project to global scope, with renewed evaluation
@@ -1742,15 +1769,15 @@ Use =(tasks)= for a compact nonmodal inventory of owned live and durable work,
 including lineage, timing, reported usage, recent activity and artifact paths:
 
 #+BEGIN_SRC lisp
-(tasks "get JOB-ID")
-(tasks "transcript JOB-ID 0 4000")
-(tasks "send JOB-ID Inspect the failing check before continuing.")
-(tasks "cancel JOB-ID")
+(tasks :get "JOB-ID")
+(tasks :transcript "JOB-ID" :offset 0 :limit 4000)
+(tasks :send "JOB-ID" :message "Inspect the failing check before continuing.")
+(tasks :cancel "JOB-ID")
 #+END_SRC
 
-Transcript arguments are a character offset and window limit, defaulting to
-0 and 4000; use the returned =:next-offset= for another window. =get=, =send=
-and =cancel= use the ordinary owned job operations and authorization.
+The =:offset= and =:limit= transcript options are character counts, defaulting
+to 0 and 4000; use the returned =:next-offset= for another window. The =:get=,
+=:send= and =:cancel= actions use the ordinary owned job operations and authorization.
 
 Use =job.continuity= with =action= =list= or =get= to classify retained work as
 live detached, completed, reconstructible from a checkpoint, safe to restart,
@@ -1766,8 +1793,8 @@ starts the named REPL from its saved image, or dispatches a new child from a saf
 retained shared-workspace task specification:
 
 #+BEGIN_SRC lisp
-(tasks "revive JOB-ID authorize")
-(tasks "abandon EXECUTION-ID authorize")
+(tasks :revive "JOB-ID" :authorize t)
+(tasks :abandon "EXECUTION-ID" :authorize t)
 #+END_SRC
 
 Equivalent =job.continuity= actions are =revive= and =abandon= with =id= and
