@@ -598,8 +598,7 @@
                (null (application-operation-call application name))
                (format nil "(~A) accepts its omitted optional argument" name)))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
-  (dolist (case '(("/auth grok device typo" 4)
-                  ("/mcp refresh typo" 3)
+  (dolist (case '(("/mcp refresh typo" 3)
                   ("/permissions auto garbage" 3)))
     (destructuring-bind (input token-count) case
       (test-assert
@@ -904,6 +903,21 @@
 
 (defun test-application-authentication-command ()
   "Test /auth and (auth) share selection, explicit naming, and direct output."
+  (test-assert
+   (handler-case
+       (progn (application-command-invocation-parse "/auth grok device typo") nil)
+     (authentication-error () t))
+   "slash auth rejects excess arguments before command effects")
+  (dolist (case '(("" nil)
+                  ("\"MiXeD provider\"" ("MiXeD provider"))
+                  ("chatgpt browser" ("chatgpt" :browser))
+                  ("chatgpt device-code" ("chatgpt" :device-code))))
+    (destructuring-bind (text expected) case
+      (test-assert
+       (equal (application-command-invocation-arguments
+               (application-command-invocation-parse (concatenate 'string "/auth " text)))
+              expected)
+       "slash auth preserves identifiers and decodes only the method")))
   (let ((application (make-instance 'application))
         (picked-p nil)
         (authenticated-provider nil)
@@ -940,12 +954,12 @@
                authenticated-method nil)
          (test-assert
           (eq
-           (application--builtin-authentication-command application "chatgpt" "device")
+           (application--builtin-authentication-command application "chatgpt" ':device-code)
            ':continue)
           "auth accepts an explicit ChatGPT authentication method")
          (test-assert
           (and (string= authenticated-provider "chatgpt")
-               (string= authenticated-method "device"))
+               (eq authenticated-method ':device-code))
           "auth passes the explicit authentication method through unchanged")))))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
@@ -993,15 +1007,46 @@
            (setf authenticated-provider nil
                  authenticated-method nil)
            (test-assert
-            (eq (application-run-lisp-input application "(auth \"chatgpt\" \"device\")")
+           (eq (application-run-lisp-input application "(auth \"chatgpt\" :device-code)")
                 ':continue)
             "callable auth accepts an explicit authentication method")
            (test-assert
             (and (string= authenticated-provider "chatgpt")
-                 (string= authenticated-method "device"))
-            "callable auth passes its authentication method through")))
+                 (eq authenticated-method ':device-code))
+            "callable auth passes its authentication method through")
+           (test-assert
+            (eq (application-command application "/auth chatgpt device")
+                ':continue)
+            "slash auth accepts textual device authentication")
+           (test-assert (eq authenticated-method ':device-code)
+            "slash auth decodes method text before calling the handler")))
       (uiop/filesystem:delete-directory-tree root :validate t :if-does-not-exist
                                              ':ignore)))
+  (let ((application (make-instance 'application :ui nil))
+        (effects nil))
+    (test-call-with-function-replacements
+     (list
+      (list 'application--authentication-provider
+            (lambda (candidate name)
+              (declare (ignore candidate name))
+              (make-instance 'codex-subscription-provider)))
+      (list 'application-present
+            (lambda (&rest arguments)
+              (declare (ignore arguments))
+              (push ':present effects)))
+      (list 'application--authentication-streams
+            (lambda (candidate)
+              (declare (ignore candidate))
+              (push ':streams effects))))
+     (lambda ()
+       (dolist (method '("device" :device :unknown 1))
+         (test-assert
+          (handler-case
+              (progn (application-authenticate application "chatgpt" method) nil)
+            (authentication-error () t))
+          "native auth rejects an invalid method"))
+       (test-assert (null effects)
+        "invalid methods fail before presentation or terminal ownership"))))
   (let* ((terminal-output (make-string-output-stream))
          (captured-output (make-string-output-stream))
          (terminal

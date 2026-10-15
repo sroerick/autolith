@@ -437,6 +437,41 @@
      "Fireworks validation failure releases its secret scope"))
   nil)
 
+(-> authentication-tests--test-native-methods () null)
+(defun authentication-tests--test-native-methods ()
+  "Test native authentication dispatch and rejection before provider effects."
+  (let ((provider (make-instance 'codex-subscription-provider))
+        (observed nil))
+    (test-call-with-function-replacements
+     (list
+      (list 'provider-authenticate
+            (lambda (candidate &key stream open-browser-p)
+              (declare (ignore candidate stream open-browser-p))
+              (push *chatgpt-authentication-method* observed)
+              "Authenticated.")))
+     (lambda ()
+       (dolist (method '(nil :browser :device-code))
+         (provider-authenticate-with-method provider method))
+       (test-assert (equal (reverse observed) '(:browser :browser :device-code))
+        "native dispatch preserves methods and defaults nil to browser")
+       (dolist (method '("device" "browser" :device :unknown 1))
+         (test-assert
+          (handler-case
+              (progn (provider-authenticate-with-method provider method) nil)
+            (authentication-error () t))
+          "invalid native methods fail before provider authentication"))
+       (test-assert
+        (handler-case
+            (progn
+              (provider-authenticate-with-method (make-instance 'model-provider)
+                                                 ':browser)
+              nil)
+          (authentication-error () t))
+        "method selection is limited to ChatGPT")
+       (test-assert (= (length observed) 3)
+        "rejected authentication requests have no provider effects"))))
+  nil)
+
 (-> authentication-tests--test-main-input-descriptor () null)
 (defun authentication-tests--test-main-input-descriptor ()
   "Test command-line authentication supplies terminal input and styling state."
@@ -445,7 +480,7 @@
          (observed-descriptor nil)
          (observed-styled-p ':unset)
           (observed-method nil)
-         (test-provider (make-instance 'model-provider))
+         (test-provider (make-instance 'codex-subscription-provider))
          (provider-function
            (lambda (candidate selection)
              (declare (ignore candidate selection))
@@ -484,9 +519,9 @@
                   (list 'provider-authenticate-with-method authenticator))
             (lambda ()
               (let ((*standard-output* (make-string-output-stream)))
-                (main-authenticate configuration "example" "device"))))
+                (main-authenticate configuration "example" ':device-code))))
             (test-assert (and (eq observed-styled-p t)
-                              (string= observed-method "device"))
+                              (eq observed-method ':device-code))
                          "command-line auth passes styling and method selection"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
@@ -500,6 +535,7 @@
   (authentication-tests--test-api-key-terminal-mode)
   (authentication-tests--test-provider-api-key-prompts)
   (authentication-tests--test-main-input-descriptor)
+  (authentication-tests--test-native-methods)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (source (make-instance 'autolith-credential-source

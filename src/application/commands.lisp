@@ -2140,13 +2140,14 @@ are forwarded to TERMINAL-UI-SELECT."
    (terminal-ui-terminal (application-ui application))))
 
 (-> application-authenticate
-    (application string &optional (or null string symbol))
+    (application string &optional t)
     null)
 (defun application-authenticate (application provider-name &optional method)
   "Authenticate APPLICATION's explicitly named provider using optional METHOD."
   (let* ((ui       (application-ui application))
          (provider (application--authentication-provider application provider-name))
          (message  nil))
+    (provider--authentication-method provider method)
     (application-present
      application
      (format nil "Authenticating provider ~A." provider-name))
@@ -2767,11 +2768,24 @@ The current value and its source sit in aligned columns of their own."
   (application-working-directory-command application pathname)
   ':continue)
 
+(-> application-authentication--slash-arguments (string) list)
+(defun application-authentication--slash-arguments (text)
+  "Parse a provider identifier and optional textual authentication method."
+  (let ((arguments (application-command--tokens text)))
+    (when (> (length arguments) 2)
+      (error 'authentication-error
+             :message "Auth accepts a provider and optional method."))
+    (if (rest arguments)
+        (list (first arguments)
+              (provider--parse-authentication-method (second arguments)))
+        arguments)))
+
 (define-application-command application--builtin-authentication-command
     (:name "/auth"
      :argument "[PROVIDER] [METHOD]"
      :description "pick and authenticate a registered provider"
-     :tip "uses browser auth by default; ChatGPT also accepts device."
+     :tip "Use (auth \"chatgpt\" :device-code) for device authentication, or :browser."
+     :slash-parser application-authentication--slash-arguments
      :busy-behavior :hold
      :terminal-behavior :exclusive
      :callable t)

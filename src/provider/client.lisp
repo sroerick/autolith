@@ -38,29 +38,35 @@
 (defparameter *chatgpt-authentication-method* ':browser
   "The dynamically selected ChatGPT authentication method.")
 
-(-> provider--authentication-method
-    (model-provider (or null string symbol))
-    keyword)
+(-> provider--parse-authentication-method ((option string)) (option keyword))
+(defun provider--parse-authentication-method (text)
+  "Decode authentication method TEXT at a command-line or slash boundary."
+  (cond
+    ((null text)
+     nil)
+    ((string-equal text "browser")
+     ':browser)
+    ((member text '("device" "device-code") :test #'string-equal)
+     ':device-code)
+    (t
+     (error 'authentication-error
+            :message "ChatGPT authentication method must be browser or device-code."))))
+
+(-> provider--authentication-method (model-provider t) keyword)
 (defun provider--authentication-method (provider method)
-  "Validate and normalize METHOD for PROVIDER authentication."
+  "Validate native METHOD for PROVIDER and supply the browser default."
+  (unless (member method '(nil :browser :device-code))
+    (error 'authentication-error
+           :message "Authentication method must be :browser or :device-code."))
   (when (and method
              (not (typep provider 'codex-subscription-provider)))
     (error 'authentication-error
            :message
            "Only the ChatGPT provider accepts an authentication method."))
-  (let ((name (and method (string-downcase (string method)))))
-    (cond
-      ((or (null name) (string= name "browser"))
-       ':browser)
-      ((member name '("device" "device-code") :test #'string=)
-       ':device-code)
-      (t
-       (error 'authentication-error
-              :message
-              "ChatGPT authentication method must be browser or device.")))))
+  (or method ':browser))
 
 (-> provider-authenticate-with-method
-    (model-provider (or null string symbol)
+    (model-provider t
      &key (:stream stream) (:open-browser-p boolean))
     string)
 (defun provider-authenticate-with-method

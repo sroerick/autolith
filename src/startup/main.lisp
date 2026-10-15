@@ -666,34 +666,35 @@ dependencies."
   nil)
 
 (-> main-authenticate
-    (configuration (option string) &optional (option string))
+    (configuration (option string) &optional (option keyword))
     null)
 (defun main-authenticate (configuration selection &optional method)
-  "Authenticate a registered provider before the conversation UI starts."
-  (configuration-ensure-directories configuration)
-  (flet ((authenticate ()
-           (let ((provider (main--authentication-provider configuration selection))
-                 (*api-key-input-file-descriptor* (terminal-standard-input-file-descriptor))
-                 (*api-key-output-styled-p*
-                   (main--authentication-output-styled-p *standard-output*)))
-             (format t "~&~A~%"
-                     (provider-authenticate-with-method
-                      provider method :stream *standard-output* :open-browser-p t))
-             (let ((model (provider-authenticated-model configuration provider)))
-               (when model
-                 (setf (config :model configuration) model)
-                 (format t "~&Active provider: ~A; model: ~A.~%"
-                         (provider-model-provider-name model) model))))))
-    (if (config :fullscreen-p configuration)
-        (multiple-value-bind (rows columns) (terminal-current-size)
-          (with-terminal-ui
-              (ui (terminal-ui-create
-                   :fullscreen-p t
-                   :terminal (stream-terminal-create
-                              :rows rows :columns columns
-                              :input-file-descriptor (terminal-standard-input-file-descriptor))))
-            (application-call-with-authentication-ui ui t #'authenticate)))
-        (authenticate)))
+  "Authenticate a registered provider using native METHOD before the UI starts."
+  (let ((provider (main--authentication-provider configuration selection)))
+    (provider--authentication-method provider method)
+    (configuration-ensure-directories configuration)
+    (flet ((authenticate ()
+             (let ((*api-key-input-file-descriptor* (terminal-standard-input-file-descriptor))
+                   (*api-key-output-styled-p*
+                     (main--authentication-output-styled-p *standard-output*)))
+               (format t "~&~A~%"
+                       (provider-authenticate-with-method
+                        provider method :stream *standard-output* :open-browser-p t))
+               (let ((model (provider-authenticated-model configuration provider)))
+                 (when model
+                   (setf (config :model configuration) model)
+                   (format t "~&Active provider: ~A; model: ~A.~%"
+                           (provider-model-provider-name model) model))))))
+      (if (config :fullscreen-p configuration)
+          (multiple-value-bind (rows columns) (terminal-current-size)
+            (with-terminal-ui
+                (ui (terminal-ui-create
+                     :fullscreen-p t
+                     :terminal (stream-terminal-create
+                                :rows rows :columns columns
+                                :input-file-descriptor (terminal-standard-input-file-descriptor))))
+              (application-call-with-authentication-ui ui t #'authenticate)))
+          (authenticate))))
   nil)
 
 (-> main--image-pathnames (list) list)
@@ -761,7 +762,7 @@ dependencies."
           (:resume-id (option string))
           (:authenticate-p boolean)
           (:authentication-selection (option string))
-          (:authentication-method (option string)))
+          (:authentication-method (option keyword)))
     null)
 (defun main--start-session
     (command &key resume-requested-p resume-id authenticate-p
@@ -1140,7 +1141,8 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
         command
         :authenticate-p t
         :authentication-selection (first arguments)
-        :authentication-method (second arguments))))))
+        :authentication-method
+        (provider--parse-authentication-method (second arguments)))))))
 
 (-> main--run-job-command () clingon:command)
 (defun main--run-job-command ()

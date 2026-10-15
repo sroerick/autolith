@@ -265,7 +265,7 @@
                  (test-assert
                   (and (typep (first explicit) 'configuration)
                        (string= (second explicit) "chatgpt")
-                       (string= (third explicit) "device"))
+                       (eq (third explicit) ':device-code))
                   "command-line auth passes its explicit provider and method")))))
       (if old-environment-model
           (platform-setenv "AUTOLITH_MODEL" old-environment-model)
