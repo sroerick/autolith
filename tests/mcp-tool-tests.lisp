@@ -3535,12 +3535,8 @@
                  (not (tool-child-safe-p mutating-tool)))
                 "only exact raw child grants cross the child boundary")
                (test-assert
-                (and
-                 (not (tool-compact-result-visible-p read-tool))
-                 (tool-compact-result-visible-p collision-tool)
-                 (tool-compact-result-visible-p mutating-tool)
-                 (= (tool-runtime-close-priority read-tool) 50))
-                "only user-trusted read-only annotations affect compact visibility")
+                (= (tool-runtime-close-priority read-tool) 50)
+                "MCP runtime closes after dependent task workers")
                (let ((decoded
                        (tool-decode-arguments
                         read-tool
@@ -4060,5 +4056,61 @@
              (test-assert (eq tool (application--find-tool
                                    application (tool-canonical-name tool)))
                           "provider dispatch resolves the encoded identity"))
+        (mcp-manager-close manager))))
+  nil)
+
+
+(-> test-mcp-answer-presentation () null)
+(defun test-mcp-answer-presentation ()
+  "Test compact answers and structured multi-section results across durable replay."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (manager transport) (test-mcp--manager configuration)
+      (declare (ignore transport))
+      (unwind-protect
+           (let* ((registry (make-instance 'tool-registry))
+                  (conversation (conversation-create configuration))
+                  (context (test-mcp--context configuration conversation registry))
+                  (application (application-tests--ui-application :columns 120)))
+             (mcp-tool-registry-register-manager registry manager)
+             (setf (application-tool-registry application) registry)
+             (dolist (raw-name '("read file" "read/file" "mutate"))
+               (let* ((tool (test-mcp--tool-with-raw-name registry raw-name))
+                      (record (list :tool-result :tool (tool-canonical-name tool)
+                                    :status ':ok :output "answer")))
+                 (test-assert (null (conversation-record-entry application record))
+                              "compact mode collapses every successful MCP answer")
+                 (setf (getf (rest record) :status) ':error)
+                 (test-assert (conversation-record-entry application record)
+                              "compact mode exposes MCP failures")))
+             (let* ((tool (test-mcp--tool-with-raw-name registry "read/file"))
+                    (result
+                      (mcp-tools--call-result
+                       tool context
+                       (make-instance
+                        'mcp-call-result
+                        :content (list (json-object "type" "text" "text"
+                                                    "{\"btc_price_usd\":82225.0}")
+                                       (json-object "type" "text" "text"
+                                                    "{\"exchange\":\"test-market\"}"))
+                        :structured-content (json-object "updated_at" "2026-10-16")
+                        :error-p nil :raw (json-object)))))
+               (conversation-append-tool-result
+                conversation "mcp-answer" :tool-name (tool-canonical-name tool)
+                :output (tool-result-content result)
+                :details (tool-result-details result) :success-p t)
+               (setf (application-compact-view-p application) nil)
+               (let* ((record (first (conversation-records-newest conversation 1)))
+                      (entry (conversation-record-entry application record))
+                      (text (terminal--spans-text entry)))
+                 (dolist (value '("btc_price_usd" "82225" "exchange" "test-market"
+                                  "updated_at" "2026-10-16"))
+                   (test-assert (search value text)
+                                "expanded MCP replies format every persisted content section"))
+                 (test-assert (not (find #\{ text))
+                              "expanded MCP replies use field layout rather than serialized objects")
+                 (let ((*application-tool-output-lines* 1))
+                   (test-assert
+                    (= (length (application--mcp-content-rows application record)) 2)
+                    "MCP content sections share one bounded preview plus an omission row")))))
         (mcp-manager-close manager))))
   nil)

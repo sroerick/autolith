@@ -1143,8 +1143,8 @@ retained value is credential-redacted or projected."
        (not (mcp-tool-destructive-p (mcp-provider-tool-raw-tool tool)))))
 
 (defmethod tool-compact-result-visible-p ((tool mcp-provider-tool))
-  "Keep mutating or unannotated MCP results visible in compact mode."
-  (not (mcp-provider-tool-read-only-p tool)))
+  "Collapse successful MCP answers independently of authorization annotations."
+  nil)
 
 (-> mcp-provider-tool-approval-required-p (mcp-provider-tool) boolean)
 (defun mcp-provider-tool-approval-required-p (tool)
@@ -1178,6 +1178,18 @@ retained value is credential-redacted or projected."
 
 
 ;;;; -- MCP Content Projection --
+
+(defclass mcp-content-result (tool-result)
+  ((sections
+    :initarg :sections
+    :reader mcp-content-result-sections
+    :type list
+    :documentation "Ordered content kinds and character ranges in the result text."))
+  (:documentation "An MCP outcome retaining content boundaries for transcript replay."))
+
+(defmethod tool-result-details ((result mcp-content-result))
+  "Persist content boundaries without duplicating result text or image data."
+  (list :mcp-content :sections (mcp-content-result-sections result)))
 
 (defparameter *mcp-image-encoded-maximum-characters* (* 48 1024 1024)
   "The maximum base64 characters accepted from one MCP image block.")
@@ -1379,11 +1391,11 @@ retained value is credential-redacted or projected."
 (-> mcp-tools--render-content
     (tool-context list string &key (:structured-content t)
                                      (:include-images-p boolean))
-    (values string list list))
+    (values string list list list))
 (defun mcp-tools--render-content
     (context blocks source-name
      &key structured-content (include-images-p t))
-  "Render MCP BLOCKS and return terminal text, images, and provider blocks."
+  "Render MCP BLOCKS and return text, images, provider blocks, and display ranges."
   (when (> (length blocks) *mcp-maximum-content-blocks*)
     (error 'tool-error
            :message
@@ -1441,7 +1453,18 @@ retained value is credential-redacted or projected."
               (setf complete-p t)
               (values rendered-text
                       (nreverse attachments)
-                      (nreverse provider-blocks))))
+                      (nreverse provider-blocks)
+                      (loop for tail on ordered-sections
+                            for section = (first tail)
+                            for structured-p = (and structured-content
+                                                    (null (rest tail)))
+                            for start = 0 then (+ end 2)
+                            for end = (+ start (length section))
+                            collect (list (if structured-p ':structured ':text)
+                                          (if structured-p
+                                              (+ start (length "Structured content:") 1)
+                                              start)
+                                          end)))))
       (unless complete-p
         (conversation--delete-image-attachments attachments)))))
 
@@ -1456,7 +1479,7 @@ retained value is credential-redacted or projected."
                    (mcp-server-runtime-name runtime)
                    (mcp-tool-name (mcp-provider-tool-raw-tool tool))))
          (error-p (mcp-call-result-error-p result)))
-    (multiple-value-bind (content attachments provider-blocks)
+    (multiple-value-bind (content attachments provider-blocks sections)
         (mcp-tools--render-content
          context
          (mcp-tools--sanitize-value
@@ -1470,14 +1493,11 @@ retained value is credential-redacted or projected."
               (if (non-empty-string-p content)
                   content
                   "The MCP server returned an empty result.")))
-        (if error-p
-            (tool-failure rendered)
-            (tool-success
-             rendered
-             :content-blocks
-             (if attachments
-                 provider-blocks
-                 nil)))))))
+        (change-class
+         (if error-p
+             (tool-failure rendered)
+             (tool-success rendered :content-blocks (when attachments provider-blocks)))
+         'mcp-content-result :sections sections)))))
 
 
 ;;;; -- MCP Tool Execution --

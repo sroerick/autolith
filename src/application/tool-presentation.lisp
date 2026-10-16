@@ -1946,6 +1946,32 @@ remains ordinary bounded tool text, including malformed untrusted JSON."
         (application--preview-rows output ':dim *application-tool-output-lines*
                                    :gutter "│ "))))
 
+(-> application--mcp-content-rows (application list) list)
+(defun application--mcp-content-rows (application record)
+  "Format persisted MCP content sections independently within one row budget."
+  (let* ((details (getf (rest record) :details))
+         (output (or (getf (rest record) :output) ""))
+         (rows nil)
+         (processed 0))
+    (when (and (consp details) (eq (first details) ':mcp-content))
+      (let ((sections (getf (rest details) :sections)))
+        (dolist (section sections)
+          (when (>= (length rows) *application-tool-output-lines*)
+            (return))
+          (incf processed)
+          (destructuring-bind (kind start end) section
+            (declare (ignore kind))
+            (when (< start (length output))
+              (setf rows
+                    (append rows
+                            (application--structured-output-rows
+                             application (subseq output start (min end (length output)))))))))
+        (if (or (> (length rows) *application-tool-output-lines*)
+                (< processed (length sections)))
+            (append (subseq rows 0 (min (length rows) *application-tool-output-lines*))
+                    (list (list (terminal-span ':dim "… more content"))))
+            rows)))))
+
 (-> application--generic-tool-result-entry (application list) list)
 (defun application--generic-tool-result-entry (application record)
   "Return a readable fallback entry for tool result RECORD.
@@ -1956,9 +1982,10 @@ re-emitting untrusted serialized JSON."
     (application--tool-result-entry
      application
      record
-     :rows (if (application--tool-result-success-p record)
-               (application--structured-output-rows application output)
-               (application--failure-result-rows output)))))
+     :rows (or (application--mcp-content-rows application record)
+               (if (application--tool-result-success-p record)
+                   (application--structured-output-rows application output)
+                   (application--failure-result-rows output))))))
 
 (-> application--tool-execution-handoff-entry (application list list) list)
 (defun application--tool-execution-handoff-entry (application record handoff)
