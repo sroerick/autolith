@@ -2749,7 +2749,7 @@ The current value and its source sit in aligned columns of their own."
     (:name "/settings"
      :argument "[NAME [VALUE]]"
      :description "browse and change settings"
-     :tip "Change native values with (settings :onboarding-p nil) or (settings :boot-screen-seconds 2); inspect one setting with (settings :terminal-theme)."
+     :tip "Change native values with `(settings :onboarding-p nil)` or `(settings :boot-screen-seconds 2)`; inspect one setting with `(settings :terminal-theme)`."
      :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
      :callable t
@@ -2794,7 +2794,7 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-slynk-command
     (:name "/slynk"
      :description "serve this image to sly"
-     :tip "Use (slynk) to start Slynk and show its port for M-x sly-connect, or (slynk :stop) to close it."
+     :tip "Use `(slynk)` to start Slynk and show its port for M-x sly-connect, or `(slynk :stop)` to close it."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -2856,7 +2856,7 @@ The current value and its source sit in aligned columns of their own."
     (:name "/help"
      :argument "[TOPIC]"
      :description "browse help or look up a command"
-     :tip "Use (help :workspace) for a section or (help 'resume) for a command."
+     :tip "Use `(help :workspace)` for a section or `(help 'resume)` for a command."
      :busy-behavior :execute
      :terminal-behavior :shared
      :callable t)
@@ -2945,7 +2945,7 @@ The current value and its source sit in aligned columns of their own."
     (:name "/cwd"
      :argument "[PATH]"
      :description "show or change the active workspace"
-     :tip "Use (cwd pathname) to change the active workspace, or (cwd) to inspect it."
+     :tip "Use `(cwd pathname)` to change the active workspace, or `(cwd)` to inspect it."
      :busy-behavior :inspect
      :terminal-behavior :shared
      :callable t)
@@ -2969,7 +2969,7 @@ The current value and its source sit in aligned columns of their own."
     (:name "/auth"
      :argument "[PROVIDER] [METHOD]"
      :description "pick and authenticate a registered provider"
-     :tip "Use (auth \"chatgpt\" :device-code) for device authentication, or :browser."
+     :tip "Use `(auth \"chatgpt\" :device-code)` for device authentication, or `:browser`."
      :slash-parser application-authentication--slash-arguments
      :busy-behavior :hold
      :terminal-behavior :exclusive
@@ -3052,7 +3052,7 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-fast-command
     (:name "/fast"
      :description "show or change Codex Fast mode"
-     :tip "Use (fast t) to request priority service, which counts more heavily against plan usage; use (fast nil) for normal service."
+     :tip "Use `(fast t)` to request priority service, which counts more heavily against plan usage; use `(fast nil)` for normal service."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -3065,7 +3065,7 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-trace-command
     (:name "/trace"
      :description "show visible reasoning summaries"
-     :tip "Use (trace t) to show reasoning summaries or (trace nil) to hide them. Change the reasoning budget with (effort)."
+     :tip "Use `(trace t)` to show reasoning summaries or `(trace nil)` to hide them. Change the reasoning budget with `(effort)`."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -3078,7 +3078,7 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-turn-timestamps-command
     (:name "/timestamps"
      :description "show local timestamps beside user and assistant turns"
-     :tip "Use (timestamps t) to show local-time labels beside user and assistant turns, or (timestamps nil) to hide them."
+     :tip "Use `(timestamps t)` to show local-time labels beside user and assistant turns, or `(timestamps nil)` to hide them."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -3091,7 +3091,7 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-simple-technical-english-command
     (:name "/ste"
      :description "use Simple Technical English for replies"
-     :tip "Use (ste t) to request short, direct Simple Technical English, or (ste nil) to remove that style instruction."
+     :tip "Use `(ste t)` to request short, direct Simple Technical English, or `(ste nil)` to remove that style instruction."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -3104,7 +3104,7 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-session-titles-command
     (:name "/titles"
      :description "allow provider-generated session-title refreshes"
-     :tip "Use (titles t) to allow provider-generated title refreshes, or (titles nil) for locally derived titles."
+     :tip "Use `(titles t)` to allow provider-generated title refreshes, or `(titles nil)` for locally derived titles."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -3117,7 +3117,7 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-cache-misses-command
     (:name "/cache-misses"
      :description "notify when a request re-reads uncached context"
-     :tip "Use (cache-misses t) to report uncached context and likely causes, or (cache-misses nil) to hide these notices."
+     :tip "Use `(cache-misses t)` to report uncached context and likely causes, or `(cache-misses nil)` to hide these notices."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -3130,7 +3130,7 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-hurry-up-command
     (:name "/hurry-up"
      :description "show or change hurry-up mode"
-     :tip "Use (hurry-up t) to favor direct work with at most two child agents, or (hurry-up nil) for normal delegation limits."
+     :tip "Use `(hurry-up t)` to favor direct work with at most two child agents, or `(hurry-up nil)` for normal delegation limits."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -3143,7 +3143,7 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-permissions-command
     (:name "/permissions"
      :description "choose command access for this session"
-     :tip "Use (permissions :ask) for approval prompts, :auto for automatic authorization, :sandbox for workspace confinement, or :full for session-wide host access."
+     :tip "Use `(permissions :ask)` for approval prompts, `:auto` for automatic authorization, `:sandbox` for workspace confinement, or `:full` for session-wide host access."
      :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
      :callable t
@@ -3186,7 +3186,7 @@ The current value and its source sit in aligned columns of their own."
     (:name "/goal"
      :argument "[OBJECTIVE]"
      :description "set or view the session goal"
-     :tip "Set a string objective; use (goal :pause), (goal :resume), or (goal :clear) for control."
+     :tip "Set a string objective; use `(goal :pause)`, `(goal :resume)`, or `(goal :clear)` for control."
      :busy-behavior :inspect
      :terminal-behavior :shared
      :callable t
@@ -3223,7 +3223,7 @@ The current value and its source sit in aligned columns of their own."
     (:name "/papercut"
      :argument "[ID]"
      :description "show one complete papercut report"
-     :tip "opens the full report named by (papercuts)."
+     :tip "opens the full report named by `(papercuts)`."
      :busy-behavior :inspect
      :terminal-behavior :shared
      :callable t)
@@ -3241,7 +3241,7 @@ The current value and its source sit in aligned columns of their own."
     (:name "/papercut-close"
      :argument "[ID]"
      :description "close one resolved papercut report"
-     :tip "removes a fixed or obsolete report from (papercuts)."
+     :tip "removes a fixed or obsolete report from `(papercuts)`."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t)
@@ -3346,7 +3346,7 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-mcp-command
     (:name "/mcp"
      :description "show or refresh configured MCP servers"
-     :tip "Inspect connections with (mcp), rediscover tools with (mcp :refresh), or reread configuration with (mcp :reload)."
+     :tip "Inspect connections with `(mcp)`, rediscover tools with `(mcp :refresh)`, or reread configuration with `(mcp :reload)`."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
@@ -3511,7 +3511,7 @@ The current value and its source sit in aligned columns of their own."
 (define-application-command application--builtin-compact-tool-command
     (:name "/compact-tool"
      :description "collapse or expand tool call detail in the transcript"
-     :tip "Use (compact-tool t) to collapse tool details or (compact-tool nil) to expand them."
+     :tip "Use `(compact-tool t)` to collapse tool details or `(compact-tool nil)` to expand them."
      :busy-behavior :hold
      :terminal-behavior :shared
      :callable t

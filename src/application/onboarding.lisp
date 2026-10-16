@@ -201,7 +201,7 @@ remaining selected revisions; interruption leaves them pending."
     (:name "/onboard"
      :argument nil
      :description "replay the fullscreen onboarding tour"
-     :tip "Use (onboard) to practice the prompt and explore Autolith's capabilities."
+     :tip "Use `(onboard)` to practice the prompt and explore Autolith's capabilities."
      :busy-behavior :hold
      :terminal-behavior :exclusive
      :callable t)

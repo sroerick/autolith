@@ -288,7 +288,7 @@
     :initarg :tip
     :reader application-command-tip
     :type non-empty-string
-    :documentation "The startup advice attached to this command.")
+    :documentation "The startup advice and help notes, with Markdown inline code for Lisp forms.")
    (busy-behavior
     :initarg :busy-behavior
     :reader application-command-busy-behavior

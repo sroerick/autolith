@@ -90,7 +90,7 @@
     (:name "/data.export"
      :argument "FILE [--all|--workspace DIRECTORY]"
      :description "export all portable user data or one workspace"
-     :tip "Use (data.export pathname :workspace directory) to export one workspace."
+     :tip "Use `(data.export pathname :workspace directory)` to export one workspace."
      :busy-behavior :hold
      :terminal-behavior :shared
      :callable t
@@ -107,7 +107,7 @@
     (:name "/data.import"
      :argument "FILE [--workspace DIRECTORY]"
      :description "import portable user data, optionally relocating a workspace"
-     :tip "Use (data.import pathname :workspace directory) to relocate an imported workspace."
+     :tip "Use `(data.import pathname :workspace directory)` to relocate an imported workspace."
      :busy-behavior :hold
      :terminal-behavior :shared
      :callable t

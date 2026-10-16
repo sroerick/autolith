@@ -228,7 +228,7 @@ The live queue, active work and already consumed steering are not edited."
     (:name "/vault-store"
      :argument nil
      :description "move queued work and unconsumed steering into the vault immediately"
-     :tip "parks queued input immediately, even during an active turn; edit it with (setf (vault-contents 0) '(:message \"new task\"))."
+     :tip "parks queued input immediately, even during an active turn; edit it with `(setf (vault-contents 0) '(:message \"new task\"))`."
      :busy-behavior :execute
      :terminal-behavior :shared
      :callable t)

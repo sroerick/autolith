@@ -155,13 +155,19 @@
     (application-command)
     terminal-styled-text)
 (defun application--command-tip-spans (entry)
-  "Return a startup tip with ENTRY's canonical Lisp call styled as code."
-  (list (terminal-span ':dim "Tip: ")
-        (terminal-span
-         :code
-         (format nil "(~A)" (application-operation--command-name entry)))
-        (terminal-span :plain
-                       (format nil " ~A" (application-command-tip entry)))))
+  "Return ENTRY's startup advice with its call and inline code styled.
+
+Use the Markdown renderer's inline parser without choosing a width here;
+the terminal wraps the semantic spans for both inline and fullscreen tips."
+  (multiple-value-bind (text styles)
+      (termdown::markdown--parse-inline (application-command-tip entry))
+    (append
+     (list (terminal-span ':dim "Tip: ")
+           (terminal-span
+            :code
+            (format nil "(~A)" (application-operation--command-name entry)))
+           (terminal-span ':plain " "))
+     (termdown::markdown--style-runs text styles))))
 
 (-> application--startup-tip-spans () terminal-styled-text)
 (defun application--startup-tip-spans ()

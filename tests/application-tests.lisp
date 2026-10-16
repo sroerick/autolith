@@ -386,6 +386,59 @@
      (application-command-invocation-parse "/EXIT"))
     ':cancel)
    "quit aliases inherit the command's cancellation policy")
+  (dolist (case '(("/settings" "(settings :onboarding-p nil)"
+                              "(settings :boot-screen-seconds 2)"
+                              "(settings :terminal-theme)")
+                  ("/trace" "(trace t)" "(trace nil)" "(effort)")
+                  ("/help" "(help :workspace)" "(help 'resume)")
+                  ("/vault-store" "(setf (vault-contents 0) '(:message \"new task\"))")
+                  ("/data.export" "(data.export pathname :workspace directory)")
+                  ("/auth" "(auth \"chatgpt\" :device-code)" ":browser")))
+    (let* ((command (application-command-find (first case)))
+           (spans (application--command-tip-spans command))
+           (code (loop for span in spans
+                       when (eq (terminal-span-style span) ':code)
+                         collect (terminal-span-text span))))
+      (test-assert
+       (every (lambda (form) (member form code :test #'string=)) (rest case))
+       "authored tips style every example, including quoted arguments and strings")
+      (test-assert
+       (equal (first code)
+              (format nil "(~A)" (application-operation--command-name command)))
+       "the canonical leading call uses the same code style as its examples")))
+  (let* ((command
+           (make-instance
+            'application-command
+            :name "/test-tip"
+            :tip "Try `(let ((label \"(x)\")) (list 'resume label))` (or later), then `'(a (b c))`."))
+         (spans (application--command-tip-spans command)))
+    (test-assert
+     (equal (loop for span in spans
+                  when (eq (terminal-span-style span) ':code)
+                    collect (terminal-span-text span))
+            '("(test-tip)" "(let ((label \"(x)\")) (list 'resume label))"
+              "'(a (b c))"))
+     "nested forms, quote syntax, and parentheses in strings form whole code spans")
+    (test-assert
+     (some (lambda (span)
+             (and (eq (terminal-span-style span) ':plain)
+                  (search "(or later)" (terminal-span-text span))))
+           spans)
+     "parenthesized prose keeps its plain style")
+    (test-assert
+     (string= (terminal--spans-text spans)
+              "Tip: (test-tip) Try (let ((label \"(x)\")) (list 'resume label)) (or later), then '(a (b c)).")
+     "inline delimiters disappear without changing example or prose content")
+    (dolist (width '(18 42))
+      (let ((rows (terminal-ui--word-wrap-spans
+                   (make-instance 'recording-terminal :columns width)
+                   spans width)))
+        (test-assert (> (length rows) 1) "tips wrap through the ordinary terminal path")
+        (test-assert
+         (every (lambda (row)
+                  (<= (text-cell-width (terminal-rendered-row-text row)) width))
+                rows)
+         "code examples and prose fit the available terminal width"))))
   (let* ((*random-state* (make-random-state nil))
          (captured-state (make-random-state *random-state*))
          (tip (application--startup-tip-spans)))
