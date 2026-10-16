@@ -47,7 +47,7 @@ let
   # added to the qlfile without a buildASDFSystem entry fails evaluation here
   # instead of quietly shipping a release that never loaded it.
   qlotLibrariesWithBuildMetadata = [
-    "agentcomms" "argo" "cl-colorist" "cl-exec-sandbox" "cl-hashline" "cl-jobpond"
+    "agentcomms" "argo" "cl+ssl" "cl-colorist" "cl-exec-sandbox" "cl-hashline" "cl-jobpond"
     "cl-llm-provider-api" "cl-lsp" "cl-resources" "cl-rfc8252" "cl-rfc8628"
     "cl-skills" "cl-termdown" "cl-worktree" "clasted" "clermaid" "clifff" "clinedi"
     "clinker-transcript" "colordiff" "colorlisp" "daphne" "fetch-gist"
@@ -58,8 +58,17 @@ let
   qlotSourcesWithoutBuildMetadata =
     lib.subtractLists qlotLibrariesWithBuildMetadata (builtins.attrNames qlotGitSources);
 
+  # Override the package scope so Dexador and every other transitive consumer
+  # use the locked CL+SSL source, rather than a second Quicklisp copy.
+  lispPackages = pkgs.sbclPackages.overrideScope (final: previous: {
+    cl_plus_ssl = previous.cl_plus_ssl.overrideAttrs {
+      version = qlotVersion "cl+ssl";
+      src = qlotSource "cl+ssl";
+    };
+  });
+
   # Quicklisp's NYAML archive includes dangling symlinks in its unused test data.
-  nyaml = pkgs.sbclPackages.nyaml.overrideAttrs (old: {
+  nyaml = lispPackages.nyaml.overrideAttrs (old: {
     postInstall = (old.postInstall or "") + ''
       rm -rf "$out/test/yaml-test-suite-data"
     '';
@@ -69,7 +78,7 @@ let
     pname = "agentcomms";
     version = qlotVersion "agentcomms";
     src = qlotSource "agentcomms";
-    lispLibs = [ argo ] ++ (with pkgs.sbclPackages; [
+    lispLibs = [ argo ] ++ (with lispPackages; [
       bordeaux-threads
       serapeum
     ]);
@@ -93,7 +102,7 @@ let
       "cl-llm-provider-api/registry"
     ];
     src = qlotSource "cl-llm-provider-api";
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       babel
       bordeaux-threads
       ironclad
@@ -110,7 +119,7 @@ let
     pname = "cl-lsp";
     version = qlotVersion "cl-lsp";
     src = qlotSource "cl-lsp";
-    lispLibs = [ argo sexpConfig ] ++ (with pkgs.sbclPackages; [
+    lispLibs = [ argo sexpConfig ] ++ (with lispPackages; [
       bordeaux-threads
       quri
       serapeum
@@ -121,7 +130,7 @@ let
     pname = "cl-rfc8252";
     version = qlotVersion "cl-rfc8252";
     src = qlotSource "cl-rfc8252";
-    lispLibs = [ clRfc8628 ] ++ (with pkgs.sbclPackages; [
+    lispLibs = [ clRfc8628 ] ++ (with lispPackages; [
       babel
       cl-base64
       ironclad
@@ -133,7 +142,7 @@ let
     pname = "cl-rfc8628";
     version = qlotVersion "cl-rfc8628";
     src = qlotSource "cl-rfc8628";
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       bordeaux-threads
       cl-base64
       dexador
@@ -146,7 +155,7 @@ let
     pname = "clinker-transcript";
     version = qlotVersion "clinker-transcript";
     src = qlotSource "clinker-transcript";
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       yason
       structlisp
     ];
@@ -156,7 +165,7 @@ let
     pname = "lambda-debugger";
     version = qlotVersion "lambda-debugger";
     src = qlotSource "lambda-debugger";
-    lispLibs = [ pkgs.sbclPackages.trivial-gray-streams ];
+    lispLibs = [ lispPackages.trivial-gray-streams ];
   };
 
   imageDaemon = pkgs.sbcl.buildASDFSystem {
@@ -166,15 +175,15 @@ let
     systems = [ "image-daemon" "image-daemon/runtime" "image-daemon/eval" "image-daemon/messages" ];
     lispLibs = [
       idsmall
-      pkgs.sbclPackages.ironclad
-      pkgs.sbclPackages.bordeaux-threads
-      pkgs.sbclPackages.serapeum
+      lispPackages.ironclad
+      lispPackages.bordeaux-threads
+      lispPackages.serapeum
       lsCompat
       lsFlock
       sexpConfig
       sexpStore
       structlisp
-      pkgs.sbclPackages.trivial-gray-streams
+      lispPackages.trivial-gray-streams
     ];
   };
 
@@ -182,7 +191,7 @@ let
     pname = "argo";
     version = qlotVersion "argo";
     src = qlotSource "argo";
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       flexi-streams
       serapeum
       yason
@@ -193,7 +202,7 @@ let
     pname = "setinka";
     version = qlotVersion "setinka";
     src = qlotSource "setinka";
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       bordeaux-threads
       serapeum
     ];
@@ -204,7 +213,7 @@ let
     version = qlotVersion "ls-compat";
     src = qlotSource "ls-compat";
     systems = [ "ls-compat" "ls-compat/posix" "ls-compat/files" ];
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       babel
       serapeum
     ];
@@ -214,7 +223,7 @@ let
     pname = "ls-flock";
     version = qlotVersion "ls-flock";
     src = qlotSource "ls-flock";
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       bordeaux-threads
     ];
   };
@@ -226,10 +235,10 @@ let
     systems = [ "cl-skills" "cl-skills/executable" ];
     lispLibs = [
       clLlmProviderApi
-      pkgs.sbclPackages.ironclad
+      lispPackages.ironclad
       lsCompat
       nyaml
-      pkgs.sbclPackages.serapeum
+      lispPackages.serapeum
       sexpConfig
     ];
   };
@@ -239,7 +248,7 @@ let
     version = qlotVersion "clinedi";
     src = qlotSource "clinedi";
     systems = [ "clinedi" "clinedi/posix" ];
-    lispLibs = [ clColorist ] ++ (with pkgs.sbclPackages; [ bordeaux-threads trivial-gray-streams ]);
+    lispLibs = [ clColorist ] ++ (with lispPackages; [ bordeaux-threads trivial-gray-streams ]);
   };
 
   mcparen = pkgs.sbcl.buildASDFSystem {
@@ -247,7 +256,7 @@ let
     version = qlotVersion "mcparen";
     src = qlotSource "mcparen";
     systems = [ "mcparen" "mcparen/managed" ];
-    lispLibs = [ argo lsCompat ] ++ (with pkgs.sbclPackages; [
+    lispLibs = [ argo lsCompat ] ++ (with lispPackages; [
       babel
       bordeaux-threads
       dexador
@@ -289,7 +298,7 @@ let
     pname = "colorlisp";
     version = qlotVersion "colorlisp";
     src = colorlispSource;
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       babel
       cffi
       cl-ppcre
@@ -317,7 +326,7 @@ let
     pname = "cl-termdown";
     version = qlotVersion "cl-termdown";
     src = qlotSource "cl-termdown";
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       clinedi
       clermaid
       colordiff
@@ -330,7 +339,7 @@ let
     pname = "parenchek";
     version = qlotVersion "parenchek";
     src = qlotSource "parenchek";
-    lispLibs = [ lsCompat ] ++ (with pkgs.sbclPackages; [
+    lispLibs = [ lsCompat ] ++ (with lispPackages; [
       serapeum
     ]);
   };
@@ -352,14 +361,14 @@ let
     version = qlotVersion "cl-hashline";
     src = qlotSource "cl-hashline";
     systems = [ "cl-hashline" ];
-    lispLibs = [ structlisp ] ++ (with pkgs.sbclPackages; [ babel ironclad ]);
+    lispLibs = [ structlisp ] ++ (with lispPackages; [ babel ironclad ]);
   };
 
   clifff = pkgs.sbcl.buildASDFSystem {
     pname = "clifff";
     version = qlotVersion "clifff";
     src = qlotSource "clifff";
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       bordeaux-threads
       cffi
     ];
@@ -377,7 +386,7 @@ let
     version = qlotVersion "sbcl-workers";
     src = qlotSource "sbcl-workers";
     systems = [ "sbcl-workers" "sbcl-workers/host-callbacks" ];
-    lispLibs = [ lsCompat sexpStore ] ++ (with pkgs.sbclPackages; [
+    lispLibs = [ lsCompat sexpStore ] ++ (with lispPackages; [
       bordeaux-threads
       trivial-gray-streams
     ]);
@@ -388,14 +397,14 @@ let
     version = qlotVersion "yolokuva";
     src = qlotSource "yolokuva";
     systems = [ "yolokuva" "yolokuva/opticl" ];
-    lispLibs = with pkgs.sbclPackages; [ opticl ];
+    lispLibs = with lispPackages; [ opticl ];
   };
 
   surgeon = pkgs.sbcl.buildASDFSystem {
     pname = "surgeon";
     version = qlotVersion "surgeon";
     src = qlotSource "surgeon";
-    lispLibs = [ lsCompat ] ++ (with pkgs.sbclPackages; [
+    lispLibs = [ lsCompat ] ++ (with lispPackages; [
       closer-mop
       serapeum
     ]);
@@ -405,7 +414,7 @@ let
     pname = "idsmall";
     version = qlotVersion "idsmall";
     src = qlotSource "idsmall";
-    lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
+    lispLibs = with lispPackages; [ bordeaux-threads ];
   };
 
   sexpConfig = pkgs.sbcl.buildASDFSystem {
@@ -418,14 +427,14 @@ let
     pname = "sophisticated-clipboard";
     version = qlotVersion "sophisticated-clipboard";
     src = qlotSource "sophisticated-clipboard";
-    lispLibs = with pkgs.sbclPackages; [ cl-base64 flexi-streams ];
+    lispLibs = with lispPackages; [ cl-base64 flexi-streams ];
   };
 
   sbclGenerations = pkgs.sbcl.buildASDFSystem {
     pname = "sbcl-generations";
     version = qlotVersion "sbcl-generations";
     src = qlotSource "sbcl-generations";
-    lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
+    lispLibs = with lispPackages; [ bordeaux-threads ];
   };
 
   clJobpond = pkgs.sbcl.buildASDFSystem {
@@ -439,14 +448,14 @@ let
       "cl-jobpond/mailboxes"
       "cl-jobpond/completions"
     ];
-    lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
+    lispLibs = with lispPackages; [ bordeaux-threads ];
   };
 
   clResources = pkgs.sbcl.buildASDFSystem {
     pname = "cl-resources";
     version = qlotVersion "cl-resources";
     src = qlotSource "cl-resources";
-    lispLibs = [ pkgs.sbclPackages.bordeaux-threads ];
+    lispLibs = [ lispPackages.bordeaux-threads ];
   };
 
   clWorktree = pkgs.sbcl.buildASDFSystem {
@@ -460,14 +469,14 @@ let
     version = qlotVersion "clasted";
     src = qlotSource "clasted";
     systems = [ "clasted" "clasted/ast-grep" ];
-    lispLibs = [ argo ] ++ (with pkgs.sbclPackages; [ babel ironclad ]);
+    lispLibs = [ argo ] ++ (with lispPackages; [ babel ironclad ]);
   };
 
   daphne = pkgs.sbcl.buildASDFSystem {
     pname = "daphne";
     version = qlotVersion "daphne";
     src = qlotSource "daphne";
-    lispLibs = [ argo ] ++ (with pkgs.sbclPackages; [ babel bordeaux-threads ]);
+    lispLibs = [ argo ] ++ (with lispPackages; [ babel bordeaux-threads ]);
   };
 
   clExecSandboxSource = qlotSource "cl-exec-sandbox";
@@ -531,7 +540,7 @@ let
     pname = "fetch-gist";
     version = qlotVersion "fetch-gist";
     src = qlotSource "fetch-gist";
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       dexador
       plump
     ];
@@ -542,7 +551,7 @@ let
     version = "0.63.1";
     inherit src;
     systems = [ "autolith" "autolith/tests" "autolith/structural" "autolith/debug" ];
-    lispLibs = with pkgs.sbclPackages; [
+    lispLibs = with lispPackages; [
       agentcomms
       argo
       bordeaux-threads
