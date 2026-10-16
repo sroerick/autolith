@@ -341,7 +341,7 @@
                       :definition-name
                       'application-command-tests--shadow
                       :name "/renamed"
-                      :aliases '("/shadow"))))
+                      :aliases '("/layered-command"))))
                (register-application-command shadow :source ':user)
                (test-assert
                 (eq (application-command-find "/renamed") shadow)
