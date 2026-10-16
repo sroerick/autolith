@@ -392,12 +392,12 @@ local-user override."
   (subseq (application-command-name command) 1))
 
 (-> application-operation--from-command
-    (application-command)
+    (application-command &key (:name (option string)))
     application-command-operation)
-(defun application-operation--from-command (command)
-  "Project registered COMMAND into one user-facing operation."
+(defun application-operation--from-command (command &key name)
+  "Project registered COMMAND into its canonical or alias operation NAME."
   (make-instance 'application-command-operation
-                 :name (application-operation--command-name command)
+                 :name (or name (application-operation--command-name command))
                  :description (application-command-description command)
                  :backend command))
 
@@ -434,12 +434,17 @@ local-user override."
         (setf (gethash name seen) t)))
     operations))
 
-(-> application-operation-list (application) list)
-(defun application-operation-list (application)
-  "Return APPLICATION's commands, local forms, and callable tools in order."
+(-> application-operation-list (application &key (:include-aliases-p boolean)) list)
+(defun application-operation-list (application &key include-aliases-p)
+  "Return APPLICATION's operations, optionally including registered command aliases."
   (application-operation--validate-unique-names
-   (append (mapcar #'application-operation--from-command
-                   (application-command-list))
+   (append (loop for command in (application-command-list)
+                 collect (application-operation--from-command command)
+                 when include-aliases-p
+                   append (loop for alias in (application-command-aliases command)
+                                when (eq command (application-command-find alias))
+                                  collect (application-operation--from-command
+                                           command :name (subseq alias 1))))
            *application-local-operations*
            (mapcar #'application-operation--from-tool
                    (application-operation--tools application)))))
@@ -451,7 +456,7 @@ local-user override."
   "Return APPLICATION's operation named by case-insensitive IDENTIFIER."
   (let ((name (string-downcase (string identifier))))
     (find name
-          (application-operation-list application)
+          (application-operation-list application :include-aliases-p t)
           :test #'string=
           :key (lambda (operation)
                  (string-downcase (application-operation-name operation))))))
@@ -538,14 +543,21 @@ local-user override."
 
 (-> application-operation-completion-entry (application-operation) list)
 (defun application-operation-completion-entry (operation)
-  "Return OPERATION's canonical parenthesized completion entry."
+  "Return OPERATION's parenthesized completion, grouping aliases with their command."
   (let* ((name (application-operation-name operation))
-         (argument (application-operation-completion-argument operation)))
-    (list :name (if argument
-                    (format nil "(~A" name)
-                    (format nil "(~A)" name))
-          :argument argument
-          :description (copy-seq (application-operation-description operation)))))
+         (argument (application-operation-completion-argument operation))
+         (entry (list :name (if argument
+                               (format nil "(~A" name)
+                               (format nil "(~A)" name))
+                      :argument argument
+                      :description (copy-seq (application-operation-description operation)))))
+    (when (typep operation 'application-command-operation)
+      (let ((canonical (application-operation--command-name (application-operation-backend operation))))
+        (unless (equal name canonical)
+          (setf (getf entry :primary) (if argument
+                                         (format nil "(~A" canonical)
+                                         (format nil "(~A)" canonical))))))
+    entry))
 
 (-> application-operation--command-option-completion-entries () list)
 (defun application-operation--command-option-completion-entries ()
@@ -571,7 +583,7 @@ local-user override."
           (application-command-alias-completion-entries)
           (application-command-option-completion-entries)
           (mapcar #'application-operation-completion-entry
-                  (application-operation-list application))
+                  (application-operation-list application :include-aliases-p t))
           (application-operation--command-option-completion-entries)
           (application-help-completion-entries application)))
 
@@ -993,19 +1005,16 @@ wait for the serialized application boundary."
   (intern (string-upcase name) '#:autolith))
 
 (defmethod application-command-validate-registration ((command application-command))
-  "Reject COMMAND when its canonical Lisp operation would shadow a function."
-  (let* ((name (application-operation--command-name command))
-         (symbol (application-operation--function-symbol name))
-         (installed (gethash symbol *application-operation-bindings*))
-         (existing (and (fboundp symbol) (fdefinition symbol))))
-    (when (and existing
-               (not (and installed (eq existing installed))))
-      (error 'configuration-error
-             :message
-             (format nil
-                     "Application command ~A conflicts with existing function ~S."
-                     (application-command-name command)
-                     symbol))))
+  "Reject COMMAND when its canonical name or an alias would shadow a function."
+  (dolist (name (cons (application-command-name command) (application-command-aliases command)))
+    (let* ((symbol (application-operation--function-symbol (subseq name 1)))
+           (installed (gethash symbol *application-operation-bindings*))
+           (existing (and (fboundp symbol) (fdefinition symbol))))
+      (when (and existing
+                 (not (and installed (eq existing installed))))
+        (error 'configuration-error
+               :message (format nil "Application command ~A conflicts with existing function ~S."
+                                name symbol)))))
   command)
 
 (-> application-operation--binding-function (non-empty-string) function)
@@ -1056,8 +1065,8 @@ wait for the serialized application boundary."
 
 (-> application-operation-install-bindings (application) list)
 (defun application-operation-install-bindings (application)
-  "Install non-conflicting canonical function bindings for APPLICATION's operations."
-  (loop for operation in (application-operation-list application)
+  "Install non-conflicting function bindings for canonical operations and aliases."
+  (loop for operation in (application-operation-list application :include-aliases-p t)
         for binding = (and (application-operation-binding-eligible-p operation)
                            (application-operation--install-binding operation))
         when binding

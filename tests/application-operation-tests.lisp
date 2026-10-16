@@ -518,6 +518,21 @@
     (test-assert
      (eq (fdefinition symbol) existing)
      "skipped operation bindings preserve the existing function"))
+  (let ((snapshot (application-command--registry-snapshot))
+        (command (application-command-create
+                  :definition-name 'application-operation-tests--conflicting-alias
+                  :name "/alias-conflict" :aliases '("/search")
+                  :description "An alias conflicting with Common Lisp SEARCH."
+                  :tip "Exercise native alias binding conflicts."
+                  :busy-behavior ':inspect :terminal-behavior ':shared
+                  :handler (lambda (application invocation)
+                             (declare (ignore application invocation))
+                             ':continue))))
+    (test-assert (handler-case (progn (register-application-command command :source ':test) nil)
+                   (configuration-error () t))
+                 "registration rejects aliases that shadow existing Lisp functions")
+    (test-assert (equal snapshot (application-command--registry-snapshot))
+                 "rejected aliases are not partially registered"))
   nil)
 
 (-> test-vault-operation-routing () null)
