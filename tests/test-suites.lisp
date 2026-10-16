@@ -761,6 +761,7 @@
 
 (define-test-suite task-inspector
   test-task-inspector-transcript
+  test-task-inspector-bounded-usage
   test-task-inspector-dispatch)
 
 (define-test-suite mission-review

@@ -18,21 +18,6 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
-** Bounded child usage aggregation
-
-- Problem: provider attribution accumulated in child progress until result copying
-  exceeded one million nodes, hiding a failed child's diagnostic notes.
-- Behavior: aggregate only known numeric token, cache, and reasoning counters.
-  Keep provider-native attribution in the conversation audit.
-- Scope and location: private =task-progress--merge-usage= definition, image commit
-  =ffd722fd-cbad-41c5-8e29-2919ae38c8ba=, private Git
-  =c00d0bb8a15cbf083a207718c14f986e820202e0=.
-- Verification: a 600,000-node attribution object was excluded while numeric and
-  nested counters were summed. The failed child's =job.get= became readable after
-  projecting its retained progress. Clean-process private replay passed.
-- Removal condition: replace the override after installing equivalent tracked
-  bounded usage aggregation.
-
 ** Isolated patches beside unrelated edits
 
 - Problem: isolated patch checks required an entirely clean integration target,

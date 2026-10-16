@@ -175,7 +175,7 @@ explicit safety declaration; admission alone grants no replay authority."
     (append
      (loop for key in '(:status :current-tool :recent-tools :request-count :duration-ms :model)
            append (list key (task--compact-native-value (getf progress key) 256)))
-     (list :usage (task--compact-native-value (getf progress :usage) 1000)))))
+     (list :usage (task-progress--usage-summary (getf progress :usage))))))
 
 (-> task--shell-log-reference-summary (list) list)
 (defun task--shell-log-reference-summary (logs)
@@ -202,7 +202,7 @@ explicit safety declaration; admission alone grants no replay authority."
      (loop for key in '(:status :request-count :duration-ms :conversation-file :worktree-artifact-path)
            append (list key (task--compact-native-value (getf result key) 1000)))
      (task--shell-log-reference-summary (getf result :shell-logs))
-     (list :usage (task--compact-native-value (getf result :usage) 1000)
+     (list :usage (task-progress--usage-summary (getf result :usage))
            :output-path (and path (namestring path))))))
 
 (-> task-continuity-classify (list agent task-orchestrator) list)

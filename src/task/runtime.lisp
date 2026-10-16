@@ -452,8 +452,8 @@ under the progress lock before releasing it to other threads."
 
 (-> task-progress--usage-object-p (t) boolean)
 (defun task-progress--usage-object-p (value)
-  "Return true when VALUE is a portable string-keyed provider usage object."
-  (and (listp value)
+  "Return true for a portable string-keyed provider usage object."
+  (and (proper-list-p value)
        (not (null value))
        (every (lambda (entry)
                 (and (consp entry)
@@ -462,37 +462,78 @@ under the progress lock before releasing it to other threads."
                      (null (cddr entry))))
               value)))
 
-(-> task-progress--merge-usage (t t) t)
+(-> task-progress--usage-summary (t) list)
+(defun task-progress--usage-summary (usage)
+  "Project numeric token counters without traversing provider attribution.
+
+Inspect at most 64 fields per object. The fixed schema bounds nesting and
+retained fields, including when reading progress kept by an older image."
+  (labels ((field (object name)
+             "Read NAME from a JSON object or bounded portable association list."
+             (if (json-object-p object)
+                 (json-get object name)
+                 (loop for tail = object then (rest tail)
+                       for entry = (and (consp tail) (first tail))
+                       repeat 64
+                       while (consp tail)
+                       when (and (consp entry)
+                                 (equal name (first entry))
+                                 (consp (rest entry))
+                                 (null (cddr entry)))
+                         return (second entry))))
+
+           (project (object schema)
+             "Copy only SCHEMA's numeric leaves from OBJECT."
+             (loop for (name . nested) in schema
+                   for value = (field object name)
+                   for retained = (if nested
+                                      (project value nested)
+                                      (and (typep value '(integer 0)) value))
+                   when retained
+                     collect (list (copy-seq name) retained))))
+    (project usage
+             '(("input_tokens")
+               ("output_tokens")
+               ("total_tokens")
+               ("cached_input_tokens")
+               ("cache_creation_input_tokens")
+               ("reasoning_tokens")
+               ("prompt_tokens")
+               ("completion_tokens")
+               ("cache_read_input_tokens")
+               ("prompt_cache_hit_tokens")
+               ("prompt_cache_miss_tokens")
+               ("input_tokens_details" ("cached_tokens") ("cache_write_tokens")
+                                       ("audio_tokens") ("text_tokens") ("image_tokens"))
+               ("prompt_tokens_details" ("cached_tokens") ("cache_write_tokens")
+                                        ("audio_tokens") ("text_tokens") ("image_tokens"))
+               ("output_tokens_details" ("reasoning_tokens") ("audio_tokens")
+                                        ("accepted_prediction_tokens")
+                                        ("rejected_prediction_tokens") ("text_tokens"))
+               ("completion_tokens_details" ("reasoning_tokens") ("audio_tokens")
+                                            ("accepted_prediction_tokens")
+                                            ("rejected_prediction_tokens") ("text_tokens"))
+               ("cache_creation" ("ephemeral_5m_input_tokens")
+                                  ("ephemeral_1h_input_tokens"))))))
+
+(-> task-progress--merge-usage (t t) list)
 (defun task-progress--merge-usage (aggregate usage)
-  "Add portable provider USAGE counters to AGGREGATE without losing metadata."
-  (cond
-    ((null usage)
-     (copy-tree aggregate))
-    ((null aggregate)
-     (copy-tree usage))
-    ((and (task-progress--usage-object-p aggregate)
-          (task-progress--usage-object-p usage))
-     (let ((merged (copy-tree aggregate)))
-       (dolist (entry usage merged)
-         (let* ((name (first entry))
-                (value (second entry))
-                (existing (assoc name merged :test #'string=)))
-           (if existing
-               (let ((old-value (second existing)))
-                 (setf (second existing)
-                       (cond
-                         ((and (typep old-value '(integer 0))
-                               (typep value '(integer 0)))
-                          (+ old-value value))
-                         ((and (task-progress--usage-object-p old-value)
-                               (task-progress--usage-object-p value))
-                          (task-progress--merge-usage old-value value))
-                         (t
-                          (copy-tree value)))))
-               (setf merged
-                     (append merged (list (copy-tree entry)))))))))
-    (t
-     (copy-tree usage))))
+  "Sum bounded numeric USAGE counters into a fresh projection of AGGREGATE."
+  (labels ((merge-counters (left right)
+             "Merge already projected counter objects without retaining metadata."
+             (dolist (entry right left)
+               (let* ((name (first entry))
+                      (value (second entry))
+                      (existing (assoc name left :test #'string=)))
+                 (if existing
+                     (setf (second existing)
+                           (let ((old-value (second existing)))
+                             (if (and (integerp old-value) (integerp value))
+                                 (+ old-value value)
+                                 (merge-counters old-value value))))
+                     (setf left (append left (list entry))))))))
+    (merge-counters (task-progress--usage-summary aggregate)
+                    (task-progress--usage-summary usage))))
 
 (-> task-progress--event-usage (t) list)
 (defun task-progress--event-usage (usage)
@@ -785,7 +826,7 @@ handed rather than storing a second copy."
                 (coerce (deque->vector (task-progress-recent-tools progress)) 'list)
                 :recent-output (copy-seq (task-progress-output-tail progress))
                 :request-count (task-progress-request-count progress)
-                :usage (copy-tree (task-progress-usage progress))
+                :usage (task-progress--usage-summary (task-progress-usage progress))
                 :duration-ms
                 (and (task-progress-started-at progress)
                      (task--milliseconds-between
@@ -808,6 +849,15 @@ handed rather than storing a second copy."
                              :result (getf snapshot :result)
                              :ended-at (getf snapshot :ended-at))))
 
+(-> task-job--copy-result (list) list)
+(defun task-job--copy-result (result)
+  "Copy RESULT while projecting usage retained by earlier image versions."
+  (let ((copy (copy-list result)))
+    (when (getf copy :usage)
+      (setf (getf copy :usage)
+            (task-progress--usage-summary (getf copy :usage))))
+    (copy-tree copy)))
+
 (-> task-job-snapshot (task-job) list)
 (defun task-job-snapshot (job)
   "Return JOB's coherent portable lifecycle, progress, and result snapshot.
@@ -815,7 +865,7 @@ handed rather than storing a second copy."
 The lifecycle fields are read once through the pool snapshot so they cannot mix
 values from either side of a terminal transition."
   (let* ((snapshot (job-snapshot job))
-         (result (copy-tree (getf snapshot :result)))
+         (result (task-job--copy-result (getf snapshot :result)))
          (agent-name
            (with-lock-held ((cl-jobpond::job--lock job))
              (task-job-agent-name job))))

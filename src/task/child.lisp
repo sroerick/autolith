@@ -659,7 +659,8 @@ candidates."
                 :label
                 (task-completion-label completion) :request-count
                 (task-progress-request-count progress) :usage
-                (task-progress-usage progress) :duration-ms duration :model
+                (task-progress--usage-summary (task-progress-usage progress))
+                :duration-ms duration :model
                 (config :model (agent-configuration child))
                 :conversation-file
                 (namestring (conversation-pathname conversation)) :detached
@@ -687,7 +688,7 @@ candidates."
           :error message
           :yielded-p nil
           :request-count (task-progress-request-count progress)
-          :usage (task-progress-usage progress)
+          :usage (task-progress--usage-summary (task-progress-usage progress))
           :duration-ms
           (task--milliseconds-between
            (or (job-started-at job) (job-created-at job))

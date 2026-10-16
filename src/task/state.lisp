@@ -92,9 +92,6 @@
 (defparameter *task-retained-structured-output-limit* 2000
   "The readable structured-result characters retained outside its artifact.")
 
-(defparameter *task-retained-usage-limit* 1000
-  "The provider-usage characters retained after a task becomes terminal.")
-
 (defparameter *task-tool-content-limit* 16000
   "The maximum provider-visible characters returned by task and job tools.")
 

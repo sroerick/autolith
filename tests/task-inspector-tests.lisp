@@ -227,3 +227,76 @@
        (test-assert (and called-p (eq :deny *task-test-command-decision*))
                     "Ordinary action dispatch retains the originating authorization callback"))))
   nil)
+
+
+(-> test-task-inspector-bounded-usage () null)
+(defun test-task-inspector-bounded-usage ()
+  "Inspect live and restored children without serializing provider attribution."
+  (let ((cyclic (list '("input_tokens" 0) '("output_tokens" -1))))
+    (setf (cddr cyclic) cyclic)
+    (test-assert
+     (equal '(("input_tokens" 0)) (task-progress--usage-summary cyclic))
+     "Cyclic usage retains zero counters without scanning indefinitely"))
+  (dolist (usage (list nil 42 '("bad" . 3)
+                      '(("output_tokens" "invalid") ("attribution" (1 2 3)))))
+    (test-assert (null (task-progress--usage-summary usage))
+                 "Malformed usage contributes no supervisory counters"))
+  (task-continuity-tests--fixture
+   (lambda (parent orchestrator context orphan path)
+     (declare (ignore path))
+     (let* ((job (task-tests--register-job
+                  orchestrator parent (task-job-definition orphan) :name "bounded-usage"))
+            (progress (task-job-progress job))
+            (attribution (loop for tree = '("provider") then (list tree tree)
+                               repeat 22 finally (return tree)))
+            (usage (list (list "input_tokens" 3)
+                         (list "output_tokens" 2)
+                         (list "input_tokens_details" '(("cached_tokens" 1)))
+                         (list "attribution" attribution)))
+            (expected '(("input_tokens" 6) ("output_tokens" 4)
+                        ("input_tokens_details" (("cached_tokens" 2)))))
+            (application (make-instance 'application
+                                        :configuration (agent-configuration parent)
+                                        :conversation (agent-conversation parent)
+                                        :tool-registry (agent-tool-registry parent)
+                                        :agent parent :ui nil)))
+       (task-continuity-record-job job parent)
+       (dotimes (index 2)
+         (task-progress-note-status job ':provider-request-completed
+                                    (list :request-number (1+ index) :usage usage)))
+       (test-assert (equal expected (getf (task-progress-snapshot job) :usage))
+                    "Repeated provider events sum numeric and nested counters without attribution")
+       (test-assert (eq attribution (second (assoc "attribution" usage :test #'string=)))
+                    "Supervisory projection leaves provider audit data untouched")
+       (let* ((directory (uiop:pathname-directory-pathname
+                          (task-continuity-record-job job parent)))
+              (activity (task-continuity--read (merge-pathnames "activity.sexp" directory))))
+         (test-assert (equal expected (getf (getf activity :progress) :usage))
+                      "Published activity can be reread within ordinary artifact limits"))
+       ;; Simulate progress retained by a pre-fix image before another event arrives.
+       (setf (task-progress-usage progress) usage)
+       (test-assert
+        (and (application-task-inspector application)
+             (task-continuity-inventory parent orchestrator)
+             (tool-result-success-p
+              (task-continuity-dispatch context "job" "get"
+                                        (json-object "id" (job-identifier job)))))
+        "Inspector, continuity and job.get accept restored oversized progress")
+       (task-tests--publish-terminal job ':failed (task--failed-result job ':failed "Provider failed"))
+       ;; Restore the old result shape without asking the new publisher to create it.
+       (setf (getf (job-result job) :usage) usage
+             (task-progress-usage progress) usage)
+       (let* ((snapshot (session-job-snapshot job))
+              (rows (task-inspector-rows context orchestrator))
+              (row (find (session-job-execution-identifier job) rows
+                         :key (lambda (value) (getf value :execution-id)) :test #'equal)))
+         (test-assert
+          (and (eq ':failed (getf snapshot :state))
+               (equal (task-progress--usage-summary usage)
+                      (getf (getf snapshot :result) :usage))
+               (equal (task-progress--usage-summary usage)
+                      (getf (getf row :result) :usage))
+               (application-task-inspector application)
+               (task-continuity-inventory parent orchestrator))
+          "Terminal snapshots and the inspector project oversized retained result usage")))))
+  nil)

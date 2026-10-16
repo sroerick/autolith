@@ -66,13 +66,8 @@
                 (getf retained :structured-output-storage) storage
                 (getf retained :structured-output-characters)
                 (length serialized)))))
-    (let* ((usage (getf retained :usage))
-           (serialized (and usage (task--write-readable-sexp usage))))
-      (when (and serialized
-                 (> (length serialized) *task-retained-usage-limit*))
-        (setf (getf retained :usage) nil
-              (getf retained :usage-storage) storage
-              (getf retained :usage-characters) (length serialized))))
+    (setf (getf retained :usage)
+          (task-progress--usage-summary (getf retained :usage)))
     retained))
 
 (-> task-job--compact-progress (task-job keyword) null)
@@ -90,9 +85,7 @@
               (task-progress-current-tool-started-at progress) nil
               (task-progress-output-tail progress) (subseq output start)
               (task-progress-usage progress)
-              (task--compact-native-value
-               (task-progress-usage progress)
-               *task-retained-usage-limit*)
+              (task-progress--usage-summary (task-progress-usage progress))
               (task-progress-updated-at progress) (get-internal-real-time))))
     nil))
 
