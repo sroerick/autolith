@@ -16,7 +16,13 @@ function Find-AutolithOpenSsl {
     if ($git) { $GitCommand = $git.Source }
   }
   if ($GitCommand) {
-    $gitRoot = Split-Path -Parent (Split-Path -Parent $GitCommand)
+    $gitDirectory = Split-Path -Parent $GitCommand
+    $gitRoot = Split-Path -Parent $gitDirectory
+    if ((Split-Path -Leaf $gitDirectory) -eq 'bin' -and
+        (Split-Path -Leaf $gitRoot) -in @('ucrt64', 'mingw64')) {
+      $gitRoot = Split-Path -Parent $gitRoot
+    }
+    $candidates += (Join-Path $gitRoot 'ucrt64/bin')
     $candidates += (Join-Path $gitRoot 'mingw64/bin')
   }
 

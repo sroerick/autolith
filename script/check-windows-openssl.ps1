@@ -42,6 +42,21 @@ try {
     Remove-Item -LiteralPath $gitBin -Recurse -Force
   }
 
+  foreach ($layout in 'ucrt64', 'mingw64') {
+    $libraryDirectory = Join-Path $temporary "Git/$layout/bin"
+    New-OpenSslPair $libraryDirectory 4
+    foreach ($entry in 'cmd/git.exe', 'bin/git.exe', "$layout/bin/git.exe") {
+      $pair = Find-AutolithOpenSsl -SourceRoot $source -OpenSslDirectory '' -GitCommand (Join-Path $temporary "Git/$entry")
+      Assert-OpenSsl ($pair.Directory -eq [IO.Path]::GetFullPath($libraryDirectory)) "Git entry '$entry' must find $layout libraries."
+    }
+    Remove-Item -LiteralPath $libraryDirectory -Recurse -Force
+  }
+  $modernBin = Join-Path $temporary 'Git/ucrt64/bin'
+  New-OpenSslPair $modernBin 3
+  New-OpenSslPair $gitBin 4
+  Assert-OpenSsl ((Find-AutolithOpenSsl @arguments).Directory -eq [IO.Path]::GetFullPath($modernBin)) 'Prefer the current Git UCRT64 layout.'
+  Remove-Item -LiteralPath $modernBin -Recurse -Force
+
   New-OpenSslPair $gitBin 4
   New-OpenSslPair $local 3
   $pair = Find-AutolithOpenSsl @arguments
