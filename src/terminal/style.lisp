@@ -13,6 +13,7 @@
       :lambda-logo-4 :lambda-logo-5 :lambda-logo-6
       :user :tool :success :failure :notice :dim :hint :selected
       :strong :emphasis :code :code-copy :lisp-prompt :plan-active :timestamp-time
+      :mermaid-box :mermaid-edge :mermaid-arrow :mermaid-label
       :agent-spinner :agent-name :child-name :agent-role :agent-tool
       :command-spinner :command-id :command-tool
       :status-plain :status-dim :status-accent
@@ -92,6 +93,10 @@ name, and status background opt into indexed colors."
       (:emphasis (:italic t))
       (:code (:foreground :cyan))
       (:code-copy (:faint t :underline t))
+      (:mermaid-box (:foreground :cyan))
+      (:mermaid-edge (:foreground :yellow))
+      (:mermaid-arrow (:foreground :magenta :bold t))
+      (:mermaid-label (:foreground :green))
       (:lisp-prompt (:foreground :red :bold t))
       (:plan-active (:foreground :cyan :bold t))
       (:timestamp-time (:foreground :cyan))
@@ -199,6 +204,10 @@ secondary, and quiet text the soft blue."
         (:emphasis (:italic t))
         (:code (:foreground ,secondary))
         (:code-copy (:foreground ,soft :underline t))
+        (:mermaid-box (:foreground ,secondary))
+        (:mermaid-edge (:foreground ,accent-soft))
+        (:mermaid-arrow (:foreground ,accent :bold t))
+        (:mermaid-label (:foreground ,ink))
         (:lisp-prompt (:foreground ,accent :bold t))
         (:plan-active (:foreground ,secondary :bold t))
         (:timestamp-time (:foreground ,soft))

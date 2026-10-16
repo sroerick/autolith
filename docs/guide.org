@@ -33,6 +33,9 @@ Ask for a fenced =mermaid= block to view a diagram directly in the terminal.
 Autolith uses [[https://github.com/lambda-symbolics/clermaid][Clermaid]] for flowcharts, sequence diagrams, flat state diagrams,
 class diagrams, and entity relationships. The library documents the supported
 syntax for each family.
+Boxes, connections, arrowheads and labels use separate theme colors. Graph
+layers are centered, with ordered ports and routes that favor fewer crossings.
+Unicode diagrams use rounded connection corners and directional end caps.
 
 #+BEGIN_SRC markdown
 ```mermaid
