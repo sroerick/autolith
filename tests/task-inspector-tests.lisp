@@ -300,3 +300,64 @@
                (task-continuity-inventory parent orchestrator))
           "Terminal snapshots and the inspector project oversized retained result usage")))))
   nil)
+
+
+(-> test-task-inspector-presentation () null)
+(defun test-task-inspector-presentation ()
+  "Present native task state and metadata through bounded, navigable inspector pages."
+  (task-continuity-tests--fixture
+   (lambda (parent orchestrator context job path)
+     (let* ((application (mission-test--application (agent-configuration parent)))
+            (transcript (merge-pathnames "conversation.sexp" path))
+            (rows (list (list :job-id "failed-child" :state ':failed :updated-at 3
+                              :execution-id "failed-execution" :owners '("primary" "parent")
+                              :error "lost worker" :decision ':abandon
+                              :progress '(:usage (("input_tokens" 42)))
+                              :result '(:status :failed :duration-ms 1200))
+                        (list :job-id "live-child" :state ':running :updated-at 1
+                              :progress '(:current-tool "shell.run" :request-count 2)))))
+       (unwind-protect
+            (progn
+              (setf (application-agent application) parent
+                    (application-tool-registry application) (agent-tool-registry parent)
+                    (application-conversation application) (agent-conversation parent))
+              (test-call-with-function-replacements
+               (list (list 'task-inspector-rows
+                           (lambda (owner-context owner-orchestrator)
+                             (declare (ignore owner-context owner-orchestrator))
+                             (copy-list rows))))
+               (lambda ()
+                 (dolist (width '(12 90))
+                   (terminal-ui-resize (application-ui application) width :rows 20)
+                   (let ((entry (application-task-inspector application)))
+                     (test-assert (and (terminal-styled-text-p entry)
+                                       (find ':failure entry :key #'terminal-span-style)
+                                       (find ':notice entry :key #'terminal-span-style))
+                                  "Task state and failures retain semantic styles at narrow and wide widths")))
+                 (let ((page (task-inspector-render context orchestrator :limit 1)))
+                   (test-assert (and (search "live-child" page) (not (search "failed-child" page)))
+                                "Live tasks precede newer terminal records in a bounded page"))
+                 (let ((page (task-inspector-render context orchestrator :offset 1 :limit 1)))
+                   (test-assert (and (search "failed-child" page) (search "input_tokens 42" page))
+                                "Later pages preserve task metadata without serializing provider attribution"))
+                 (test-assert
+                  (eq ':ok (application-lisp-evaluation-status
+                            (application-lisp-evaluate "(tasks :list :offset 1 :limit 1)"
+                                                       :application application)))
+                  "Native list pagination accepts keyword bounds without a dummy ID")))
+              (test-assert (equal '(:list nil :offset 32 :limit 10)
+                                  (application-task-inspector-slash-arguments "list 32 10"))
+                           "Slash pagination reaches the native list options")
+              (snapshot-write-text transcript "0123456789abcdefghij")
+              (snapshot-write (merge-pathnames "result.sexp" path)
+                              (list :status ':success :conversation-file (namestring transcript)))
+              (terminal-ui-resize (application-ui application) 90 :rows 20)
+              (let ((entry (task-inspector-action context orchestrator "transcript"
+                                                   :id (session-job-execution-identifier job)
+                                                   :application application :offset 2 :limit 8)))
+                (test-assert (and (terminal-styled-text-p entry)
+                                  (command-view-tests--role-p entry ':code "23456789")
+                                  (find ':hint entry :key #'terminal-span-style))
+                             "Transcript windows present text and next-window navigation")))
+         (terminal-ui-stop (application-ui application))))))
+  nil)

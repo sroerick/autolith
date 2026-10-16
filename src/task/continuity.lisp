@@ -199,7 +199,7 @@ explicit safety declaration; admission alone grants no replay authority."
   "Project timing, reported usage and artifact locations without result bodies."
   (when result
     (append
-     (loop for key in '(:status :request-count :duration-ms :conversation-file :worktree-artifact-path)
+     (loop for key in '(:status :label :error :request-count :duration-ms :conversation-file :worktree-artifact-path)
            append (list key (task--compact-native-value (getf result key) 1000)))
      (task--shell-log-reference-summary (getf result :shell-logs))
      (list :usage (task-progress--usage-summary (getf result :usage))

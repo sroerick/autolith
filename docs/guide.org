@@ -1792,15 +1792,19 @@ Use =(tasks)= for a compact nonmodal inventory of owned live and durable work,
 including lineage, timing, reported usage, recent activity and artifact paths:
 
 #+BEGIN_SRC lisp
+(tasks :list :offset 32 :limit 32)
 (tasks :get "JOB-ID")
 (tasks :transcript "JOB-ID" :offset 0 :limit 4000)
 (tasks :send "JOB-ID" :message "Inspect the failing check before continuing.")
 (tasks :cancel "JOB-ID")
 #+END_SRC
 
-The =:offset= and =:limit= transcript options are character counts, defaulting
-to 0 and 4000; use the returned =:next-offset= for another window. The =:get=,
-=:send= and =:cancel= actions use the ordinary owned job operations and authorization.
+Lists show 32 tasks per page, with live work first. Use =:offset= and =:limit=
+(up to 64) to navigate, or =/tasks list OFFSET LIMIT=.
+
+Transcript bounds are character counts, defaulting to 0 and 4000. Use the
+shown next offset for another window. The =:get=, =:send= and =:cancel= actions
+use the ordinary owned job operations and authorization.
 
 Use =job.continuity= with =action= =list= or =get= to classify retained work as
 live detached, completed, reconstructible from a checkpoint, safe to restart,

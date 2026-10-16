@@ -3170,9 +3170,7 @@ The current value and its source sit in aligned columns of their own."
      :terminal-behavior :shared
      :slash-parser application-task-inspector-slash-arguments
      :callable t)
-    (application &optional (action ':list) id &rest options
-                 &key message offset limit authorize &allow-other-keys)
-  (declare (ignore message offset limit authorize))
+    (application &optional (action ':list) id &rest options)
   (application-present application (apply #'application-task-inspector application action id options))
   ':continue)
 

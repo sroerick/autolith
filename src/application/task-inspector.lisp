@@ -20,6 +20,8 @@
             collect (append (list :job-id (job-identifier job)
                                   :execution-id (session-job-execution-identifier job)
                                   :owners (copy-list (job-owner-identifiers job))
+                                  :agent (getf snapshot :agent)
+                                  :created-at (getf continuity :created-at)
                                   :root-conversation (session-job-root-conversation-identifier job)
                                   :classification (getf continuity :classification)
                                   :tool-count (getf continuity :tool-count)
@@ -45,46 +47,108 @@
                         :key #'session-job-execution-identifier :test #'equal))
                 durable))))
 
-(-> task-inspector-render (tool-context task-orchestrator) string)
-(defun task-inspector-render (context orchestrator)
-  "Render compact lineage, state, timing, known usage, activity and artifact paths."
-  (let ((rows (task-inspector-rows context orchestrator)))
-    (with-output-to-string (stream)
-      (format stream "tasks (~D)~%" (length rows))
-      (dolist (row rows)
-        (let* ((progress (getf row :progress))
-               (result (getf row :result))
-               (recent (getf progress :recent-tools)))
-          (format stream "~A <- ~A  ~(~A~)  ~A~%"
-                  (or (getf row :job-id) (getf row :execution-id) "artifact")
-                  (or (first (last (getf row :owners))) "primary")
-                  (or (getf row :state) (getf row :classification))
-                  (or (getf progress :current-tool) (first (last recent))
-                      (getf row :summary) ""))
-          (format stream "  ~A  ~A ms  requests ~A  tools ~A~%"
-                  (getf row :execution-id)
-                  (or (getf progress :duration-ms) (getf result :duration-ms) "unknown")
-                  (or (getf progress :request-count) (getf result :request-count) "unknown")
-                  (or (getf row :tool-count) "unknown"))
-          (format stream "  provider usage ~A~%"
-                  (if (or (getf progress :usage) (getf result :usage))
-                      (bounded-string
-                       (task--write-readable-sexp
-                        (or (getf progress :usage) (getf result :usage))) :limit 500)
-                      "unknown"))
-          (when (getf row :updated-at)
-            (format stream "  activity ~(~A~) at ~D~%"
-                    (getf row :latest-activity) (getf row :updated-at)))
-          (let ((references (or (getf result :shell-log-references)
-                                (getf (task--shell-log-reference-summary
-                                       (getf row :shell-logs)) :shell-log-references))))
-            (dolist (reference references)
-              (format stream "  shell log ~A~%" reference)))
-          (dolist (path (remove nil (list (getf row :path)
-                                         (getf result :output-path)
-                                         (getf result :worktree-artifact-path))))
-            (format stream "  artifact ~A~%" path))))
-      (format stream "get ID | transcript ID [OFFSET LIMIT] | send ID MESSAGE | cancel ID | revive ID authorize | abandon ID authorize"))))
+(-> task-inspector--metadata-fields (list) list)
+(defun task-inspector--metadata-fields (row)
+  "Return bounded lineage, counters, recovery and artifact fields for one inspector ROW."
+  (let* ((progress (getf row :progress))
+         (result (getf row :result))
+         (usage (task-progress--usage-summary (or (getf progress :usage) (getf result :usage))))
+         (log-summary (task--shell-log-reference-summary (getf row :shell-logs)))
+         (references (or (getf result :shell-log-references)
+                         (getf log-summary :shell-log-references)))
+         (omitted (+ (getf result :shell-log-omitted-count
+                          (getf log-summary :shell-log-omitted-count 0))
+                     (max 0 (- (length references) 8)))))
+    (append
+     (loop for (label value style) in
+           (list (list "owners" (format nil "~{~A~^ → ~}" (getf row :owners)) ':dim)
+                 (list "execution" (getf row :execution-id) ':code)
+                 (list "tools" (getf row :tool-count) ':plain)
+                 (list "activity" (when (getf row :updated-at)
+                                    (format nil "~(~A~) at ~D" (getf row :latest-activity)
+                                            (getf row :updated-at))) ':dim)
+                 (list "recovery" (or (getf row :recovery-outcome) (getf row :decision)) ':notice)
+                 (list "error" (getf row :error) ':failure)
+                 (list "worktree" (getf result :worktree-artifact-path) ':code))
+           when (and value (not (equal value "")))
+             collect (list :label label :value (format nil "~A" value) :style style))
+     (when usage
+       (list (list :label "usage" :style ':plain
+                   :value (format nil "~{~A~^ · ~}"
+                                  (loop for (name value) in usage
+                                        if (integerp value)
+                                          collect (format nil "~A ~D" name value)
+                                        else
+                                          append (loop for (nested counter) in value
+                                                       collect (format nil "~A.~A ~D" name nested counter)))))))
+     (loop for reference in references
+           repeat 8
+           collect (list :label "shell log" :value reference :style ':code))
+     (when (plusp omitted)
+       (list (list :label "shell logs" :style ':hint
+                   :value (format nil "~D more; inspect with job.get" omitted)))))))
+
+(-> task-inspector-render
+    (tool-context task-orchestrator &key (:application (option application))
+     (:offset integer) (:limit integer))
+    (or string list))
+(defun task-inspector-render (context orchestrator
+                              &key application (offset 0) (limit *task-job-page-default*))
+  "Render a navigable page of owned tasks, with semantic spans when APPLICATION is supplied."
+  (unless (and (<= 0 offset 1000000) (<= 1 limit *task-job-page-maximum*))
+    (task-continuity--fail "Task page offset or limit is outside its bounds."))
+  (let* ((rows (stable-sort
+                (task-inspector-rows context orchestrator)
+                (lambda (left right)
+                  (let ((left-live (member (getf left :state) '(:queued :running :finalizing)))
+                        (right-live (member (getf right :state) '(:queued :running :finalizing))))
+                    (cond
+                      ((and left-live (not right-live))
+                       t)
+                      ((and right-live (not left-live))
+                       nil)
+                      (t
+                       (> (or (getf left :updated-at) (getf left :created-at) 0)
+                          (or (getf right :updated-at) (getf right :created-at) 0))))))))
+         (total (length rows))
+         (start (min offset total))
+         (end (min total (+ start limit)))
+         (page (subseq rows start end))
+         (heading (format nil "tasks · ~D total · ~D to ~D" total
+                          (if page (1+ start) 0) end))
+         (navigation (format nil "list OFFSET LIMIT~@[ · next: /tasks list ~D ~D~]"
+                             (and (< end total) end) limit))
+         (actions "get ID | transcript ID [OFFSET LIMIT] | send ID MESSAGE | cancel ID | revive ID authorize | abandon ID authorize"))
+    (if application
+        (application--tool-entry
+         application :style ':notice :header heading
+         :rows (append
+                (loop for row in page
+                    append (append (application--native-snapshot-rows application row)
+                                   (application--tool-field-rows
+                                    application (task-inspector--metadata-fields row))
+                                   (list nil)))
+                (application--tool-field-rows
+                 application (list (list :label "pages" :value navigation :style ':hint)
+                                   (list :label "actions" :value actions :style ':hint)))))
+        (with-output-to-string (stream)
+          (format stream "~A~%" heading)
+          (dolist (row page)
+            (let* ((progress (getf row :progress))
+                   (result (getf row :result)))
+              (format stream "~A <- ~A  ~(~A~)  ~A~%  ~A  ~A ms  requests ~A~%"
+                      (or (getf row :job-id) (getf row :execution-id) "artifact")
+                      (or (first (last (getf row :owners))) "primary")
+                      (or (getf row :state) (getf row :classification))
+                      (or (getf progress :current-tool) (getf row :summary) "")
+                      (getf row :execution-id)
+                      (or (getf progress :duration-ms) (getf result :duration-ms) "unknown")
+                      (or (getf progress :request-count) (getf result :request-count) "unknown"))
+              (dolist (field (task-inspector--metadata-fields row))
+                (format stream "  ~A ~A~%" (getf field :label) (getf field :value)))
+              (dolist (path (remove nil (list (getf row :path) (getf result :output-path))))
+                (format stream "  artifact ~A~%" path))))
+          (format stream "~A~%~A" navigation actions)))))
 
 (-> task-inspector-transcript
     (tool-context task-orchestrator string &key (:offset integer) (:limit integer)) list)
@@ -140,36 +204,75 @@ clamped at EOF. Live children use their deterministic conversation identity."
       (list :path (namestring identity) :offset offset :text text
             :next-offset position :eof-p eof-p))))
 
+(-> task-inspector--result-entry
+    (application tool-context &key (:operation string) (:result tool-result)) list)
+(defun task-inspector--result-entry (application context &key operation result)
+  "Present an ordinary job dispatch result using its retained native details."
+  (application-tool-result-entry
+   (tool-registry-find (tool-context-registry context) "job" operation)
+   application
+   (list :tool-result :tool (format nil "job.~A" operation)
+         :status (if (tool-result-success-p result) ':ok ':error)
+         :output (tool-result-content result) :details (tool-result-details result))))
+
 (-> task-inspector-action
     (tool-context task-orchestrator string &key (:id (option string))
      (:message (option string)) (:authorized-p boolean)
-     (:offset integer) (:limit integer)) string)
+     (:offset integer) (:limit integer) (:application (option application)))
+    (or string list))
 (defun task-inspector-action (context orchestrator action
-                              &key id message authorized-p (offset 0) (limit 4000))
+                              &key id message authorized-p (offset 0)
+                                (limit (if (equal action "list") *task-job-page-default* 4000))
+                                application)
   "Inspect or control owned jobs through ordinary registered job dispatch."
   (cond
     ((equal action "list")
-     (task-inspector-render context orchestrator))
+     (task-inspector-render context orchestrator :application application :offset offset :limit limit))
     ((equal action "transcript")
-     (task--write-readable-sexp
-      (task-inspector-transcript context orchestrator id :offset offset :limit limit)))
+     (let ((window (task-inspector-transcript context orchestrator id :offset offset :limit limit)))
+       (if application
+           (application--tool-entry
+            application :style ':notice :header "task transcript"
+            :rows (append
+                   (application--tool-field-rows
+                    application
+                    (list (list :label "artifact" :value (getf window :path) :style ':code)
+                          (list :label "characters"
+                                :value (format nil "~D to ~D · ~A" (getf window :offset)
+                                               (getf window :next-offset)
+                                               (if (getf window :eof-p) "end" "more")))
+                          (list :label "next"
+                                :value (if (getf window :eof-p) "end of transcript"
+                                           (format nil "/tasks transcript ~A ~D ~D"
+                                                   id (getf window :next-offset) limit))
+                                :style ':hint)))
+                   (list nil)
+                   (loop for line in (application--display-lines (getf window :text))
+                         append (application--tool-field-rows
+                                 application (list (list :label "" :value line :style ':code))))))
+           (task--write-readable-sexp window))))
     ((member action '("send" "cancel" "get") :test #'equal)
      (let ((arguments (json-object "id" id)))
        (when (equal action "send")
          (setf (gethash "message" arguments) message))
-       (tool-result-content (task-continuity-dispatch context "job" action arguments))))
+       (let ((result (task-continuity-dispatch context "job" action arguments)))
+         (if application
+             (task-inspector--result-entry application context :operation action :result result)
+             (tool-result-content result)))))
     ((member action '("revive" "abandon") :test #'equal)
-     (tool-result-content
-      (task-continuity-dispatch
-       context "job" "continuity"
-       (json-object "action" action "id" id
-                    "authorize" (if authorized-p t (json-false))))))
+     (let ((result (task-continuity-dispatch
+                    context "job" "continuity"
+                    (json-object "action" action "id" id
+                                 "authorize" (if authorized-p t (json-false))))))
+       (if application
+           (task-inspector--result-entry application context :operation "continuity" :result result)
+           (tool-result-content result))))
     (t
      (task-continuity--fail "Unknown task inspector action."))))
 
 (-> application-task-inspector-slash-arguments (string) list)
 (defun application-task-inspector-slash-arguments (text)
-  "Parse legacy task text at the slash boundary, preserving the message tail."
+  "Parse task actions and page bounds, preserving the steering message tail."
   (let ((position 0) (size (length text)))
     (labels ((skip-space ()
                (loop while (and (< position size) (find (char text position) '(#\Space #\Tab)))
@@ -180,7 +283,13 @@ clamped at EOF. Live children use their deterministic conversation identity."
                (let ((start position))
                  (loop while (and (< position size) (not (find (char text position) '(#\Space #\Tab))))
                        do (incf position))
-                 (unless (= start position) (subseq text start position)))))
+                 (unless (= start position) (subseq text start position))))
+
+             (parse-bound (value default)
+               (if value
+                   (or (ignore-errors (parse-integer value :junk-allowed nil))
+                       (task-continuity--fail "Task bounds must be integers."))
+                   default)))
       (let* ((name (or (word) "list"))
              (action (find name '(:list :get :transcript :send :cancel :revive :abandon)
                            :key #'symbol-name :test #'string-equal))
@@ -188,16 +297,17 @@ clamped at EOF. Live children use their deterministic conversation identity."
         (unless action (task-continuity--fail "Unknown task inspector action."))
         (skip-space)
         (case action
-          (:send (list action id :message (subseq text position)))
+          (:send
+           (list action id :message (subseq text position)))
+          (:list
+           (let ((limit (word)))
+             (when (word) (task-continuity--fail "Too many task page arguments."))
+             (list action nil :offset (parse-bound id 0)
+                   :limit (parse-bound limit *task-job-page-default*))))
           (:transcript
            (let* ((offset (word)) (limit (word)) (extra (word)))
              (when extra (task-continuity--fail "Too many transcript arguments."))
-             (flet ((parse-bound (value default)
-                      (if value
-                          (or (ignore-errors (parse-integer value :junk-allowed nil))
-                              (task-continuity--fail "Transcript bounds must be integers."))
-                          default)))
-               (list action id :offset (parse-bound offset 0) :limit (parse-bound limit 4000)))))
+             (list action id :offset (parse-bound offset 0) :limit (parse-bound limit 4000))))
           ((:revive :abandon)
            (let ((authorization (word)))
              (when (or (word) (and authorization (not (string-equal authorization "authorize"))))
@@ -207,9 +317,12 @@ clamped at EOF. Live children use their deterministic conversation identity."
            (when (word) (task-continuity--fail "Unexpected task arguments."))
            (if id (list action id) (list action))))))))
 
-(-> application-task-inspector (application &optional t t &rest t) string)
+(-> application-task-inspector (application &optional t t &rest t) (or string list))
 (defun application-task-inspector (application &optional (action ':list) id &rest options)
-  "Inspect and control tasks using native actions, identifiers and keyword values."
+  "Inspect tasks with native values. LIST accepts :OFFSET and :LIMIT without an ID."
+  (when (and (eq action ':list) (keywordp id))
+    (setf options (cons id options)
+          id nil))
   (unless (and (member action '(:list :get :transcript :send :cancel :revive :abandon))
                (if (eq action ':list) (null id) (non-empty-string-p id))
                (evenp (length options))
@@ -218,11 +331,16 @@ clamped at EOF. Live children use their deterministic conversation identity."
                       (every (lambda (key)
                                (member key (case action
                                              (:send '(:message))
-                                             (:transcript '(:offset :limit))
+                                             ((:list :transcript) '(:offset :limit))
                                              ((:revive :abandon) '(:authorize)))))
                              keys)))
                (case action
                  (:send (non-empty-string-p (getf options :message)))
+                 (:list
+                  (and (integerp (getf options :offset 0))
+                       (<= 0 (getf options :offset 0) 1000000)
+                       (integerp (getf options :limit *task-job-page-default*))
+                       (<= 1 (getf options :limit *task-job-page-default*) *task-job-page-maximum*)))
                  (:transcript
                   (and (integerp (getf options :offset 0))
                        (<= 0 (getf options :offset 0) 1000000)
@@ -253,4 +371,5 @@ clamped at EOF. Live children use their deterministic conversation identity."
       (task-inspector-action
        context (task-job-tool-orchestrator tool) (string-downcase (symbol-name action)) :id id
        :message (getf options :message) :authorized-p (getf options :authorize)
-       :offset (getf options :offset 0) :limit (getf options :limit 4000)))))
+       :application (and (application-ui application) application) :offset (getf options :offset 0)
+       :limit (getf options :limit (if (eq action ':list) *task-job-page-default* 4000))))))
