@@ -3292,34 +3292,42 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                    (t
                     (write-char character stream))))))))
 
+(-> application--tool-authorization-request-entry (tool json-object) list)
 (defun application--tool-authorization-request-entry (tool arguments)
-  "Return styled, aligned identity and complete structured argument spans."
+  "Return colored identity and complete arguments aligned by terminal cells."
   (let* ((fields
-           (append
-            (tool-authorization-identity-fields tool)
-            (loop for key in (sort (loop for key being the hash-keys of arguments
-                                        collect key)
-                                  #'string<)
-                  collect (list key (application--pretty-tool-arguments
-                                     (json-get arguments key))))))
+           (loop for (label value) in
+                 (append
+                  (tool-authorization-identity-fields tool)
+                  (loop for key in (sort (loop for key being the hash-keys of arguments
+                                              collect key)
+                                        #'string<)
+                        collect (list key (application--pretty-tool-arguments
+                                           (json-get arguments key)))))
+                 collect (list (sanitize-text label :single-line-p t) value)))
          (width (min 24 (loop for (label value) in fields
-                             maximize (length label)))))
+                             maximize (text-cell-width label)))))
     (append
-     (list (terminal-span ':hint "external tool permission")
+     (list (terminal-span ':tool "◇ external tool permission")
            (terminal-span ':plain (string #\Newline)))
      (loop for (label value) in fields
-           for lines = (uiop:split-string value :separator '(#\Newline))
+           for separate-label-p = (> (text-cell-width label) width)
            append
-           (loop for line in lines
-                 for first-p = t then nil
-                 append
-                 (list (terminal-span ':dim
-                                      (format nil "  ~VA  " width
-                                              (if first-p
-                                                  (sanitize-text label :single-line-p t)
-                                                  "")))
-                       (terminal-span ':plain (sanitize-text line :single-line-p t))
-                       (terminal-span ':plain (string #\Newline)))))
+           (append
+            (when separate-label-p
+              (list (terminal-span ':dim (format nil "  ~A~%" label))))
+            (loop for line in (uiop:split-string value :separator '(#\Newline))
+                  for first-p = t then nil
+                  append
+                  (list (terminal-span
+                         ':dim
+                         (concatenate 'string "  "
+                                      (layout-fit-text
+                                       (if (and first-p (not separate-label-p)) label "")
+                                       width)
+                                      "  "))
+                        (terminal-span ':code (sanitize-text line :single-line-p t))
+                        (terminal-span ':plain (string #\Newline))))))
      (when (zerop (hash-table-count arguments))
        (list (terminal-span ':dim (format nil "  no arguments~%"))))
      (list (terminal-span ':dim "  External execution is not confined by the local command sandbox.")))))

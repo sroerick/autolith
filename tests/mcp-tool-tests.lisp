@@ -3511,26 +3511,32 @@
                      title)))
                   "MCP approval identifies the server and unmangled raw tool"))
                (let* ((tail "CONSEQUENTIAL-ARGUMENT-TAIL")
+                      (long-key "a-consequential-argument-key-longer-than-one-column")
                       (arguments
                         (json-object
-                         "change"
-                         (concatenate
-                          'string
-                          (make-string 512 :initial-element #\x)
-                          tail)))
-                     (entry
-                       (application--tool-authorization-request-entry
-                        mutating-tool arguments))
-                     (text (apply #'concatenate 'string
-                                  (mapcar #'terminal-span-text entry))))
-                (test-assert
-                 (and
-                  (search (json-encode (json-get arguments "change")) text)
-                  (search tail text)
-                  (> (length text) 512)
-                  (find ':hint entry :key #'terminal-span-style)
-                  (find ':dim entry :key #'terminal-span-style))
-                 "MCP approval styles complete consequential arguments without truncation"))
+                         "change" (concatenate 'string
+                                               (make-string 512 :initial-element #\x)
+                                               tail)
+                         "界" (json-object "nested" #(1 2))
+                         long-key "complete value"))
+                      (entry (application--tool-authorization-request-entry
+                              mutating-tool arguments))
+                      (text (apply #'concatenate 'string
+                                   (mapcar #'terminal-span-text entry))))
+                 (test-assert
+                  (and (search (json-encode (json-get arguments "change")) text)
+                       (search tail text)
+                       (search long-key text)
+                       (search "complete value" text)
+                       (find ':tool entry :key #'terminal-span-style)
+                       (find ':code entry :key #'terminal-span-style))
+                  "MCP approval colors identity and complete consequential arguments")
+                 (test-assert
+                  (loop for (prefix value) on entry
+                        always (or (null value)
+                                   (not (eq (terminal-span-style value) ':code))
+                                   (= (text-cell-width (terminal-span-text prefix)) 28)))
+                  "wide labels and structured continuation lines align by terminal cells"))
                (test-assert
                 (and
                  (tool-child-safe-p read-tool)
