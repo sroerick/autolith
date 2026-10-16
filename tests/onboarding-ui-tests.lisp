@@ -168,6 +168,50 @@
   (onboarding-ui-test--editor-viewport)
   nil)
 
+(-> test-onboarding-ui-logo () null)
+(defun test-onboarding-ui-logo ()
+  "Render the authored logo as one centered block with NanoBSD's green ramp."
+  (dolist (table (list (terminal-style-table-autolith) (terminal-style-table-almighty)))
+    (let ((*terminal-style-table* table))
+      (loop for name in *terminal-lambda-logo-names*
+            for index in '(157 121 85 84 78 72)
+            do (test-assert (search (format nil "38;5;~D" index) (terminal-style-sequence name t))
+                            "both themes use the boot-logo's indexed shade")
+               (test-assert (search "32" (terminal-style-sequence name nil))
+                            "basic terminals use green for every logo shade"))))
+  (with-test-configuration (configuration)
+    (let* ((page (first (last (onboarding-pages configuration))))
+           (logo-spans (remove-if-not
+                        (lambda (span)
+                          (and (terminal-span-p span)
+                               (member (terminal-span-style span) *terminal-lambda-logo-names*)))
+                        (getf page :body)))
+           (art (uiop:split-string (format nil "~{~A~^~%~}" (mapcar #'terminal-span-text logo-spans))
+                                   :separator '(#\Newline)))
+           (art-width (reduce #'max art :key #'text-cell-width))
+           (terminal (make-instance 'recording-terminal :columns 100 :rows 40)))
+      (test-assert (= 6 (length logo-spans)) "the authored logo includes every gradient shade")
+      (with-terminal-ui (ui (terminal-ui-create :terminal terminal :fullscreen-p t :prompt "> "))
+        (dolist (width '(20 40 81 100))
+          (terminal-set-dimensions terminal width :rows 40)
+          (let* ((frame (terminal-ui-onboarding--frame ui page))
+                 (rows (loop for display in frame
+                             for text = (clinedi:ansi-strip display)
+                             when (find-if (lambda (character) (find character "█▀▄")) text)
+                               collect text)))
+            (test-assert (= (length art) (length rows)) "all logo rows fit after a resize")
+            (test-assert (= (floor (- width art-width) 2)
+                            (reduce #'min rows
+                                    :key (lambda (text)
+                                           (position-if (lambda (character) (find character "█▀▄")) text))))
+                         "center the logo's bounding box, not each separate row")
+            (loop for row in rows for original in art
+                  for start = (search original row :from-end t)
+                  do (test-assert (eql start (floor (- width art-width) 2))
+                                  "preserve row spacing under one common logo margin")
+                     (test-assert (<= (text-cell-width row) width) "logo rows fit the terminal")))))))
+  nil)
+
 (-> test-onboarding-ui-links () null)
 (defun test-onboarding-ui-links ()
   "Hit-test separate semantic links after wrapping, centering and scrolling."

@@ -130,6 +130,7 @@
   test-onboarding-ui-session
   test-onboarding-ui-restoration
   test-onboarding-ui-geometry
+  test-onboarding-ui-logo
   test-onboarding-ui-links
   test-onboarding-ui-validation
   test-onboarding-ui-idle-resize)

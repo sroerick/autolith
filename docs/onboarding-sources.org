@@ -7,6 +7,7 @@ Bump VERSION only for a material lesson change. Keep the order of the headings.
 
 Use *strong*, =code=, [[https://example.org][link text]], and semantic spans
 @@brand:text@@, @@dim:text@@, @@lisp-prompt:text@@, @@success:text@@. Spans may cross newlines.
+Use @@lambda-logo-1:text@@ through @@lambda-logo-6:text@@ for the centered green logo.
 Authored newlines and spaces are preserved, including aligned example columns.
 The org-templater slots {{{:config-root}}} and {{{:state-root}}} use runtime paths.
 Markup is decoded before interpolation, so paths remain literal text.
@@ -17,6 +18,7 @@ Use org-templater slots for runtime values in these blocks.
 
 Final-slide lambda: block rendering of userland/bootsplash/logo.h (32 x 48),
 /root/nanobsd at c8317e418af736bb57dd2409c32aff47c8024c79.
+Use the six green shades from userland/bootsplash/bootsplash.c, top to bottom.
 
 #+name: boot-linger
 #+begin_onboarding_text
@@ -461,17 +463,17 @@ Save the preference through =(settings)=. Use inline mode with ordinary terminal
 :ID: ready
 :VERSION: 4
 :END:
-@@success:  ▄██▄
-    ▀█▄
-     ▀█▄
-      ▀█▄
-       ▀█▄
-        ▀█▄
-     ██▄ ▀█▄
-     ▀███▄▀█▄
-      ▀█▄▀███▄
-       ▀█▄▀███▄
-▀█▄▄    ██  ▀██▄
+@@lambda-logo-1:  ▄██▄
+    ▀█▄@@
+@@lambda-logo-2:     ▀█▄
+      ▀█▄@@
+@@lambda-logo-3:       ▀█▄
+        ▀█▄@@
+@@lambda-logo-4:     ██▄ ▀█▄
+     ▀███▄▀█▄@@
+@@lambda-logo-5:      ▀█▄▀███▄
+       ▀█▄▀███▄@@
+@@lambda-logo-6:▀█▄▄    ██  ▀██▄
   ▀▀██▄▄█▀   ▀▀█@@
 
 *Give Autolith something real to do.*

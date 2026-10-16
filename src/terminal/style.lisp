@@ -9,6 +9,8 @@
       :brand-gradient-4 :brand-gradient-5 :brand-gradient-6
       :recovery-gradient-1 :recovery-gradient-2 :recovery-gradient-3
       :recovery-gradient-4 :recovery-gradient-5 :recovery-gradient-6
+      :lambda-logo-1 :lambda-logo-2 :lambda-logo-3
+      :lambda-logo-4 :lambda-logo-5 :lambda-logo-6
       :user :tool :success :failure :notice :dim :hint :selected
       :strong :emphasis :code :code-copy :lisp-prompt :plan-active :timestamp-time
       :agent-spinner :agent-name :child-name :agent-role :agent-tool
@@ -36,6 +38,11 @@
     :recovery-gradient-4 :recovery-gradient-5 :recovery-gradient-6)
   "The recovery startup mark's row styles, top to bottom.")
 
+(defparameter *terminal-lambda-logo-names*
+  '(:lambda-logo-1 :lambda-logo-2 :lambda-logo-3
+    :lambda-logo-4 :lambda-logo-5 :lambda-logo-6)
+  "The Lambda Symbolics logo's green row styles, top to bottom.")
+
 (-> terminal--style-table (list) list)
 (defun terminal--style-table (specifications)
   "Return an alist of style names to Colorist styles from SPECIFICATIONS.
@@ -53,13 +60,22 @@ Each specification is (NAME MAKE-STYLE-ARGUMENTS)."
                             :foreground (indexed-color index :fallback ':red)
                             :bold t))))
 
+(-> terminal--lambda-logo-styles () list)
+(defun terminal--lambda-logo-styles ()
+  "Return NanoBSD's six green logo shades with basic green fallbacks."
+  (loop for name in *terminal-lambda-logo-names*
+        for index in '(157 121 85 84 78 72)
+        collect (cons name (make-style
+                            :foreground (indexed-color index :fallback ':green)
+                            :bold t))))
+
 (-> terminal-style-table-autolith () list)
 (defun terminal-style-table-autolith ()
   "Return the default style table.
 
 General interface styles use the basic ANSI palette so Autolith follows the
-terminal's own theme. Only the startup mark, promoted child name, and status
-background opt into indexed colors."
+terminal's own theme. The startup marks, Lambda Symbolics logo, promoted child
+name, and status background opt into indexed colors."
   (append
    (terminal--style-table
     '((:plain ())
@@ -110,6 +126,7 @@ background opt into indexed colors."
                              :foreground (indexed-color index :fallback ':green)
                              :bold t)))
    (terminal--recovery-gradient-styles)
+   (terminal--lambda-logo-styles)
    (loop for (name foreground arguments) in
          '((:status-plain :bright-white ())
            (:status-dim :white ())
@@ -211,6 +228,7 @@ secondary, and quiet text the soft blue."
            for hex in *almighty-gradient*
            collect (cons name (make-style :foreground (hex-color hex) :bold t)))
      (terminal--recovery-gradient-styles)
+     (terminal--lambda-logo-styles)
      (loop for (name foreground arguments) in
            `((:status-plain ,ink ())
              (:status-dim ,soft ())

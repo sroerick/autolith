@@ -148,6 +148,30 @@
               :message "The onboarding help function must return text or terminal spans."
               :operation ':onboard :cause nil)))))
 
+(-> terminal-ui-onboarding--center-logo (list integer) list)
+(defun terminal-ui-onboarding--center-logo (spans width)
+  "Center all Lambda Symbolics logo rows as one block within WIDTH cells."
+  (let* ((logo-spans (remove-if-not
+                      (lambda (span)
+                        (and (terminal-span-p span)
+                             (member (terminal-span-style span) *terminal-lambda-logo-names*)))
+                      spans))
+         (logo-width (loop for span in logo-spans
+                           maximize (loop for line in (uiop:split-string (terminal-span-text span)
+                                                                        :separator '(#\Newline))
+                                          maximize (text-cell-width line)) into maximum
+                           finally (return (or maximum 0))))
+         (padding (make-string (max 0 (floor (- width logo-width) 2)) :initial-element #\Space)))
+    (loop for span in spans
+          collect (if (member span logo-spans :test #'eq)
+                      (terminal-span
+                       (terminal-span-style span)
+                       (format nil "~{~A~^~%~}"
+                               (mapcar (lambda (line) (concatenate 'string padding line))
+                                       (uiop:split-string (terminal-span-text span)
+                                                          :separator '(#\Newline)))))
+                      span))))
+
 (-> terminal-ui-onboarding--body-spans (list keyword function &key (:width integer)) list)
 (defun terminal-ui-onboarding--body-spans (page stage help-function &key (width 76))
   "Return the current lesson or the result of its exercise."
@@ -155,7 +179,8 @@
       (append (list (terminal-span ':strong (format nil "~A~2%" (onboarding-source-text "help-title"))))
               (terminal-ui-onboarding--help-spans help-function :width width))
       (append
-       (terminal-ui-onboarding--spans (getf page :body))
+       (terminal-ui-onboarding--center-logo
+        (terminal-ui-onboarding--spans (getf page :body)) width)
        (when (eq (getf page :exercise) ':async)
          (case stage
            (:async-running
