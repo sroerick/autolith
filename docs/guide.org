@@ -1771,6 +1771,11 @@ Idle completions within a one-second window share one automatic turn through the
 ordinary controller. Busy turns receive results at their next safe request
 boundary. With =notify=, receive results on the next ordinary turn instead.
 
+An empty final reply while eligible jobs run appears as an Autolith yield notice
+with the number of unfinished jobs that can wake this conversation. Replayed
+notices retain the count at the time of yielding; completed jobs and notify-only
+work do not contribute to a new notice.
+
 An active goal or mission does not urge the model on while a job that will wake
 it is queued, running or undelivered. Its automatic continuations wait, the
 goal stays active, and the transcript shows =∙ continuing with job results=

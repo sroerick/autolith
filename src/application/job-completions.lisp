@@ -66,6 +66,44 @@ connected wakeup nothing would resume it, so nothing is awaited."
          (application-input-controller-pending-persistence-enabled-p controller)
          (not (application-localgroup-paused-p application)))))
 
+(-> application-job-completions-awaited-count (application) (integer 0))
+(defun application-job-completions-awaited-count (application)
+  "Snapshot unfinished jobs with authority to wake this primary conversation.
+
+Pending outcomes are deliberately excluded: they no longer represent running
+work. Admission uses the same owner, policy, mission and controller authority as
+completion dispatch. Both tool executions and child tasks use this job registry."
+  (let ((agent (and (slot-boundp application 'agent) (application-agent application)))
+        (controller (application-input-controller application)))
+    (if (and (typep agent 'agent)
+             controller
+             (application-job-completions--controller-admissible-p controller)
+             (task-completion-wakeup-connected-p agent))
+        (count-if
+         (lambda (job)
+           (application-job-completions--notice-admissible-p
+            application
+            (list :owner-conversation (session-job-completion-owner-conversation job)
+                  :completion-policy  (session-job-completion-policy job)
+                  :mission-id         (session-job-completion-mission-id job))))
+         (task-completion-awaited-jobs agent))
+        0)))
+
+(-> application-job-completions-present-yield (application list) null)
+(defun application-job-completions-present-yield (application details)
+  "Record and present an empty terminal response's historical wakeup snapshot.
+
+This is presentation metadata, not an assistant message or provider item. Replay
+uses the recorded count rather than today's jobs. A job completing after this
+snapshot cannot change the meaning of an already finalized transcript entry."
+  (let ((count (application-job-completions-awaited-count application)))
+    (when (plusp count)
+      (conversation-append-record
+       (application-conversation application)
+       (list :assistant-yield :job-count count :response-id (getf details :response-id)))
+      (application-render-records application)))
+  nil)
+
 (-> application-job-completions--next-time
     (application-input-controller) (option integer))
 (defun application-job-completions--next-time (controller)

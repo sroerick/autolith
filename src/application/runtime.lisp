@@ -2227,6 +2227,14 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
              (terminal--clip-spans row (max 0 (1- maximum-width)))
              (list (terminal-span ':dim "…"))))))))
 
+(-> application--visible-assistant-text (json-object) (option string))
+(defun application--visible-assistant-text (item)
+  "Return ITEM's assistant text only when it has a non-whitespace character."
+  (let ((text (response-item-assistant-text item)))
+    (and text
+         (plusp (length (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
+         text)))
+
 (-> response-item-entry
     (application json-object &key (:timestamp (option timestamp))
                                  (:tool-label (option string)))
@@ -2237,7 +2245,7 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
     (cond
       ((and (string= (or type "") "message")
             (string= (or (json-get item "role") "") "assistant"))
-       (let ((text (response-item-assistant-text item)))
+       (let ((text (application--visible-assistant-text item)))
          (when text
            (append (application--transcript-entry
                     application
@@ -2343,6 +2351,15 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
                                  (json-decode wire-json)
                                  :timestamp (getf (rest record) :time)
                                  :tool-label (getf (rest record) :tool-label)))))
+    (:assistant-yield
+     (let ((count (getf (rest record) :job-count)))
+       (when (typep count '(integer 1))
+         (application--transcript-entry
+          application
+          :style ':brand
+          :header "● autolith"
+          :detail (format nil "yielded (~D jobs will wake AL soon)" count)
+          :timestamp (getf (rest record) :time)))))
     (:tool-result
      (let* ((*application-tool-presentation-label* (getf (rest record) :tool-label))
             (canonical-name (getf (rest record) :tool))
@@ -2440,7 +2457,7 @@ rows."
       (when (stringp wire-json)
         (let ((item (json-decode wire-json)))
           (and (json-object-p item)
-               (response-item-assistant-text item)))))))
+               (application--visible-assistant-text item)))))))
 
 (-> application--reasoning-record-text (list) (option string))
 (defun application--reasoning-record-text (record)
@@ -2478,7 +2495,7 @@ rows."
     (cond
       ((and (string= (or type "") "message")
             (string= (or (json-get item "role") "") "assistant"))
-       (not (null (response-item-assistant-text item))))
+       (not (null (application--visible-assistant-text item))))
       ((string= (or type "") "reasoning")
        (and (application-reasoning-traces-p application)
             (not (null (response-item-reasoning-summary item)))))
@@ -2511,6 +2528,8 @@ rows."
            (not (null (application--tool-execution-handoff record)))
            (application--compact-tool-result-visible-p
             application canonical-name))))
+    (:assistant-yield
+     (typep (getf (rest record) :job-count) '(integer 1)))
     (:summary
      t)
     (otherwise
@@ -3243,6 +3262,7 @@ continuation turns, so the notice names what woke the model."
   (let ((ui (application-ui application))
         (activity-label (application-thinking-label))
         (related-memories-shown-p nil)
+        (request-empty-p nil)
         (reasoning-text (text-buffer-create))
         (presented-reasoning-text nil)
         (stream-text (text-buffer-create))
@@ -3388,6 +3408,7 @@ continuation turns, so the notice names what woke the model."
            (:provider-progress
             (terminal-ui-note-status-progress ui))
            (:provider-request-started
+            (setf request-empty-p t)
             (terminal-ui-set-preview-rows ui nil)
             (text-buffer-clear reasoning-text)
             (text-buffer-clear stream-text)
@@ -3430,7 +3451,11 @@ continuation turns, so the notice names what woke the model."
                      (format nil "reconnecting ~D/~D"
                              (getf details :attempt)
                              (getf details :maximum-attempts)))))))
+           (:assistant-response-persisted
+            (setf request-empty-p nil))
            (:provider-request-completed
+            (when (plusp (getf details :tool-call-count 0))
+              (setf request-empty-p nil))
             (application-refresh-context-meter application)
             (reasoning-flush)
             (let ((completed-stream-text
@@ -3484,6 +3509,9 @@ continuation turns, so the notice names what woke the model."
            (:turn-completed
             (terminal-ui-set-compacting ui nil)
             (terminal-ui-set-preview-rows ui nil)
+            (when request-empty-p
+              (setf request-empty-p nil)
+              (application-job-completions-present-yield application details))
             (application-set-activity application nil))))
        :steering-callback steering-function
        :steering-persisted-callback steering-persisted-function
