@@ -294,16 +294,30 @@ fragments that providers interleave with empty content deltas."
            ':deny)))))
 
 (defmethod agent-observer-authorize-tool ((observer acp-observer) tool arguments)
-  "Authorize an external tool through the editor using its exact identity and input."
+  "Apply the editor session's policy without granting local sandboxing to MCP."
   (let* ((session (acp-observer-session observer))
-         (name (tool-canonical-name tool)))
+         (application (acp-session-application session)))
     (acp-session-check-cancelled session)
-    (if (or (eq (acp-session-mode session) ':full-access)
-            (acp-observer--approval observer name arguments
-                                    (list ':tool (tool-authorization-identity-fields tool)
-                                          (agent--tool-signature-value arguments))))
-        ':allow
-        ':deny)))
+    (case (acp-session-mode session)
+      (:full-access
+       ':allow)
+      (:auto
+       (if (eq (nth-value
+                0
+                (application--model-command-permission
+                 application
+                 (application--tool-authorization-request tool arguments)
+                 (config :working-directory (application-configuration application))
+                 :sandbox-available-p nil))
+               ':full-access)
+           ':allow
+           ':deny))
+      (otherwise
+       (if (acp-observer--approval
+            observer (tool-display-name tool) arguments
+            (list ':tool (application--tool-permission-key tool arguments)))
+           ':allow
+           ':deny)))))
 
 (defmethod agent-observer-call-with-tool-execution ((observer acp-observer) identifier function)
   "Own tool workers and propagate ACP session bindings and permission identity."

@@ -262,3 +262,68 @@
                   "empty streamed deltas preserve the nonstreamed final response")))
           (agentcomms:connection-close (agentcomms:acp-client-connection client))))))
   nil)
+
+(-> test-acp-external-tool-permission-modes () null)
+(defun test-acp-external-tool-permission-modes ()
+  "Keep editor policy independent and classify external calls without a sandbox."
+  (with-test-configuration (configuration root)
+    (let* ((application
+             (make-instance 'application :configuration configuration
+                            :permission-mode ':full-access
+                            :provider (make-instance 'rlm-inference-test-provider :results nil)))
+           (session (make-instance 'acp-session
+                                   :service (acp-observer-test-service configuration)
+                                   :identifier "external-permissions"
+                                   :application application))
+           (observer (make-instance 'acp-observer :session session :turn-sequence 1))
+           (tool (make-instance 'tool :namespace "service" :name "lookup"
+                                :description "Read one record."))
+           (arguments (json-object "record" "one"))
+           (approved-p nil)
+           (approval-count 0)
+           (decision ':full-access))
+      (permissions-allow :configuration configuration
+                         :state (application-permission-state application)
+                         :command (application--tool-permission-key tool arguments)
+                         :directory root :kind ':external-tool)
+      (test-call-with-function-replacements
+       (list
+        (list 'acp-observer--approval
+              (lambda (observer title input key)
+                (declare (ignore observer input key))
+                (incf approval-count)
+                (test-assert (string= title (tool-display-name tool))
+                             "editor permission titles use the readable tool identity")
+                approved-p))
+        (list 'permissions-model-classify-command
+              (lambda (request directory &key provider configuration
+                                             sandbox-available-p user-instructions)
+                (declare (ignore directory provider configuration user-instructions))
+                (test-assert (and (not sandbox-available-p)
+                                  (search "External tool call" request))
+                             "editor auto mode classifies external execution without a local sandbox")
+                (values decision "test policy"))))
+       (lambda ()
+         (test-assert (eq (agent-observer-authorize-tool observer tool arguments) ':deny)
+                      "terminal full access and persistent grants cannot bypass an editor session")
+         (setf approved-p t)
+         (test-assert (eq (agent-observer-authorize-tool observer tool arguments) ':allow)
+                      "the editor can approve an exact external request")
+         (setf (acp-session-mode session) ':sandboxed approved-p nil)
+         (test-assert (eq (agent-observer-authorize-tool observer tool arguments) ':deny)
+                      "editor sandbox mode still requires external approval")
+         (let ((before approval-count))
+           (setf (acp-session-mode session) ':full-access)
+           (test-assert (and (eq (agent-observer-authorize-tool observer tool arguments) ':allow)
+                             (= before approval-count))
+                        "editor full access permits external calls without another approval")
+           (setf (acp-session-mode session) ':auto)
+           (dolist (case '((:full-access :allow) (:sandboxed :deny) (:deny :deny)))
+             (setf decision (first case))
+             (clrhash (application-command-classifications application))
+             (test-assert (eq (agent-observer-authorize-tool observer tool arguments)
+                              (second case))
+                          "editor auto applies only available external grants"))
+           (test-assert (= before approval-count)
+                        "editor auto never falls back to an approval prompt"))))))
+  nil)
