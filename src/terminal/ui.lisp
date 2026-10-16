@@ -1219,7 +1219,7 @@ recalled drafts. An @ path token still offers file completion."
   (let ((count
           (length (terminal-ui--command-presentation-activities ui))))
     (if (plusp count)
-        (+ 2 (min count *terminal-ui-command-visible-limit*))
+        (+ 1 (min count *terminal-ui-command-visible-limit*))
         0)))
 
 (-> terminal-ui--activity-row-budgets
@@ -1234,10 +1234,11 @@ recalled drafts. An @ path token still offers file completion."
         (agents-p (not (null (terminal-ui-agent-activities ui)))))
     (cond
       ((and commands-p agents-p)
-       (let ((command-budget
-               (min (terminal-ui--command-row-demand ui)
-                    (max 1 (1- total)))))
-         (values command-budget (- total command-budget))))
+       (let* ((available (- total (if (>= total 3) 1 0)))
+              (command-budget
+                (min (terminal-ui--command-row-demand ui)
+                     (max 1 (1- available)))))
+         (values command-budget (- available command-budget))))
       (commands-p
        (values total 0))
       (agents-p
@@ -1262,12 +1263,7 @@ recalled drafts. An @ path token still offers file completion."
   "Return all, visible, header, overflow, and omission command row values."
   (let* ((activities (terminal-ui--command-presentation-activities ui))
          (row-budget (terminal-ui--command-row-budget ui))
-         (header-row-count
-           (cond
-             ((zerop row-budget) 0)
-             ((= row-budget 1) 0)
-             ((< row-budget 4) 1)
-             (t 2)))
+         (header-row-count (if (> row-budget 1) 1 0))
          (body-row-budget (max 0 (- row-budget header-row-count)))
          (limited-visible-count
            (min *terminal-ui-command-visible-limit*
@@ -1325,9 +1321,7 @@ recalled drafts. An @ path token still offers file completion."
                  (plusp (terminal-ui--command-row-budget ui)))
         (append
          (when (plusp header-row-count)
-           (append (list header-row)
-                   (when (= header-row-count 2)
-                     (list nil))))
+           (list header-row))
          (loop for activity in visible-activities
                collect
                (terminal-ui--command-activity-row-at
@@ -1351,12 +1345,7 @@ recalled drafts. An @ path token still offers file completion."
   "Return viewport-bounded child-agent rows for UI at monotonic NOW."
   (let* ((activities (terminal-ui-agent-activities ui))
          (row-budget (terminal-ui--agent-row-budget ui))
-         (header-row-count
-           (cond
-             ((zerop row-budget) 0)
-             ((= row-budget 1) 0)
-             ((< row-budget 4) 1)
-             (t 2)))
+         (header-row-count (if (> row-budget 1) 1 0))
          (body-row-budget (max 0 (- row-budget header-row-count)))
          (limited-visible-count
            (min *terminal-ui-agent-visible-limit*
@@ -1417,9 +1406,7 @@ recalled drafts. An @ path token still offers file completion."
     (when (and activities (plusp row-budget))
       (append
        (when (plusp header-row-count)
-         (append (list header-row)
-                 (when (= header-row-count 2)
-                   (list nil))))
+         (list header-row))
        (loop for activity in visible-activities
              append
              (append
@@ -2003,7 +1990,12 @@ form keeps every speculative Markdown wrap live until the logical line commits."
             (and (terminal-ui-agent-activities ui)
                  (terminal-ui--agent-activity-rows-at
                   ui status-now row-width))))
-      (setf rows (append rows command-rows agent-rows)))
+      (setf rows
+            (append rows command-rows
+                    (when (and command-rows agent-rows
+                               (>= (terminal-ui--activity-row-budget ui) 3))
+                      (list nil))
+                    agent-rows)))
     (when (terminal-ui-status ui)
       (setf rows
             (append rows

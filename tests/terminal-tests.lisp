@@ -1194,10 +1194,9 @@
                 expanded-index
                 status-index
                 (< status-index header-index)
-                (= search-index (+ header-index 2))
+                (= search-index (1+ header-index))
                 (= review-index (1+ search-index))
                 (= expanded-index (1+ review-index))
-                (string= (nth (1+ header-index) lines) "")
                 (search "working" (nth (1+ expanded-index) lines))
                 (string= (nth (+ expanded-index 2) lines) "")
                 (uiop:string-prefix-p "  " search-line)
@@ -1433,6 +1432,33 @@
        (<= (terminal-ui-live-row-count active-ui)
            (live-region-maximum-rows (terminal-ui-live-region active-ui)))
        "command and child strips share the live-region viewport budget")
+      (dolist (height '(40 12 8 6))
+        (setf (terminal-rows terminal) height)
+        (let* ((lines (mapcar #'terminal--spans-text
+                              (terminal-ui--live-prefix-rows active-ui clock)))
+               (command-header (position "commands 2" lines :test #'string=))
+               (agent-header (position "agents 1" lines :test #'string=)))
+          (when (= height 40)
+            (test-assert (and command-header agent-header)
+                         "both activity labels fit in a tall viewport"))
+          (when command-header
+            (test-assert (search "exec:1" (nth (1+ command-header) lines))
+                         "the first command immediately follows its label"))
+          (when agent-header
+            (test-assert (search "review-3" (nth (1+ agent-header) lines))
+                         "the first agent immediately follows its label"))
+          (when (and command-header agent-header)
+            (test-assert
+             (and (string= (nth (1- agent-header) lines) "")
+                  (search "exec:2" (nth (- agent-header 2) lines)))
+             "one blank row separates command and agent blocks")))
+        (test-assert
+         (<= (+ (length (terminal-ui--command-activity-rows-at active-ui clock 90))
+                (length (terminal-ui--agent-activity-rows-at active-ui clock 90))
+                (if (>= (terminal-ui--activity-row-budget active-ui) 3) 1 0))
+             (terminal-ui--activity-row-budget active-ui))
+         "activity rows and their separator fit the shared viewport"))
+      (setf (terminal-rows terminal) 12)
       (setf clock 66)
       (test-assert (terminal-ui-refresh-status active-ui)
                    "running command timers advance once per second")
