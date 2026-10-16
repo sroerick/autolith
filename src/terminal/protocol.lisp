@@ -466,6 +466,13 @@ Autolith repaints its own prompt, so prompt starts disable terminal redraw."
   "Use native scrollback for the ordinary terminal UI."
   nil)
 
+(defgeneric terminal-ui-reset-transcript (ui)
+  (:documentation "Discard UI's application-owned transcript for a fresh conversation."))
+
+(defmethod terminal-ui-reset-transcript ((ui terminal-ui))
+  "Use native terminal scrollback for inline sessions."
+  nil)
+
 (defgeneric terminal-ui--present-live
     (ui &key status-now appended-text appended-display appended-regions)
   (:documentation

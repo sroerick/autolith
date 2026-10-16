@@ -2783,6 +2783,9 @@ The current value and its source sit in aligned columns of their own."
   (application-install-conversation
    application
    (conversation-create (application-configuration application)))
+  (let ((ui (application-ui application)))
+    (when ui
+      (terminal-ui-reset-transcript ui)))
   (application-present
    application
    (format nil "Started conversation ~A."

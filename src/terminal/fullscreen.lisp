@@ -4,7 +4,7 @@
 
 (defclass fullscreen-terminal-ui (terminal-ui)
   ((viewport :initform (clinedi:make-transcript-viewport)
-             :reader fullscreen-terminal-ui-viewport
+             :accessor fullscreen-terminal-ui-viewport
              :documentation "The reflowing transcript, its scroll position and its last layout.")
    (active-p :initform nil :accessor fullscreen-terminal-ui-active-p :type boolean
              :documentation "Whether this UI has entered the alternate buffer.")
@@ -30,6 +30,26 @@
 (defun terminal-ui-fullscreen-invalidate (ui)
   "Invalidate UI's physical frame without discarding its transcript or scroll anchor."
   (clinedi:frame-painter-invalidate (fullscreen-terminal-ui-painter ui))
+  nil)
+
+(defmethod terminal-ui-reset-transcript ((ui fullscreen-terminal-ui))
+  "Replace the fullscreen transcript and repaint a fresh, tail-following view."
+  (with-terminal-ui-locked (ui)
+    (setf (fullscreen-terminal-ui-viewport ui)
+          (clinedi:make-transcript-viewport
+           :width (max 1 (terminal-columns (terminal-ui-terminal ui))))
+          (terminal-ui-deferred-live-appended-text ui) ""
+          (terminal-ui-deferred-live-appended-display ui) ""
+          (terminal-ui-deferred-live-appended-regions ui) nil
+          (terminal-ui-stream-tail ui) nil
+          (terminal-ui-pending-action ui) nil
+          (terminal-ui-notice ui) nil
+          (terminal-ui-notice-deadline ui) nil
+          (terminal-ui-fullscreen-welcome-p ui) nil)
+    (clrhash (terminal-ui-finalized-identifiers ui))
+    (terminal-ui-fullscreen-invalidate ui)
+    (when (terminal-ui-started-p ui)
+      (terminal-ui--paint-live ui)))
   nil)
 
 (-> terminal-ui-fullscreen-leave (fullscreen-terminal-ui) null)

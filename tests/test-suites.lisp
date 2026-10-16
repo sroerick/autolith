@@ -96,6 +96,7 @@
 
 (define-test-suite fullscreen
   test-terminal-fullscreen-viewport
+  test-terminal-fullscreen-new-conversation
   test-terminal-fullscreen-small-windows
   test-terminal-fullscreen-flush-wrap-cursor
   test-terminal-fullscreen-failure-and-lifecycle

@@ -510,3 +510,68 @@
                           "fullscreen forced interruption restores the screen before its resume command")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))
     nil))
+
+
+(-> test-terminal-fullscreen-new-conversation () null)
+(defun test-terminal-fullscreen-new-conversation ()
+  "Start a new conversation through command dispatch and replace the fullscreen ledger."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration :identifier "old-ledger"))
+           (terminal (make-instance 'recording-terminal :columns 80 :rows 16))
+           (ui (fullscreen-test--ui terminal))
+           (application (make-instance 'application :configuration configuration
+                                                   :conversation conversation :ui ui))
+           (fail-p t))
+      (conversation-append-user-message conversation "OLD-LEDGER")
+      (with-terminal-ui (active ui)
+        (terminal-ui-append-finalized active ':ledger "OLD-LEDGER")
+        (terminal-ui-process-event active ':scroll-top)
+        (setf (terminal-ui-live-output-suspended-p active) t
+              (terminal-ui-stream-tail active) "OLD-STREAM"
+              (terminal-ui-pending-action active) '(:copy "OLD-LEDGER"))
+        (terminal-ui-append-finalized active ':deferred "OLD-DEFERRED")
+        (test-call-with-function-replacements
+         (list (list 'application-install-conversation
+                     (lambda (observed target)
+                       (when fail-p
+                         (error 'simple-error :format-control "Synthetic install failure."))
+                       (setf (application-conversation observed) target)
+                       observed)))
+         (lambda ()
+           (test-assert
+            (handler-case (progn (application-command application "/new") nil)
+              (simple-error () t))
+            "a failed conversation installation is reported")
+           (test-assert
+            (and (eq (application-conversation application) conversation)
+                 (search "OLD-LEDGER" (clinedi:transcript-viewport-chunk-text
+                                      (fullscreen-terminal-ui-viewport active) 0)))
+            "a failed switch retains its current fullscreen ledger")
+           (setf fail-p nil)
+           (test-assert (eq (application-command application "/new") ':continue)
+                        "new dispatch completes successfully")))
+        (setf (terminal-ui-live-output-suspended-p active) nil)
+        (terminal-ui--paint-live active)
+        (test-assert (not (eq (application-conversation application) conversation))
+                     "new installs a fresh conversation")
+        (test-assert
+         (loop with viewport = (fullscreen-terminal-ui-viewport active)
+               for index below (clinedi:transcript-viewport-chunk-count viewport)
+               never (search "OLD-" (clinedi:transcript-viewport-chunk-text viewport index)))
+         "the new ledger contains neither committed nor deferred output from the old session")
+        (test-assert (and (null (fullscreen-test--top active))
+                          (null (terminal-ui-stream-tail active))
+                          (null (terminal-ui-pending-action active)))
+                     "the fresh view follows new output without stale streaming or click state")
+        (test-assert (terminal-ui-append-finalized active ':ledger "new output")
+                     "the new transcript has a fresh finalized-identifier scope")
+        (terminal-ui-resize active 60 :rows 16)
+        (test-assert
+         (every (lambda (row) (not (search "OLD-" (clinedi:ansi-strip row))))
+                (coerce (fullscreen-test--frame active) 'list))
+         "the repainted screen and resized frame exclude the previous ledger")
+        (test-assert
+         (some (lambda (item) (search "OLD-LEDGER" (json-encode item)))
+               (conversation-input-items (conversation-load (conversation-pathname conversation))))
+         "clearing the display preserves the previous conversation on disk"))))
+  nil)
