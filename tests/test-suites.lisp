@@ -43,6 +43,7 @@
 
 (define-test-suite lsp
   test-lsp-configuration
+  test-lsp-result-bounds
   test-lsp-tool-position-and-query
   test-lsp-edit-diagnostics-deadline
   test-lsp-tool-conditional-registration

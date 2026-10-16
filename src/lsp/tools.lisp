@@ -2,8 +2,8 @@
 
 ;;;; -- Language Server Tools --
 
-(defparameter *lsp-tool-result-limit* 24000
-  "Maximum characters returned by one explicit LSP tool.")
+(defparameter *lsp-tool-result-limit* 8000
+  "Maximum JSON characters, within the shared successful tool content bound.")
 
 (defclass lsp-tool (tool)
   ((manager :initarg :manager :reader lsp-tool-manager
@@ -75,14 +75,75 @@ an authorized file elsewhere, as an editor opening that file would search."
                             "result" (getf row :result))))
          (lsp-manager-map-file manager path (lsp-tool--root-boundary context path) function))))
 
+(-> lsp-tool--bounded-value
+    (t &key (:string-limit integer) (:item-limit integer) (:node-limit integer))
+    (values t boolean))
+(defun lsp-tool--bounded-value (value &key string-limit item-limit node-limit)
+  "Copy VALUE within finite traversal bounds and report any omitted data."
+  (let ((remaining node-limit)
+        (truncated-p nil))
+    (labels ((project (item depth)
+               (cond
+                 ((or (minusp (decf remaining)) (zerop depth))
+                  (setf truncated-p t)
+                  "… [truncated]")
+                 ((stringp item)
+                  (if (> (length item) string-limit)
+                      (progn
+                        (setf truncated-p t)
+                        (concatenate 'string (subseq item 0 string-limit) "… [truncated]"))
+                      item))
+                 ((json-object-p item)
+                  (let ((copy (make-hash-table :test #'equal))
+                        (count 0))
+                  (block fields
+                    (maphash (lambda (key child)
+                               (unless (and (< count item-limit) (plusp remaining))
+                                 (setf truncated-p t)
+                                 (return-from fields nil))
+                               (incf count)
+                               (when (> (length key) string-limit)
+                                 (setf truncated-p t))
+                               (setf (gethash (subseq key 0 (min (length key) string-limit)) copy)
+                                     (project child (1- depth))))
+                             item))
+                    copy))
+                 ((and (vectorp item) (not (stringp item)))
+                  (let ((items nil)
+                        (count (min (length item) item-limit (max 0 remaining))))
+                    (when (< count (length item)) (setf truncated-p t))
+                    (loop for index below count
+                          while (plusp remaining)
+                          do (push (project (aref item index) (1- depth)) items)
+                          finally (when (< (length items) (length item))
+                                    (setf truncated-p t)))
+                    (coerce (nreverse items) 'vector)))
+                 (t
+                  item))))
+      (let ((copy (project value 12)))
+        (values copy truncated-p)))))
+
 (-> lsp-tool--render (t &optional integer) string)
 (defun lsp-tool--render (value &optional (limit *lsp-tool-result-limit*))
-  "Encode a bounded JSON result, marking text truncation explicitly."
-  (let ((text (json-encode value)))
-    (if (> (length text) limit)
-        (concatenate 'string (subseq text 0 limit)
-                     (format nil "~%[LSP output truncated; narrow the query.]"))
-        text)))
+  "Return complete JSON, fitting structured data before serializing it.
+
+The shared tool-success bound is 8000 characters. Never let that outer bound
+clip JSON. Truncated documents retain a bounded result plus an explicit note."
+  (let ((limit (max 4 (min 8000 limit))))
+    (loop for size = 8000 then (floor size 2)
+          do (multiple-value-bind (copy truncated-p)
+                 (lsp-tool--bounded-value value :string-limit size
+                                         :item-limit (max 1 size)
+                                         :node-limit (max 1 size))
+               (let ((text (json-encode
+                            (if truncated-p
+                                (json-object "result" copy "truncated"
+                                             "LSP output truncated; narrow the query.")
+                                copy))))
+                 (when (<= (length text) limit) (return text))))
+          when (zerop size)
+            return (let ((text (json-encode (json-object "truncated" t))))
+                     (if (<= (length text) limit) text "null")))))
 
 (-> lsp-tool--position (lsp-document json-object) json-object)
 (defun lsp-tool--position (document arguments)
