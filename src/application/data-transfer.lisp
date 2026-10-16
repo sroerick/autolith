@@ -68,6 +68,24 @@
               (format nil "All data across ~D workspaces."
                       (length (getf report :workspaces))))))
 
+(-> data-transfer-report-entry (string list) list)
+(defun data-transfer-report-entry (action report)
+  "Return a terminal receipt with styled paths, aligned counts, and scope."
+  (append
+   (list (terminal-span ':success (format nil "~A~%" action)))
+   (application--entry-fields
+    (append
+     (list (list "archive" ':code
+                 (uiop:native-namestring (pathname (getf report :pathname)))))
+     (loop for key in '(:conversations :memories :agendas :plans :papercuts :files)
+           collect (list (string-downcase (symbol-name key)) ':plain (getf report key)))
+     (list (if (getf report :workspace)
+               (list "workspace" ':code
+                     (uiop:native-namestring (pathname (getf report :workspace))))
+               (list "scope" ':dim
+                     (format nil "All data across ~D workspaces."
+                             (length (getf report :workspaces))))))))))
+
 (define-application-command application--builtin-data-export-command
     (:name "/data.export"
      :argument "FILE [--all|--workspace DIRECTORY]"
@@ -82,7 +100,7 @@
          (workspace (data-transfer--command-workspace configuration :workspace workspace :all all))
          (report (data-export (data-transfer--command-path pathname configuration)
                               :workspace workspace :configuration configuration)))
-    (application-present application (data-transfer-render-report "Exported" report)))
+    (application-present application (data-transfer-report-entry "Exported" report)))
   ':continue)
 
 (define-application-command application--builtin-data-import-command
@@ -99,5 +117,5 @@
          (workspace (data-transfer--command-workspace configuration :workspace workspace))
          (report (data-import (data-transfer--command-path pathname configuration)
                               :workspace workspace :configuration configuration)))
-    (application-present application (data-transfer-render-report "Imported" report)))
+    (application-present application (data-transfer-report-entry "Imported" report)))
   ':continue)

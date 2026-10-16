@@ -1755,3 +1755,57 @@
       (ignore-errors (terminal-ui-stop ui))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+
+(-> test-recovery-input-vault-presentation () null)
+(defun test-recovery-input-vault-presentation ()
+  "Exercise inspection, storage/read failure, and restore/discard receipt roles."
+  (with-test-configuration (configuration)
+    (let* ((application (recovery-input-vault-tests--application configuration "vault-view"))
+           (controller (make-instance 'application-input-controller :application application))
+           (captures (list (list :captured-at (get-universal-time)
+                                 :work-items '((:message "queued 猫")))))
+           (failure (make-condition 'recovery-input-vault-error :message "unreadable fixture"
+                                    :pathname (test-configuration-root configuration)
+                                    :operation ':read-vault))
+           (read-failure-p nil)
+           (entries nil))
+      (setf (application-input-controller application) controller)
+      (test-call-with-function-replacements
+       (list (list 'application-recovery-input-vault-captures
+                   (lambda (application)
+                     (declare (ignore application))
+                     (if read-failure-p (error failure) captures)))
+             (list 'application-input-controller-vault-restore
+                   (lambda (controller) (declare (ignore controller)) 1))
+             (list 'application-input-controller-vault-discard
+                   (lambda (controller) (declare (ignore controller)) t))
+             (list 'application-present
+                   (lambda (application entry)
+                     (declare (ignore application)) (push entry entries) nil)))
+       (lambda ()
+         (application-operation-call application 'vault)
+         (application-command application "/vault")
+         (test-assert (equal (first entries) (second entries)) "native and slash vault views agree")
+         (let ((entry (first entries)))
+           (test-assert (terminal-styled-text-p entry) "ordinary vault view is structured")
+           (test-assert (command-view-tests--role-p entry ':plain "queued 猫") "input previews retain prose styling")
+           (test-assert (command-view-tests--role-p entry ':code "(vault-restore)") "restore action uses code styling"))
+         (setf (application-recovery-input-vault-failure application) failure
+               captures nil)
+         (application-operation-call application 'vault)
+         (test-assert (command-view-tests--role-p (first entries) ':failure "unreadable fixture")
+                      "known storage failures have failure severity")
+         (setf read-failure-p t)
+         (application-command application "/vault")
+         (test-assert (command-view-tests--role-p (first entries) ':failure "unreadable fixture")
+                      "read failures retain their severity")
+         (test-assert (command-view-tests--role-p (first entries) ':code "(vault-discard)")
+                      "read failures expose a structured discard action")
+         (application-operation-call application 'vault-restore)
+         (test-assert (find ':success (first entries) :key #'terminal-span-style)
+                      "successful restoration has success severity")
+         (application-command application "/vault-discard")
+         (test-assert (find ':success (first entries) :key #'terminal-span-style)
+                      "successful discard has success severity")))))
+  nil)

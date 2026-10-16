@@ -876,6 +876,7 @@
 
 (define-test-suite data-transfer
   test-data-transfer-commands
+  test-data-transfer-receipt-presentation
   test-data-transfer-roundtrip
   test-data-transfer-workspace
   test-data-transfer-rejection
@@ -1057,6 +1058,7 @@
   test-recovery-input-vault-disabled-ingress
   test-recovery-input-vault-disabled-recalled-ingress
   test-recovery-input-vault-startup-notice
+  test-recovery-input-vault-presentation
   test-recovery-input-vault-recovery-startup
   test-recovery-input-vault-corrupt-startup
   test-recovery-input-vault-ordinary-startup

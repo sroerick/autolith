@@ -1095,31 +1095,61 @@ The caller must hold CONTROLLER's lock."
         (terminal-span ':dim " to discard.")))
       t)))
 
+(-> application-recovery-input-vault--actions (&key (:restore-p boolean)) list)
+(defun application-recovery-input-vault--actions (&key (restore-p t))
+  "Return semantic vault actions, offering restore only for readable captures."
+  (append
+   (list (terminal-span ':dim "Use "))
+   (when restore-p
+     (list (terminal-span ':code "(vault-restore)")
+           (terminal-span ':dim " to restore, or ")))
+   (list (terminal-span ':code "(vault-discard)")
+         (terminal-span ':dim " to discard."))))
+
+(-> application-recovery-input-vault-entry (application list) list)
+(defun application-recovery-input-vault-entry (application captures)
+  "Return chronological CAPTURES and storage failures as semantic terminal spans."
+  (let ((failure (application-recovery-input-vault-failure application)))
+    (append
+     (list (terminal-span ':brand (format nil "Recovery input vault~%")))
+     (application--entry-fields
+      (list (list "conversation" ':code
+                  (conversation-identifier (application-conversation application)))
+            (list "captures" ':plain (length captures))
+            (list "inputs" ':plain (application-recovery-input-vault--input-count captures))))
+     (loop for capture in captures
+           for index from 1
+           append (append
+                   (list (terminal-span ':strong (format nil "~%~D. " index))
+                         (terminal-span ':dim
+                                        (format nil "~A~%"
+                                                (application--calendar-description
+                                                 (getf capture :captured-at)))))
+                   (application--entry-fields
+                    (loop for entry in (application-recovery-input-vault--capture-labeled-inputs capture)
+                          collect (list (first entry) ':plain
+                                        (application-recovery-input-vault--preview (rest entry)))))))
+     (when failure
+       (application--entry-fields (list (list "storage warning" ':failure failure))))
+     (if (or captures failure)
+        (application-recovery-input-vault--actions :restore-p (not (null captures)))
+         (list (terminal-span ':hint "No recovered input is vaulted for this conversation."))))))
+
 (-> application-recovery-input-vault-present (application) null)
 (defun application-recovery-input-vault-present (application)
   "Present APPLICATION's vault or its exact validation failure."
   (handler-case
-      (let ((captures
-              (application-recovery-input-vault-captures application)))
-        (application-present
-         application
-         (if captures
-             (application-recovery-input-vault-description
-              application captures)
-             (let ((failure
-                     (application-recovery-input-vault-failure application)))
-               (if failure
-                   (format nil
-                           "No readable input in the vault. Storage error: ~A~%Use (vault-discard) to discard the saved input."
-                           failure)
-                   "No recovered input is vaulted for this conversation.")))))
+      (application-present
+       application
+       (application-recovery-input-vault-entry
+        application (application-recovery-input-vault-captures application)))
     (recovery-input-vault-error (condition)
       (setf (application-recovery-input-vault-failure application) condition)
       (application-present
        application
-       (format nil
-               "Could not read vault: ~A~%Use (vault-discard) to discard this conversation's vault."
-               condition))))
+       (append (list (terminal-span ':failure
+                                    (format nil "Could not read vault: ~A~%" condition)))
+               (application-recovery-input-vault--actions :restore-p nil)))))
   nil)
 
 (-> application-recovery-input-vault--discard-legacy (application) null)
@@ -1234,10 +1264,11 @@ The caller must hold CONTROLLER's lock."
             (application-input-controller-vault-restore controller)))
       (application-present
        application
-       (if (plusp count)
-           (format nil "Restored ~D recovered input~:P before newer queued work."
-                   count)
-           "No recovered input was available to restore."))))
+       (list (terminal-span
+              (if (plusp count) ':success ':hint)
+              (if (plusp count)
+                  (format nil "Restored ~D recovered input~:P before newer queued work." count)
+                  "No recovered input was available to restore."))))))
   ':continue)
 
 (define-application-command application--builtin-vault-discard-command
@@ -1256,5 +1287,5 @@ The caller must hold CONTROLLER's lock."
     (application-input-controller-vault-discard controller)
     (application-present
      application
-     "Discarded this conversation's recovered input."))
+     (list (terminal-span ':success "Discarded this conversation's recovered input."))))
   ':continue)
