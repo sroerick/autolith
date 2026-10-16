@@ -250,6 +250,13 @@
   test-saved-context-rule-publication-failures
   test-saved-context-rule-concurrent-writers)
 
+(define-test-suite complaint
+  test-complaint-output-selection
+  test-complaint-generation
+  test-complaint-review-and-save
+  test-complaint-editing
+  test-complaint-command-aliases)
+
 (define-test-suite relax
   test-relax-setting-and-command
   test-relax-warning-rebuilds-with-system-prompt)
