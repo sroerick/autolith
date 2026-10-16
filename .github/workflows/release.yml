@@ -350,6 +350,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Check OpenSSL discovery in Windows PowerShell 5.1
+        shell: powershell
+        run: script\check-windows-openssl.ps1
+      - name: Check OpenSSL discovery in PowerShell 7
+        shell: pwsh
+        run: script\check-windows-openssl.ps1
+
       - name: Install build dependencies
         shell: pwsh
         run: |

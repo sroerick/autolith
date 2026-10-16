@@ -351,6 +351,13 @@ used when present; otherwise the bootstrap installs the official Windows binary
 pinned in `sbcl-windows-releases.sha256` below the data root. `script\check.ps1`
 runs the checks and `bin\autolith.cmd` starts a session.
 
+Run the standalone Windows OpenSSL discovery fixtures without bootstrapping Lisp:
+
+```powershell
+powershell -NoProfile -File script/check-windows-openssl.ps1
+pwsh -NoProfile -File script/check-windows-openssl.ps1
+```
+
 Rebuild only the installed pristine recovery image with:
 
 ```sh

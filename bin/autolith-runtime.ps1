@@ -113,20 +113,9 @@ function Install-Runtime {
 }
 
 function Add-OpenSslDirectory {
-  # cl+ssl loads OpenSSL 3 by name. A source checkout takes the DLLs from
-  # AUTOLITH_OPENSSL_DIRECTORY, a native\openssl directory beside the
-  # sources, or Git for Windows, in that order.
-  $candidates = @()
-  if ($env:AUTOLITH_OPENSSL_DIRECTORY) { $candidates += $env:AUTOLITH_OPENSSL_DIRECTORY }
-  $candidates += (Join-Path $sourceRoot 'native\openssl')
-  $git = Resolve-Command 'git'
-  if ($git) { $candidates += (Join-Path (Split-Path -Parent (Split-Path -Parent $git)) 'mingw64\bin') }
-  foreach ($candidate in $candidates) {
-    if ($candidate -and (Test-Path -LiteralPath (Join-Path $candidate 'libcrypto-3-x64.dll'))) {
-      $env:PATH = "$candidate;" + $env:PATH
-      return
-    }
-  }
+  . (Join-Path $PSScriptRoot 'autolith-openssl.ps1')
+  $openssl = Find-AutolithOpenSsl -SourceRoot $sourceRoot
+  if ($openssl) { $env:PATH = "$($openssl.Directory);" + $env:PATH }
 }
 
 $installRequested = $false
