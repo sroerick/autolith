@@ -1,5 +1,8 @@
 (in-package #:autolith)
 
+(defvar *application-tool-presentation-label* nil
+  "The durable readable label bound only while rendering one conversation record.")
+
 ;;;; -- Active Application --
 
 (defclass application ()
@@ -2035,9 +2038,10 @@ the fence's raw source; that span becomes a widget copying the source."
 (defun application--tool-display-name (application canonical-name)
   "Return a readable tool label, falling back to an unavailable dispatch identity."
   (let ((tool (application--find-tool application canonical-name)))
-    (if tool
-        (tool-display-name tool)
-        canonical-name)))
+    (or *application-tool-presentation-label*
+        (if tool
+            (tool-display-name tool)
+            canonical-name))))
 
 (-> application--tool-namespace-display-name (application string) string)
 (defun application--tool-namespace-display-name (application namespace)
@@ -2224,9 +2228,10 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
              (list (terminal-span ':dim "…"))))))))
 
 (-> response-item-entry
-    (application json-object &key (:timestamp (option timestamp)))
+    (application json-object &key (:timestamp (option timestamp))
+                                 (:tool-label (option string)))
     (option list))
-(defun response-item-entry (application item &key timestamp)
+(defun response-item-entry (application item &key timestamp tool-label)
   "Return a styled transcript entry for completed provider ITEM."
   (let ((type (json-get item "type")))
     (cond
@@ -2247,7 +2252,8 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
            (when summary
              (application--reasoning-summary-entry application summary)))))
       ((string= (or type "") "function_call")
-       (let* ((canonical-name (function-call-canonical-name item))
+       (let* ((*application-tool-presentation-label* tool-label)
+              (canonical-name (function-call-canonical-name item))
               (tool (application--find-tool application canonical-name)))
          (application-tool-call-entry tool application item)))
       ((string= (or type "") "web_search_call")
@@ -2335,9 +2341,11 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
        (and (stringp wire-json)
             (response-item-entry application
                                  (json-decode wire-json)
-                                 :timestamp (getf (rest record) :time)))))
+                                 :timestamp (getf (rest record) :time)
+                                 :tool-label (getf (rest record) :tool-label)))))
     (:tool-result
-     (let* ((canonical-name (getf (rest record) :tool))
+     (let* ((*application-tool-presentation-label* (getf (rest record) :tool-label))
+            (canonical-name (getf (rest record) :tool))
             (tool (application--find-tool application canonical-name)))
        (when (application--record-visible-p application record)
          (application-tool-result-entry tool application record))))

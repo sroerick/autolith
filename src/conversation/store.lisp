@@ -1850,10 +1850,11 @@ transcript show automatic INPUT as a short notice."
 
 (-> conversation-append-provider-item
     (conversation json-object
-     &key (:persistence tool-conversation-persistence))
+     &key (:persistence tool-conversation-persistence)
+          (:tool-label (option string)))
     json-object)
 (defun conversation-append-provider-item
-    (conversation item &key (persistence ':durable))
+    (conversation item &key (persistence ':durable) tool-label)
   "Append one authoritative provider ITEM with the requested PERSISTENCE."
   (conversation--validate-provider-item conversation item)
   (ecase persistence
@@ -1861,7 +1862,8 @@ transcript show automatic INPUT as a short notice."
      (conversation-append-record
       conversation
       (list :provider-item
-            :wire-json (json-encode item)))
+            :wire-json (json-encode item)
+            :tool-label tool-label))
      (conversation--append-input-item conversation item))
     (:next-response
      (conversation--append-ephemeral-input-item conversation item))))
@@ -1932,6 +1934,7 @@ transcript show automatic INPUT as a short notice."
 (-> conversation-append-tool-result
     (conversation string
      &key (:tool-name string)
+          (:tool-label (option string))
           (:output string)
           (:details t)
           (:image-attachments list)
@@ -1944,7 +1947,7 @@ transcript show automatic INPUT as a short notice."
     json-object)
 (defun conversation-append-tool-result
     (conversation call-id
-     &key tool-name output details image-attachments content-blocks success-p
+     &key tool-name tool-label output details image-attachments content-blocks success-p
        (category (if success-p ':success ':failure))
        cpu-microseconds real-microseconds (persistence ':durable))
   "Append categorized tool OUTPUT, bounded metadata, optional content and timing."
@@ -2001,6 +2004,7 @@ transcript show automatic INPUT as a short notice."
                    (list :tool-result
                          :call-id call-id
                          :tool tool-name
+                         :tool-label tool-label
                          :status (ecase category
                                    (:success ':ok)
                                    (:failure ':error)

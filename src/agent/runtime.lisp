@@ -716,6 +716,8 @@ commit 6f51c65958."
         (conversation-append-provider-item
          conversation
          item
+         :tool-label (when (getf plan :tool)
+                       (tool-display-name (getf plan :tool)))
          :persistence
          (if plan
              (getf plan :persistence)
@@ -1006,6 +1008,8 @@ restricted turn cannot discover tools outside its allowlist."
        (agent-conversation agent)
        call-id
        :tool-name tool-name
+       :tool-label (when (getf plan :tool)
+                     (tool-display-name (getf plan :tool)))
        :output message
        :success-p nil
        :persistence (getf plan :persistence))
@@ -1152,6 +1156,8 @@ worker results become explicit unknown outcomes so provider history stays valid.
          (agent-conversation agent)
          call-id
          :tool-name tool-name
+         :tool-label (when (getf plan :tool)
+                       (tool-display-name (getf plan :tool)))
          :output output
          :details (tool-result-details effective-result)
          :content-blocks (tool-result-content-blocks effective-result)

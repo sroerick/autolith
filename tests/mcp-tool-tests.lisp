@@ -4147,3 +4147,76 @@
                           (search "42" (terminal--spans-text entry)))
                      "malformed section metadata cannot prevent transcript replay"))))
   nil)
+
+
+(-> test-mcp-durable-labels () null)
+(defun test-mcp-durable-labels ()
+  "Replay an executed MCP round without its registry or live server."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (manager transport) (test-mcp--manager configuration)
+      (declare (ignore transport))
+      (unwind-protect
+           (let* ((registry (make-instance 'tool-registry))
+                  (conversation (conversation-create configuration))
+                  (application (application-tests--ui-application :columns 160)))
+             (mcp-tool-registry-register-manager registry manager)
+             (let* ((tool (test-mcp--tool-with-raw-name registry "read file"))
+                    (label (tool-display-name tool))
+                    (call (json-object "type" "function_call"
+                                       "call_id" "durable-label"
+                                       "namespace" (tool-namespace tool)
+                                       "name" (tool-name tool)
+                                       "arguments" "{}"))
+                    (wire-json (json-encode call))
+                    (provider (make-instance
+                               'scripted-provider
+                               :results (list (agent-test-result "labels-1" (list call))
+                                              (agent-test-result "labels-2"
+                                                                 (list (agent-test-message "done"))))))
+                    (agent (agent-create :configuration configuration
+                                         :provider provider
+                                         :conversation conversation
+                                         :tool-registry registry :worker ':unused)))
+               (agent-run-user-turn agent "read the scripted file")
+               (mcp-manager-close manager)
+               (setf (application-tool-registry application) (make-instance 'tool-registry)
+                     (application-compact-view-p application) nil)
+               (let* ((loaded (conversation-load (conversation-pathname conversation)))
+                      (records (let ((records nil))
+                                 (conversation-map-records loaded (lambda (record) (push record records)))
+                                 (nreverse records)))
+                      (call-record (find-if
+                                    (lambda (record)
+                                      (and (eq (first record) ':provider-item)
+                                           (equal (getf (rest record) :wire-json) wire-json)))
+                                    records))
+                      (result-record (find ':tool-result records :key #'first)))
+                 (test-assert (and call-record result-record)
+                              "the actual agent round persists a call and correlated result")
+                 (dolist (record (list call-record result-record))
+                   (test-assert (equal label (getf (rest record) :tool-label))
+                                "readable identity survives loading the conversation")
+                   (let ((text (terminal--spans-text (conversation-record-entry application record))))
+                     (test-assert (search label text) "unregistered tool headers use the saved label")
+                     (test-assert (not (search (tool-canonical-name tool) text))
+                                  "encoded identity is absent from replay presentation")))
+                 (let* ((text (terminal--spans-text (conversation-record-entry application call-record)))
+                        (first (search label text)))
+                   (test-assert (and first (search label text :start2 (+ first (length label))))
+                                "the Lisp equivalent uses the same saved label as the call header"))
+                 (test-assert (string= wire-json (getf (rest call-record) :wire-json))
+                              "the persisted provider call retains its exact identity")
+                 (test-assert (equal (tool-canonical-name tool) (getf (rest result-record) :tool))
+                              "result correlation retains the dispatch identity")
+                 (test-assert (every (lambda (item) (not (nth-value 1 (gethash "tool-label" item))))
+                                     (conversation-input-items loaded))
+                              "presentation sidecars are excluded from provider input")
+                 (let* ((handoff (copy-tree result-record))
+                        (job (list :id "saved-label-job" :state ':running)))
+                   (setf (getf (rest handoff) :details)
+                         (list :tool-execution :job job :handed-off-p t :handoff-reason ':grace-expired))
+                   (test-assert (search label (terminal--spans-text
+                                              (conversation-record-entry application handoff)))
+                                "handoff headers use the saved tool label")))))
+        (mcp-manager-close manager))))
+  nil)

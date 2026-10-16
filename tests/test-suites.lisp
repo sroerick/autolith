@@ -266,6 +266,7 @@
   test-mcp-readable-presentation
   test-mcp-answer-presentation
   test-mcp-malformed-presentation-metadata
+  test-mcp-durable-labels
   test-mcp-reload-registry-rollback
   test-mcp-reload-registry-isolation
   test-mcp-reload-transaction-boundary)

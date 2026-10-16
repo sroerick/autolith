@@ -219,7 +219,8 @@ bounds its nesting, container sizes, string lengths and key lengths."
                (<= (length name)
                    *application-provider-form-name-characters*))
       (handler-case
-          (let ((canonical-name (format nil "~A.~A" namespace name))
+          (let ((canonical-name (or *application-tool-presentation-label*
+                                    (format nil "~A.~A" namespace name)))
                 (keys (sort (loop for key being the hash-keys of arguments
                                   collect key)
                             #'string<))
@@ -539,7 +540,8 @@ structural discriminator as a readable heading instead."
   (application--tool-entry
    application
    :style ':tool
-   :header (format nil "▸ ~A" (function-call-canonical-name call))
+   :header (format nil "▸ ~A" (or *application-tool-presentation-label*
+                                  (function-call-canonical-name call)))
    :rows (application--generic-argument-rows
           application
           (application--function-call-arguments call))))
