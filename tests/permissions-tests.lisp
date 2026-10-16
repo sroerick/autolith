@@ -178,3 +178,170 @@
                                  ':external-tool))
          "failed publication never grants an external approval")))))
   nil)
+
+(-> test-external-tool-permission-modes () null)
+(defun test-external-tool-permission-modes ()
+  "Exercise external calls through shared modes, picker choices, and exact rules."
+  (with-test-configuration (configuration root)
+    (let* ((tool (make-instance 'tool :namespace "service" :name "lookup"
+                                :description "Read one service record."
+                                :parameters (json-object "type" "object")))
+           (arguments (json-object "record" "one"))
+           (state (permissions-load configuration))
+           (application (make-instance 'application :configuration configuration
+                                       :permission-state state
+                                       :ui (terminal-ui-create
+                                            :terminal (make-instance 'recording-terminal))
+                                       :provider (make-instance 'rlm-inference-test-provider
+                                                                :results nil)))
+           (choice "once")
+           (pick-count 0)
+           (classify-count 0)
+           (decision ':full-access))
+      (setf (application-input-controller application)
+            (make-instance 'application-input-controller :application application))
+      (test-call-with-function-replacements
+       (list
+        (list 'application--interactive-command-approval-p
+              (lambda (application) (declare (ignore application)) t))
+        (list 'application-input-controller-call-with-reader-paused
+              (lambda (controller function)
+                (declare (ignore controller)) (funcall function)))
+        (list 'application-present
+              (lambda (&rest arguments) (declare (ignore arguments)) nil))
+        (list 'terminal-ui-select
+              (lambda (ui &key title items resize-callback)
+                (declare (ignore ui title resize-callback))
+                (incf pick-count)
+                (test-assert
+                 (equal (mapcar (lambda (item) (getf item :name)) items)
+                        '("auto" "once" "always" "full" "deny"))
+                 "external calls offer normal permission choices without sandbox")
+                choice))
+        (list 'permissions-model-classify-command
+              (lambda (request directory &key provider configuration
+                                             sandbox-available-p user-instructions)
+                (declare (ignore directory provider configuration user-instructions))
+                (incf classify-count)
+                (test-assert (and (not sandbox-available-p)
+                                  (search "External tool call" request)
+                                  (search "one" request))
+                             "auto classifies the external identity and arguments without sandbox")
+                (values decision "test policy"))))
+       (lambda ()
+         (test-assert (eq (application-authorize-tool application tool arguments) ':allow)
+                      "once permits an external call")
+         (test-assert (eq (application-permission-mode application) ':ask)
+                      "once does not change session policy")
+         (dolist (rejected '("deny" "sandbox" "allow" nil))
+           (setf choice rejected)
+           (test-assert (eq (application-authorize-tool application tool arguments) ':deny)
+                        "cancelled, stale, and sandbox choices deny external calls"))
+         (setf choice "always")
+         (test-assert (eq (application-authorize-tool application tool arguments) ':allow)
+                      "always persists the exact external call")
+         (setf (application-permission-state application) (permissions-load configuration))
+         (let ((before pick-count))
+           (test-assert (eq (application-authorize-tool application tool arguments) ':allow)
+                        "a remembered external rule survives reload")
+           (test-assert (= before pick-count) "remembered external calls do not prompt"))
+         (test-assert (not (search "record" (uiop:read-file-string
+                                              (configuration-permissions-path configuration))))
+                      "external permission files contain hashes, not argument payloads")
+         (setf arguments (json-object "record" "one" "extra" t)
+               choice "deny")
+         (test-assert (eq (application-authorize-tool application tool arguments) ':deny)
+                      "changed arguments require a new grant")
+         (setf choice "full")
+         (test-assert (eq (application-authorize-tool application tool arguments) ':allow)
+                      "full grants session-wide external access")
+         (let ((before pick-count))
+           (test-assert (and (eq (application-authorize-command application "anything" root)
+                                ':full-access)
+                             (eq (application-authorize-tool application tool arguments) ':allow)
+                             (= before pick-count))
+                        "shell and external calls share the same full-access session mode"))
+         (setf (application-permission-mode application) ':ask
+               choice "auto")
+         (test-assert (and (eq (application-authorize-tool application tool arguments) ':allow)
+                           (eq (application-permission-mode application) ':auto))
+                      "auto selects the shared session policy")
+         (let ((before pick-count)
+               (classified classify-count))
+           (test-assert (and (eq (application-authorize-tool application tool arguments) ':allow)
+                             (= before pick-count)
+                             (= classified classify-count))
+                        "automatic external decisions reuse the normal classification cache"))
+         (clrhash (application-command-classifications application))
+         (setf decision ':sandboxed)
+         (test-assert (eq (application-authorize-tool application tool arguments) ':deny)
+                      "a classifier cannot grant a remote call a local sandbox")
+         (setf (application-permission-mode application) ':sandboxed choice "deny")
+         (test-assert (eq (application-authorize-tool application tool arguments) ':deny)
+                      "local sandbox mode requires separate external approval")))))
+  nil)
+
+(-> test-external-tool-permission-keys () null)
+(defun test-external-tool-permission-keys ()
+  "Verify exact typed identity and order-independent JSON object keys."
+  (let ((first (make-instance 'tool :namespace "service" :name "first"))
+        (second (make-instance 'tool :namespace "service" :name "second")))
+    (test-assert
+     (string=
+      (application--tool-permission-key first (json-object "a" 1 "b" 2))
+      (application--tool-permission-key first (json-object "b" 2 "a" 1)))
+     "object field order does not invalidate an exact external rule")
+    (test-assert
+     (not
+      (string= (application--tool-permission-key first (json-object))
+               (application--tool-permission-key second (json-object))))
+     "tool identity is part of the remembered external rule")
+    (let ((values (list (json-object) #() nil (json-false) "" 0)))
+      (test-assert
+       (= (length values)
+          (length
+           (remove-duplicates
+            (mapcar
+             (lambda (value)
+               (application--tool-permission-key first
+                (json-object "value" value)))
+             values)
+            :test #'string=)))
+       "external rules distinguish empty objects, arrays, null, booleans, strings, and numbers")))
+  nil)
+
+(-> test-external-tool-permission-failures () null)
+(defun test-external-tool-permission-failures ()
+  "Fail closed without an approval owner or after remembered-rule publication fails."
+  (with-test-configuration (configuration root)
+   (let* ((tool
+           (make-instance 'tool :namespace "service" :name "lookup"
+                          :description "Read one service record."))
+          (arguments (json-object))
+          (application
+           (make-instance 'application :configuration configuration :ui nil))
+          (key (application--tool-permission-key tool arguments)))
+     (test-assert
+      (eq (application-authorize-tool application tool arguments) ':deny)
+      "a headless session without a classifier cannot silently grant an external call")
+     (setf (application-permission-mode application) ':auto)
+     (test-assert
+      (eq (application-authorize-tool application tool arguments) ':deny)
+      "auto denies when no model provider can classify the external call")
+     (ensure-directories-exist
+      (merge-pathnames "permissions.sexp/" (config :state-root configuration)))
+     (test-assert
+      (handler-case
+       (progn
+        (application--apply-command-authorization-choice application key root
+                                                         "always" :kind
+                                                         ':external-tool)
+        nil)
+       (permissions-error nil t))
+      "remembered external approval cannot succeed after persistence failure")
+     (test-assert
+      (not
+       (permissions-allowed-p (application-permission-state application) key
+                              root :kind ':external-tool))
+      "failed remembered approval never authorizes a later external call")))
+  nil)

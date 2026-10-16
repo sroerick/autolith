@@ -3503,8 +3503,8 @@
                    (equal fields
                           '(("MCP server" "Test Server")
                             ("MCP tool" "read/file")))
-                   (search "\"Test Server\"" title)
-                   (search "\"read/file\"" title)
+                   (search "Test Server" title)
+                   (search "read/file" title)
                    (not
                     (search
                      (tool-canonical-name collision-tool)
@@ -3518,16 +3518,19 @@
                           'string
                           (make-string 512 :initial-element #\x)
                           tail)))
-                      (encoded (json-encode arguments))
-                      (entry
-                        (application--tool-authorization-request-entry
-                         mutating-tool arguments)))
-                 (test-assert
-                  (and
-                   (search encoded entry)
-                   (search tail entry)
-                   (> (length entry) 512))
-                  "MCP approval displays consequential arguments without truncation"))
+                     (entry
+                       (application--tool-authorization-request-entry
+                        mutating-tool arguments))
+                     (text (apply #'concatenate 'string
+                                  (mapcar #'terminal-span-text entry))))
+                (test-assert
+                 (and
+                  (search (json-encode (json-get arguments "change")) text)
+                  (search tail text)
+                  (> (length text) 512)
+                  (find ':hint entry :key #'terminal-span-style)
+                  (find ':dim entry :key #'terminal-span-style))
+                 "MCP approval styles complete consequential arguments without truncation"))
                (test-assert
                 (and
                  (tool-child-safe-p read-tool)

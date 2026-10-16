@@ -219,7 +219,10 @@
     test-command-permission-persistence
     test-command-permission-corruption
     test-command-permission-write-failure
-    test-external-permission-persistence)
+    test-external-permission-persistence
+    test-external-tool-permission-modes
+    test-external-tool-permission-keys
+    test-external-tool-permission-failures)
 
 (define-test-suite context
   test-session-state-context-contributor

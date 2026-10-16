@@ -112,15 +112,24 @@ arbitrary Lisp effects.
 
 =:prompt= is the default. Choose one policy per server:
 
-- =:prompt= asks for every tool call
-- =:read-only= skips approval only for an exact
-  =:trusted-read-only-tools= name whose MCP annotations say read-only
-  and non-destructive. Everything else prompts for approval
+- =:prompt= applies the session's normal permission mode to each call
+- =:read-only= permits an exact =:trusted-read-only-tools= name whose MCP
+  annotations say read-only and non-destructive; other calls use normal permissions
 - =:allow= permits every server tool without a prompt
-- =:deny= denies every server tool
+- =:deny= denies every server tool, including in full-access sessions
 
-An approval picker names the configured server and raw tool, and shows
-complete JSON arguments.
+For calls requiring authorization, =full= grants session access and =auto=
+classifies the external operation against the user's request. In =ask= mode,
+choose =once=, =always=, =auto=, =full=, or =deny=. The picker shows the configured
+server, raw tool name, and complete arguments as aligned fields.
+
+=always= records the exact server, raw tool, arguments, and workspace in the
+standard permission store. The argument payload is hashed rather than saved.
+=/permissions clear= removes these grants along with shell-command grants.
+
+Local command sandboxing cannot confine an external server. In =sandbox= mode,
+a server call needs an exact remembered grant or separate approval. Automatic
+classification cannot grant sandboxed execution to an external call.
 
 A child agent gets a server tool only when both the server's
 =:child-tools= list names its exact raw name and the selected child

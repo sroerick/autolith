@@ -2913,40 +2913,39 @@ This is the owner installed as the terminal UI's exclusive-input function."
    (application-input-controller-input-pump controller) function))
 
 (-> application--command-authorization-items
-    (string pathname &key (:sandbox-available-p boolean))
+    (string pathname &key (:sandbox-available-p boolean) (:external-tool-p boolean))
     list)
 (defun application--command-authorization-items
-    (command directory &key sandbox-available-p)
-  "Return the available modal choices for COMMAND in DIRECTORY."
+    (command directory &key sandbox-available-p external-tool-p)
+  "Return the shared permission choices, excluding sandbox for external calls."
   (declare (ignore command))
-  (append
-   (list
-    (list :name "auto"
-          :argument nil
-          :description
-          (if sandbox-available-p
-              "classify automatically this session as sandboxed, full access, or denied"
-              "classify automatically this session as full access or denied"))
-    (list :name "once"
-          :argument nil
-          :description "allow this command once with full user privileges")
-    (list :name "always"
-          :argument nil
-          :description
-          (format nil "always allow this exact command in ~A with full user privileges"
-                  (application--abbreviated-directory (namestring directory)))))
-   (when sandbox-available-p
+  (let ((sandbox-available-p (and sandbox-available-p (not external-tool-p))))
+    (append
      (list
-      (list :name "sandbox"
-            :argument nil
-            :description "allow sandboxed commands for this session")))
-   (list
-    (list :name "full"
-          :argument nil
-          :description "let it ride with full user privileges for this session")
-    (list :name "deny"
-          :argument nil
-          :description "do not run the command"))))
+      (list :name "auto" :argument nil
+            :description
+            (if sandbox-available-p
+                "classify automatically this session as sandboxed, full access, or denied"
+                "classify automatically this session as full access or denied"))
+      (list :name "once" :argument nil
+            :description
+            (if external-tool-p
+                "allow this exact external call once; no local sandbox applies"
+                "allow this command once with full user privileges"))
+      (list :name "always" :argument nil
+            :description
+            (format nil "always allow this exact ~A in ~A"
+                    (if external-tool-p "external call and arguments" "command with full user privileges")
+                    (application--abbreviated-directory (namestring directory)))))
+     (when sandbox-available-p
+       (list (list :name "sandbox" :argument nil
+                   :description "allow sandboxed commands for this session")))
+     (list
+      (list :name "full" :argument nil
+            :description "let it ride with full user privileges for this session")
+      (list :name "deny" :argument nil
+            :description (if external-tool-p "do not call the external tool"
+                             "do not run the command"))))))
 
 (-> application--interactive-command-approval-p (application) boolean)
 (defun application--interactive-command-approval-p (application)
@@ -3017,17 +3016,17 @@ sandbox grant is revalidated at this final authorization boundary."
       ':deny))
 
 (-> application--model-command-permission
-    (application string pathname)
+    (application string pathname &key (:sandbox-available-p boolean))
     (values keyword string))
-(defun application--model-command-permission (application command directory)
+(defun application--model-command-permission
+    (application command directory
+     &key (sandbox-available-p (application--command-sandbox-available-p)))
   "Return the cached or freshly inferred automatic permission for COMMAND."
   (unless (and (slot-boundp application 'provider)
                (application-provider application))
     (return-from application--model-command-permission
-      (values ':deny "no provider is available to classify commands")))
-  (let* ((sandbox-available-p
-           (application--command-sandbox-available-p))
-         (user-instructions
+      (values ':deny "no provider is available to classify operations")))
+  (let* ((user-instructions
            (application--current-user-instructions application))
          (cache (application-command-classifications application))
          (key
@@ -3040,7 +3039,9 @@ sandbox grant is revalidated at this final authorization boundary."
     (if cached
         (let ((decision
                 (application--automatic-command-decision (car cached))))
-          (values decision
+          (values (if (and (eq decision ':sandboxed) (not sandbox-available-p))
+                      ':deny
+                      decision)
                   (if (and (eq decision (car cached))
                            (non-empty-string-p (cdr cached)))
                       (cdr cached)
@@ -3054,11 +3055,15 @@ sandbox grant is revalidated at this final authorization boundary."
              :user-instructions   user-instructions)
           (let* ((decision
                    (application--automatic-command-decision inferred-decision))
+                 (decision
+                   (if (and (eq decision ':sandboxed) (not sandbox-available-p))
+                       ':deny
+                       decision))
                  (reason
                    (if (and (eq inferred-decision decision)
                             (non-empty-string-p inferred-reason))
                        inferred-reason
-                       "the model returned an unusable automatic decision")))
+                       "the model returned an unavailable automatic grant")))
             (setf (gethash key cache) (cons decision reason))
             (values decision reason))))))
 
@@ -3073,20 +3078,22 @@ sandbox grant is revalidated at this final authorization boundary."
      application command directory decision reason)))
 
 (-> application--apply-command-authorization-choice
-    (application string pathname (option string))
+    (application string pathname (option string)
+     &key (:kind keyword) (:request (option string)))
     keyword)
 (defun application--apply-command-authorization-choice
-    (application command directory choice)
-  "Apply interactive command authorization CHOICE, failing closed when stale."
+    (application command directory choice &key (kind ':command) request)
+  "Apply a shared permission CHOICE, rejecting unavailable grants."
   (cond
     ((string= (or choice "") "auto")
-     ;; Auto is a session policy like "full" and "sandbox": later
-     ;; commands classify themselves instead of prompting again.
      (setf (application-permission-mode application) ':auto)
      (multiple-value-bind (decision reason)
-         (application--model-command-permission application command directory)
+         (if (eq kind ':external-tool)
+             (application--model-command-permission
+              application request directory :sandbox-available-p nil)
+             (application--model-command-permission application command directory))
        (application--apply-classified-command-permission
-        application command directory decision reason)))
+        application (or request command) directory decision reason)))
     ((string= (or choice "") "full")
      (setf (application-permission-mode application) ':full-access)
      ':full-access)
@@ -3097,10 +3104,11 @@ sandbox grant is revalidated at this final authorization boundary."
       :configuration (application-configuration application)
       :state         (application-permission-state application)
       :command       command
-      :directory     directory)
+      :directory     directory
+      :kind          kind)
      ':full-access)
     ((string= (or choice "") "sandbox")
-     (if (application--command-sandbox-available-p)
+     (if (and (eq kind ':command) (application--command-sandbox-available-p))
          (progn
            (setf (application-permission-mode application) ':sandboxed)
            ':sandboxed)
@@ -3146,109 +3154,221 @@ sandbox grant is revalidated at this final authorization boundary."
          application command directory choice)))))
 
 (-> application-authorize-command (application string pathname) keyword)
+(-> application--authorize-operation
+    (application string pathname
+     &key (:kind keyword) (:request (option string)) (:ask function))
+    keyword)
+(defun application--authorize-operation
+    (application key directory &key (kind ':command) request ask)
+  "Resolve the shared session, saved-rule, automatic, and interactive policy.
+
+KEY identifies the exact operation within KIND. REQUEST is its classifier view.
+External tools cannot receive a local command sandbox grant. ASK owns the UI."
+  (let ((external-p (eq kind ':external-tool)))
+    (labels ((saved-p ()
+               (permissions-allowed-p (application-permission-state application)
+                                      key directory :kind kind))
+
+             (classify ()
+               (multiple-value-bind (decision reason)
+                   (if external-p
+                       (application--model-command-permission
+                        application request directory :sandbox-available-p nil)
+                       (application--model-command-permission application key directory))
+                 (application--apply-classified-command-permission
+                  application (or request key) directory decision reason))))
+      (case (application-permission-mode application)
+        (:full-access
+         ':full-access)
+        (:sandboxed
+         (if external-p
+             (if (saved-p) ':full-access (funcall ask))
+             (if (application--command-sandbox-available-p)
+                 ':sandboxed
+                 (funcall ask))))
+        (:auto
+         (if (saved-p) ':full-access (classify)))
+        (:ask
+         (if (saved-p)
+             ':full-access
+             (if (application--interactive-command-approval-p application)
+                 (funcall ask)
+                 (classify))))
+        (otherwise
+         ':deny)))))
+
 (defun application-authorize-command (application command directory)
   "Return the session, saved, classified, or interactively selected permission."
   (with-lock-held ((application-command-authorization-lock application))
-    (case (application-permission-mode application)
-      (:full-access
-       ':full-access)
-      (:sandboxed
-       (if (application--command-sandbox-available-p)
-           ':sandboxed
-           (application--ask-command-permission application command directory)))
-      (:auto
-       (if (permissions-allowed-p
-            (application-permission-state application)
-            command
-            directory)
-           ':full-access
-           (application--auto-command-permission
-            application command directory)))
-      (:ask
-       (if (permissions-allowed-p
-            (application-permission-state application)
-            command
-            directory)
-           ':full-access
-           (if (application--interactive-command-approval-p application)
-               (application--ask-command-permission
-                application command directory)
-               (multiple-value-bind (decision reason)
-                   (application--model-command-permission
-                    application command directory)
-                 (application--apply-classified-command-permission
-                  application command directory decision reason))))))))
+    (application--authorize-operation
+     application command directory
+     :ask (lambda ()
+            (application--ask-command-permission application command directory)))))
 
 (-> application--tool-authorization-title (tool) string)
 (defun application--tool-authorization-title (tool)
-  "Return the complete identity of TOOL as one approval-picker title."
-  (format nil
-          "allow ~{~A~^, ~}"
-          (mapcar
-           (lambda (field)
-             (destructuring-bind (label value) field
-               (format nil "~A ~S" label value)))
-           (tool-authorization-identity-fields tool))))
+  "Return the readable external identity of TOOL for its approval picker."
+  (format nil "allow ~{~A~^.~}"
+          (mapcar (lambda (field) (sanitize-text (second field) :single-line-p t))
+                  (tool-authorization-identity-fields tool))))
 
-(-> application--tool-authorization-request-entry
-    (tool json-object)
-    string)
+(-> application--tool-authorization-request-entry (tool json-object) list)
+(-> application--tool-authorization-request
+    (tool json-object) string)
+(defun application--tool-authorization-request (tool arguments)
+  "Describe an unsandboxed external call as untrusted classifier input."
+  (format nil "External tool call, not a shell command. No local sandbox applies.~%Identity: ~S~%Description: ~A~%Arguments: ~A"
+          (tool-authorization-identity-fields tool)
+          (tool-description tool)
+          (json-encode arguments)))
+
+(-> application--tool-permission-key (tool json-object) string)
+(defun application--tool-permission-key (tool arguments)
+  "Hash exact identity and typed arguments without persisting argument secrets."
+  (labels ((canonical (value)
+             (cond
+               ((json-object-p value)
+                (list ':object
+                      (sort (loop for key being the hash-keys of value
+                                  using (hash-value child)
+                                  collect (cons key (canonical child)))
+                            #'string< :key #'first)))
+               ((stringp value)
+                value)
+               ((vectorp value)
+                (list ':array (map 'list #'canonical value)))
+               (t
+                value))))
+    (ironclad:byte-array-to-hex-string
+     (ironclad:digest-sequence
+      ':sha256
+      (babel:string-to-octets
+       (with-standard-io-syntax
+         (let ((*print-pretty* nil))
+           (prin1-to-string
+            (list (tool-authorization-identity-fields tool)
+                  (canonical arguments)))))
+       :encoding ':utf-8)))))
+
+(-> application--pretty-tool-arguments (t) string)
+(defun application--pretty-tool-arguments (arguments)
+  "Indent encoded JSON structurally, preserving every string and scalar."
+  (let ((source (json-encode arguments))
+        (depth 0)
+        (quoted-p nil)
+        (escaped-p nil))
+    (with-output-to-string (stream)
+      (labels ((line-break ()
+                 (terpri stream)
+                 (dotimes (index (* 2 depth))
+                   (write-char #\Space stream))))
+        (loop for character across source
+              for index from 0
+              for previous = (and (plusp index) (char source (1- index)))
+              for next = (and (< (1+ index) (length source)) (char source (1+ index)))
+              do (cond
+                   (quoted-p
+                    (write-char character stream)
+                    (cond
+                      (escaped-p (setf escaped-p nil))
+                      ((char= character #\\) (setf escaped-p t))
+                      ((char= character #\") (setf quoted-p nil))))
+                   ((char= character #\")
+                    (setf quoted-p t)
+                    (write-char character stream))
+                   ((find character "{[")
+                    (write-char character stream)
+                    (incf depth)
+                    (unless (and next (find next "}]")) (line-break)))
+                   ((find character "}]")
+                    (decf depth)
+                    (unless (and previous (find previous "{[")) (line-break))
+                    (write-char character stream))
+                   ((char= character #\,)
+                    (write-char character stream)
+                    (line-break))
+                   ((char= character #\:)
+                    (write-string ": " stream))
+                   (t
+                    (write-char character stream))))))))
+
 (defun application--tool-authorization-request-entry (tool arguments)
-  "Render TOOL identity and complete ARGUMENTS for one approval request."
-  (with-output-to-string (stream)
-    (format stream "External tool approval requested.~%")
-    (dolist (field (tool-authorization-identity-fields tool))
-      (destructuring-bind (label value) field
-        (format stream "  ~A  ~S~%" label value)))
-    (format stream "  arguments  ~A" (json-encode arguments))))
+  "Return styled, aligned identity and complete structured argument spans."
+  (let* ((fields
+           (append
+            (tool-authorization-identity-fields tool)
+            (loop for key in (sort (loop for key being the hash-keys of arguments
+                                        collect key)
+                                  #'string<)
+                  collect (list key (application--pretty-tool-arguments
+                                     (json-get arguments key))))))
+         (width (min 24 (loop for (label value) in fields
+                             maximize (length label)))))
+    (append
+     (list (terminal-span ':hint "external tool permission")
+           (terminal-span ':plain (string #\Newline)))
+     (loop for (label value) in fields
+           for lines = (uiop:split-string value :separator '(#\Newline))
+           append
+           (loop for line in lines
+                 for first-p = t then nil
+                 append
+                 (list (terminal-span ':dim
+                                      (format nil "  ~VA  " width
+                                              (if first-p
+                                                  (sanitize-text label :single-line-p t)
+                                                  "")))
+                       (terminal-span ':plain (sanitize-text line :single-line-p t))
+                       (terminal-span ':plain (string #\Newline)))))
+     (when (zerop (hash-table-count arguments))
+       (list (terminal-span ':dim (format nil "  no arguments~%"))))
+     (list (terminal-span ':dim "  External execution is not confined by the local command sandbox.")))))
 
-(-> application--tool-authorization-items () list)
-(defun application--tool-authorization-items ()
-  "Return the modal choices for one fully displayed external tool request."
-  (list
-   (list :name "allow"
-         :argument nil
-         :description "allow this one call with the arguments shown above")
-   (list :name "deny"
-         :argument nil
-         :description "do not call the external tool")))
 
 (-> application--ask-tool-permission
     (application tool json-object)
     keyword)
 (defun application--ask-tool-permission (application tool arguments)
-  "Ask interactively whether external TOOL may run, failing closed otherwise."
-  (block nil
-    (let* ((controller (application-input-controller application))
-           (ui         (application-ui application)))
-      (unless (and controller
-                   ui
-                   (terminal-interactive-p (terminal-ui-terminal ui)))
-        (return ':deny))
-      ;; Authorization always pauses the reader explicitly: immediate work on
-      ;; the reader thread is refused a modal instead of blocking input there.
-      (let ((choice
-              (application-input-controller-call-with-reader-paused
-               controller
-               (lambda ()
-                 (application-present
-                  application
-                  (application--tool-authorization-request-entry
-                   tool arguments))
-                 (terminal-ui-select
-                  ui
-                  :title (application--tool-authorization-title tool)
-                  :items (application--tool-authorization-items)
-                  :resize-callback #'application-pending-terminal-size)))))
-        (if (string= (or choice "") "allow")
-            ':allow
-            ':deny)))))
+  "Use the normal permission picker for an unsandboxed external call."
+  (unless (application--interactive-command-approval-p application)
+    (return-from application--ask-tool-permission ':deny))
+  (let* ((controller (application-input-controller application))
+         (ui (application-ui application))
+         (directory (config :working-directory (application-configuration application)))
+         (key (application--tool-permission-key tool arguments))
+         (choice
+           (application-input-controller-call-with-reader-paused
+            controller
+            (lambda ()
+              (application-present
+               application
+               (application--tool-authorization-request-entry tool arguments))
+              (terminal-ui-select
+               ui
+               :title (application--tool-authorization-title tool)
+               :items (application--command-authorization-items
+                       key directory :external-tool-p t)
+               :resize-callback #'application-pending-terminal-size)))))
+    (application--apply-command-authorization-choice
+     application key directory choice
+     :kind ':external-tool
+     :request (application--tool-authorization-request tool arguments))))
 
 (-> application-authorize-tool (application tool json-object) keyword)
 (defun application-authorize-tool (application tool arguments)
-  "Return the interactively selected permission for one external TOOL call."
+  "Apply shared session and saved permissions to one exact external tool call."
   (with-lock-held ((application-command-authorization-lock application))
-    (application--ask-tool-permission application tool arguments)))
+    (if (eq (application--authorize-operation
+             application
+             (application--tool-permission-key tool arguments)
+             (config :working-directory (application-configuration application))
+             :kind ':external-tool
+             :request (application--tool-authorization-request tool arguments)
+             :ask (lambda ()
+                    (application--ask-tool-permission application tool arguments)))
+            ':full-access)
+        ':allow
+        ':deny)))
 
 (-> application-input-controller-create
     (application
