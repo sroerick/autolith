@@ -2565,6 +2565,8 @@ the settings page and the slash commands behave identically."
          (application-reset-history-pagination application))
        (application-publish-recovery-session application))
       (:hurry-up-p (application-set-hurry-up application value))
+      (:relax-p
+       (application-set-relax application value))
       (:permission-mode
        (if value
            (application--set-durable-permission-mode application value)

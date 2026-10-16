@@ -252,6 +252,9 @@
 (define-application-setting-accessor application-hurry-up-p :hurry-up-p
   "Return whether the session runs in hurry-up mode.")
 
+(define-application-setting-accessor application-relax-p :relax-p
+  "Return whether the session carries the relax warning in provider prompts.")
+
 
 (defvar *active-application* nil
   "The live application root retained in saved generations.")

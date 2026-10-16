@@ -240,6 +240,10 @@
   test-context-rule-tool-events
   test-context-rule-generation-and-diagnostics)
 
+(define-test-suite relax
+  test-relax-setting-and-command
+  test-relax-warning-rebuilds-with-system-prompt)
+
 (define-test-suite interpreter-discipline
   test-interpreter-discipline)
 

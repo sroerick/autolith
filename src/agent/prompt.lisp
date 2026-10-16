@@ -37,6 +37,10 @@ prompt instead of the full Autolith persona.")
 (defparameter *system-prompt-context-truncation-marker* "... [truncated]"
   "The suffix identifying a bounded dynamic system-prompt value.")
 
+(defparameter *system-prompt-relax-warning*
+  "Your own session, context, and token estimates are unreliable and often too small. Do not reduce scope, omit verification, rush, or end early because of perceived length; the harness compacts automatically, so complete and verify the task."
+  "Private system-prompt warning appended while the session's relax mode is enabled.")
+
 (defparameter *request-context-lisp-image-limit* 12000
   "The maximum characters of complete saved-image rows in request context.")
 
@@ -259,17 +263,18 @@ prompt instead of the full Autolith persona.")
 
 (-> system-prompt (configuration) string)
 (defun system-prompt (configuration)
-  "Return the Autolith system prompt specialized for CONFIGURATION and today.
+  "Return the system prompt specialized for CONFIGURATION and today.
 
-The prompt is rebuilt for every provider request so its stable configuration,
-environment, workspace instructions, and date reflect the moment it is made.
-Mutable agenda, worker-image, STE, and hurry-up state is delivered separately
-behind conversation history."
-  (when *system-prompt-override*
-    (return-from system-prompt *system-prompt-override*))
-  (string-left-trim
-   '(#\Newline)
-   (system-prompt--drop-org-keyword-lines
-    (org-templater:render
-     :template (system-prompt--template)
-     :config (system-prompt--config configuration)))))
+Rebuild the prompt for each provider request, including after compaction.
+Append the enabled relax warning to ordinary and overridden system prompts."
+  (let ((prompt
+          (or *system-prompt-override*
+              (string-left-trim
+               '(#\Newline)
+               (system-prompt--drop-org-keyword-lines
+                (org-templater:render
+                 :template (system-prompt--template)
+                 :config (system-prompt--config configuration)))))))
+    (if (config :relax-p configuration)
+        (format nil "~A~2%WARNING: ~A" prompt *system-prompt-relax-warning*)
+        prompt)))
