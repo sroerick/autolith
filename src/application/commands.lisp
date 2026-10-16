@@ -16,6 +16,39 @@
                                   (terminal-completion-label entry)
                                   (getf entry :description))))))
 
+(-> application--entry-fields (list) list)
+(defun application--entry-fields (fields)
+  "Return aligned semantic FIELDS, each containing a label, style, and value.
+
+Measure sanitized labels in terminal cells. Values wrap through the ordinary
+transcript renderer, including in fullscreen."
+  (let* ((labels (mapcar (lambda (field)
+                          (sanitize-text (first field) :single-line-p t))
+                        fields))
+         (width (loop for label in labels maximize (text-cell-width label) into size
+                      finally (return (or size 0)))))
+    (loop for field in fields
+          for safe-label in labels
+          append (list (terminal-span ':dim
+                                      (format nil "  ~A~A  " safe-label
+                                              (make-string (- width (text-cell-width safe-label))
+                                                           :initial-element #\Space)))
+                       (terminal-span (second field) (princ-to-string (third field)))
+                       (terminal-span ':plain (string #\Newline))))))
+
+(-> application-conversations-entry (application) list)
+(defun application-conversations-entry (application)
+  "Return saved conversation names and metadata as semantic terminal spans."
+  (let ((items (application--conversation-items application)))
+    (if items
+        (append (list (terminal-span ':brand (format nil "conversations~%")))
+                (loop for item in items
+                      append (list (terminal-span ':code (getf item :name))
+                                   (terminal-span ':dim
+                                                  (format nil "~%  ~A~%"
+                                                          (getf item :description))))))
+        (list (terminal-span ':hint "No saved conversations exist.")))))
+
 (-> application-list-conversations (application) string)
 (defun application-list-conversations (application)
   "Return saved conversations newest first with their times and origins."
@@ -1101,21 +1134,46 @@ the effort with the same model even when the model was never chosen."
                                    (non-empty-string-p
                                     (provider-model-description metadata)))))))))
 
+(-> application-models-entry (application list) list)
+(defun application-models-entry (application failures)
+  "Return offered models and discovery FAILURES with semantic terminal roles."
+  (let* ((current (config :model (application-configuration application)))
+         (current-provider (provider-model-provider-name current))
+         (credentialed (application--credentialed-provider-names application))
+         (models (remove-if-not
+                  (lambda (model)
+                    (application--offered-provider-p
+                     (provider-model-provider-name model) current-provider credentialed))
+                  (provider-model-identifiers))))
+    (append
+     (list (terminal-span ':brand (format nil "Available models~%")))
+     (if models
+         (loop for model in models
+               for provider = (provider-model-provider-name model)
+               for metadata = (provider-model-for model)
+               append (append
+                       (list (terminal-span ':dim (format nil "  ~A / " provider))
+                             (terminal-span ':code model)
+                             (terminal-span (if (string= model current) ':success ':dim)
+                                            (if (string= model current) " (current)" ""))
+                             (terminal-span ':plain (string #\Newline)))
+                       (when (and metadata
+                                  (non-empty-string-p (provider-model-description metadata)))
+                         (list (terminal-span ':dim
+                                              (format nil "    ~A~%"
+                                                      (provider-model-description metadata)))))))
+         (list (terminal-span ':hint (format nil "No registered provider models are available.~%"))))
+     (when failures
+       (cons (terminal-span ':notice (format nil "Model discovery warnings~%"))
+             (loop for failure in failures
+                   collect (terminal-span ':notice
+                                          (format nil "  ~A~%" (autolith-error-message failure)))))))))
+
 (-> application-models-command (application) null)
 (defun application-models-command (application)
   "Refresh and show the effective registered providers and their model identifiers."
-  (let* ((failures
-           (provider-refresh-models
-            (application-configuration application)))
-         (description (application--models-description application)))
-    (application-present
-     application
-     (if failures
-         (format nil
-                 "~A~%~%Model discovery warnings:~%~{~A~%~}"
-                 description
-                 (mapcar #'autolith-error-message failures))
-         description)))
+  (let ((failures (provider-refresh-models (application-configuration application))))
+    (application-present application (application-models-entry application failures)))
   nil)
 
 (-> application-set-model (application string) null)
@@ -2319,6 +2377,24 @@ are forwarded to TERMINAL-UI-SELECT."
                                (command-permission-directory rule)))))
         "No exact command approvals are saved.")))
 
+(-> application-saved-permissions-entry (application) list)
+(defun application-saved-permissions-entry (application)
+  "Return saved approvals with request, domain, and pathname presentation roles."
+  (let ((rules (permission-state-rules (application-permission-state application))))
+    (if rules
+        (append
+         (list (terminal-span ':brand (format nil "Saved exact approvals~%")))
+         (loop for rule in rules
+               for kind = (command-permission-kind rule)
+               append (application--entry-fields
+                       (list (list (if (eq kind ':command) "command" "request")
+                                   ':code (command-permission-command rule))
+                             (list "kind" ':dim (string-downcase (symbol-name kind)))
+                             (list "in" ':code
+                                   (application--abbreviated-directory
+                                    (command-permission-directory rule)))))))
+        (list (terminal-span ':hint "No exact approvals are saved.")))))
+
 (-> application--set-durable-permission-mode (application keyword) null)
 (defun application--set-durable-permission-mode (application mode)
   "Set APPLICATION's session permission MODE and persist ask or auto."
@@ -2326,6 +2402,13 @@ are forwarded to TERMINAL-UI-SELECT."
   (when (member mode '(:ask :auto) :test #'eq)
     (setf (config :permission-mode (application-configuration application)) mode))
   nil)
+
+(-> application--permission-mode-entry (keyword string) list)
+(defun application--permission-mode-entry (mode description)
+  "Return a permission MODE receipt, emphasizing full user authority as a warning."
+  (list (terminal-span (if (eq mode ':full-access) ':notice ':success) "Permissions ")
+        (terminal-span ':code (string-downcase (symbol-name mode)))
+        (terminal-span ':dim (format nil "~%  ~A" description))))
 
 (-> application-permissions-command (application t) null)
 (defun application-permissions-command (application argument)
@@ -2339,14 +2422,17 @@ are forwarded to TERMINAL-UI-SELECT."
        (application--set-durable-permission-mode application ':ask)
        (application-present
         application
-        "Commands will ask before running unless the exact command was saved."))
+        (application--permission-mode-entry
+         ':ask "Commands will ask before running unless the exact command was saved.")))
       ((eq choice ':auto)
        (application--set-durable-permission-mode application ':auto)
        (application-present
         application
+        (application--permission-mode-entry
+         ':auto
          (if (application--command-sandbox-available-p)
              "Commands will be classified automatically as sandboxed, full access, or denied."
-             "Commands will be classified automatically as full access or denied.")))
+             "Commands will be classified automatically as full access or denied."))))
       ((eq choice ':sandbox)
        (unless (application--command-sandbox-available-p)
          (error 'configuration-error
@@ -2354,20 +2440,21 @@ are forwarded to TERMINAL-UI-SELECT."
        (setf (application-permission-mode application) ':sandboxed)
        (application-present
         application
-        "Commands may run for this session inside the workspace sandbox."))
+        (application--permission-mode-entry
+         ':sandboxed "Commands may run for this session inside the workspace sandbox.")))
       ((eq choice ':full)
        (setf (application-permission-mode application) ':full-access)
        (application-present
         application
-        "Commands may run for this session with your full user privileges."))
+        (application--permission-mode-entry
+         ':full-access "Commands may run for this session with your full user privileges.")))
       ((eq choice ':list)
-       (application-present application
-                            (application--saved-permissions-text application)))
+       (application-present application (application-saved-permissions-entry application)))
       ((eq choice ':clear)
        (permissions-clear
         (application-configuration application)
         (application-permission-state application))
-       (application-present application "Saved command approvals were cleared."))
+       (application-present application (list (terminal-span ':success "Saved command approvals were cleared."))))
       (t
        (error 'configuration-error
               :message "Usage: /permissions [ask|auto|sandbox|full|list|clear]."))))
@@ -2831,7 +2918,7 @@ The current value and its source sit in aligned columns of their own."
      :callable t)
     (application)
   (application-present application
-                       (application-list-conversations application))
+                       (application-conversations-entry application))
   ':continue)
 
 (define-application-command application--builtin-history-command
@@ -3192,6 +3279,64 @@ The current value and its source sit in aligned columns of their own."
                         (format nil "~{~A~^, ~}" removed-tools)
                         "none")))))
 
+(-> application-mcp-status-entry (list) list)
+(defun application-mcp-status-entry (records)
+  "Return detached MCP status RECORDS as aligned semantic server fields."
+  (if (null records)
+      (list (terminal-span ':hint "No MCP servers are configured."))
+      (loop for record in records
+            for state = (getf record :state)
+            for failure = (getf record :failure)
+            append
+            (append
+             (list (terminal-span ':strong (format nil "~A~%" (getf record :name))))
+             (application--entry-fields
+              (list (list "state"
+                          (cond
+                            ((or failure (member state '(:failed :error)))
+                             ':failure)
+                            ((eq state ':ready)
+                             ':success)
+                            (t
+                             ':notice))
+                          (string-downcase (princ-to-string state)))
+                    (list "policy" (if (getf record :required-p) ':notice ':dim)
+                          (if (getf record :required-p) "required" "optional"))
+                    (list "source" ':dim (getf record :source))
+                    (list "transport" ':code (getf record :transport))
+                    (list "tools" ':plain (getf record :tool-count))))
+             (when (plusp (or (getf record :task-required-tool-count) 0))
+               (application--entry-fields
+                (list (list "unavailable" ':notice
+                            (format nil "~D task-required tools: ~A"
+                                    (getf record :task-required-tool-count)
+                                    (getf record :task-required-tool-reason))))))
+             (when failure
+               (application--entry-fields (list (list "failure" ':failure failure))))))))
+
+(-> application-generations-entry (configuration) list)
+(defun application-generations-entry (configuration)
+  "Return retained generation compatibility and reconstruction metadata for the UI."
+  (let ((generations (generation-list configuration)))
+    (if (null generations)
+        (list (terminal-span ':hint "No retained generations exist."))
+        (loop for generation in generations
+              for compatible-p = (generation-compatible-p generation)
+              for history = (generation-mutation-history-commit generation)
+              for replay = (generation-reconstruction-pathname generation)
+              append
+              (append
+               (list (terminal-span ':code (generation-identifier generation))
+                     (terminal-span (if compatible-p ':success ':failure)
+                                    (format nil "  ~A~%"
+                                            (if compatible-p "compatible" "incompatible"))))
+               (application--entry-fields
+                (list (list "source" ':code (generation-git-commit generation))
+                      (list "image" ':code (or (generation-image-commit-identifier generation) "base"))
+                      (list "history" (if history ':code ':notice) (or history "unavailable"))
+                      (list "replay" (if replay ':code ':notice)
+                            (if replay (namestring replay) "unavailable for legacy generation")))))))))
+
 (define-application-command application--builtin-mcp-command
     (:name "/mcp"
      :description "show or refresh configured MCP servers"
@@ -3228,8 +3373,8 @@ The current value and its source sit in aligned columns of their own."
       (application-present
        application
        (if manager
-           (mcp-manager-render-status manager)
-           "No MCP servers are configured."))))
+            (application-mcp-status-entry (mcp-manager-status-records manager))
+            (list (terminal-span ':hint "No MCP servers are configured."))))))
   ':continue)
 
 (define-application-command application--builtin-checkpoint-command
@@ -3255,7 +3400,7 @@ The current value and its source sit in aligned columns of their own."
     (application)
   (application-present
    application
-   (generation-render-list (application-configuration application)))
+   (application-generations-entry (application-configuration application)))
   ':continue)
 
 (define-application-command application--builtin-rollback-command

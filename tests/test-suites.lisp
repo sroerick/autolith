@@ -283,6 +283,10 @@
   test-application-codex-fast-mode-command
   test-application-settings-command
   test-application-mcp-reload-capability-change
+  test-command-view-fields-and-mcp
+  test-command-view-generations
+  test-command-view-model-warnings
+  test-command-view-permissions-and-conversations
   test-terminal-authentication-streams
   test-application-authentication-command
   test-authentication-preserves-non-copilot-model)

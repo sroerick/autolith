@@ -1366,12 +1366,12 @@
                 "∙ tools added: alpha.add, zeta.add; removed: beta.remove")
                (equal (mapcar #'terminal-span-style change-entry)
                       '(:hint :success :hint :failure))
-               (string= (second entries) "No MCP servers are configured."))
+               (terminal-styled-text-p (second entries)))
           "/mcp reload renders one deterministic added and removed tool chip"))
        (setf presented nil)
        (application--builtin-mcp-command application ':reload)
        (test-assert
-        (equal presented '("No MCP servers are configured."))
+        (and (= (length presented) 1) (terminal-styled-text-p (first presented)))
         "/mcp reload omits the capability chip when the tool-name set is unchanged")))
   nil))
 
@@ -1787,4 +1787,148 @@ nil)
                  (test-assert (eq before *application-command-tests-semantic-call*)
                               "invalid keyword invocation has no handler effects")))))
       (application-command--registry-restore snapshot)))
+  nil)
+
+
+;;;; -- Command View Semantics --
+
+(-> command-view-tests--role-p (list keyword string) boolean)
+(defun command-view-tests--role-p (entry style text)
+  "Return true when ENTRY contains TEXT in the semantic STYLE."
+  (not (null (find-if (lambda (span)
+                        (and (eq (terminal-span-style span) style)
+                             (search text (terminal-span-text span))))
+                      entry))))
+
+(-> test-command-view-fields-and-mcp () null)
+(defun test-command-view-fields-and-mcp ()
+  "Exercise cell-aligned labels and the severity of detached MCP server states."
+  (let* ((fields (application--entry-fields '(("猫" :code "one") ("abc" :plain "two"))))
+         (first-label (first fields))
+         (second-label (fourth fields))
+         (entry (application-mcp-status-entry
+                 '((:name "ready-server" :state :ready :source :workspace
+                    :transport :stdio :required-p nil :tool-count 4
+                    :task-required-tool-count 0)
+                   (:name "failed-server" :state :failed :source :global
+                    :transport :http :required-p t :tool-count 0
+                    :task-required-tool-count 2 :task-required-tool-reason "task execution"
+                    :failure "connection refused")))))
+    (test-assert (= (text-cell-width (terminal-span-text first-label))
+                    (text-cell-width (terminal-span-text second-label)))
+                 "field values align after labels with different character and cell widths")
+    (test-assert (terminal-styled-text-p entry) "MCP status is a typed transcript entry")
+    (dolist (role '((:success "ready") (:failure "failed") (:failure "connection refused")
+                    (:notice "required") (:notice "task execution") (:dim "optional")))
+      (test-assert (command-view-tests--role-p entry (first role) (second role))
+                   "connection state, failure, policy and unavailable tools retain severity")))
+  nil)
+
+(-> test-command-view-generations () null)
+(defun test-command-view-generations ()
+  "Keep generation identity, compatibility, missing metadata and paths distinct."
+  (with-test-configuration (configuration root)
+    (let* ((replay (merge-pathnames "猫/reconstruct.lisp" root))
+           (current (make-instance 'generation :identifier "current-generation"
+                                              :metadata (list :git-commit "source-current"
+                                                              :mutation-history-commit "history-current"
+                                                              :reconstruction (namestring replay))))
+           (legacy (make-instance 'generation :identifier "legacy-generation"
+                                             :metadata '(:git-commit "source-legacy")))
+           (application (make-instance 'application :configuration configuration))
+           (entries nil))
+      (test-call-with-function-replacements
+       (list (list 'generation-list (lambda (configuration)
+                                      (declare (ignore configuration))
+                                      (list current legacy)))
+             (list 'generation-compatible-p (lambda (generation) (eq generation current)))
+             (list 'application-present (lambda (application entry)
+                                           (declare (ignore application))
+                                           (push entry entries) nil)))
+       (lambda ()
+         (application-operation-call application 'generations)
+         (application-command application "/generations")
+         (test-assert (= (length entries) 2) "native and slash generation commands both present")
+         (test-assert (equal (first entries) (second entries)) "both forms use the same semantic view")
+         (let ((entry (first entries)))
+           (dolist (role (list '(:code "current-generation") '(:success "compatible")
+                              '(:failure "incompatible") '(:notice "unavailable")
+                              (list ':code (namestring replay))))
+             (test-assert (command-view-tests--role-p entry (first role) (second role))
+                          "generation states and reconstruction metadata have appropriate roles")))))))
+  nil)
+
+(-> test-command-view-model-warnings () null)
+(defun test-command-view-model-warnings ()
+  "Present discovered models and partial discovery failures through either command form."
+  (with-test-configuration (configuration root)
+    (declare (ignore root))
+    (let* ((application (make-instance 'application :configuration configuration))
+           (model (config :model configuration))
+           (provider (provider-model-provider-name model))
+           (failure (make-condition 'configuration-error :message "discovery unavailable"))
+           (entries nil))
+      (test-call-with-function-replacements
+       (list (list 'provider-refresh-models (lambda (&rest options)
+                                              (declare (ignore options)) (list failure)))
+             (list 'application--credentialed-provider-names
+                   (lambda (application) (declare (ignore application)) (list provider)))
+             (list 'application-present (lambda (application entry)
+                                           (declare (ignore application)) (push entry entries) nil)))
+       (lambda ()
+         (application-operation-call application 'models)
+         (application-command application "/models")
+         (test-assert (= (length entries) 2) "native and slash model discovery both present")
+         (dolist (entry entries)
+           (test-assert (terminal-styled-text-p entry) "model discovery returns semantic spans")
+           (test-assert (command-view-tests--role-p entry ':code model) "model identifiers use code style")
+           (test-assert (command-view-tests--role-p entry ':success "current") "current model is distinguished")
+           (test-assert (command-view-tests--role-p entry ':notice "discovery unavailable")
+                        "partial model discovery errors use warning severity"))))))
+  nil)
+
+(-> test-command-view-permissions-and-conversations () null)
+(defun test-command-view-permissions-and-conversations ()
+  "Present saved exact approvals and conversation metadata as semantic fields."
+  (with-test-configuration (configuration root)
+    (let* ((rules (list (make-instance 'command-permission :command "echo 猫"
+                                                         :directory (namestring root))
+                        (make-instance 'command-permission :command "server.lookup {}"
+                                                           :kind ':external-tool
+                                                           :directory (namestring root))))
+           (application (make-instance 'application :configuration configuration
+                                                    :permission-state (make-instance 'permission-state :rules rules)))
+           (entries nil))
+      (test-call-with-function-replacements
+       (list (list 'application--conversation-items
+                   (lambda (application)
+                     (declare (ignore application))
+                     '((:name "saved-conversation" :description "yesterday · workspace"))))
+             (list 'application-present (lambda (application entry)
+                                           (declare (ignore application)) (push entry entries) nil)))
+       (lambda ()
+         (application-operation-call application 'conversations)
+         (application-command application "/conversations")
+         (test-assert (every (lambda (entry)
+                              (and (command-view-tests--role-p entry ':code "saved-conversation")
+                                   (command-view-tests--role-p entry ':dim "yesterday"))) entries)
+                      "conversation names and descriptive metadata have separate roles")
+         (setf entries nil)
+         (application-operation-call application 'permissions ':list)
+         (application-command application "/permissions list")
+         (test-assert (= (length entries) 2) "both command forms list saved approvals")
+         (test-assert (every (lambda (entry)
+                              (and (command-view-tests--role-p entry ':code "echo 猫")
+                                   (command-view-tests--role-p entry ':code "server.lookup {}")
+                                   (command-view-tests--role-p entry ':dim "external-tool"))) entries)
+                      "saved shell and external requests retain code styling and domain metadata")
+         (setf entries nil)
+         (application-operation-call application 'permissions ':full)
+         (test-assert (and (find ':notice (first entries) :key #'terminal-span-style)
+                           (command-view-tests--role-p (first entries) ':code "full-access"))
+                      "full-access receipt distinguishes mode and warning severity")
+         (application-operation-call application 'permissions ':ask)
+         (test-assert (and (find ':success (first entries) :key #'terminal-span-style)
+                           (command-view-tests--role-p (first entries) ':code "ask"))
+                      "ordinary permission changes distinguish mode and success severity")))))
   nil)
