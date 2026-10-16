@@ -73,7 +73,7 @@
                       (test-assert (terminal-ui-fullscreen-p target) "first-run boot uses fullscreen")
                       ':completed))
               (list 'terminal-ui-onboard
-                    (lambda (target pages &key help-function settings-function resize-callback
+                    (lambda (target pages &key help-function settings-function authentication-function resize-callback
                                               page-completed-function introduction-title)
                       (declare (ignore introduction-title))
                       (test-assert (fullscreen-terminal-ui-active-p target) "lesson presentation owns the alternate buffer")
@@ -83,6 +83,7 @@
                                               (application-operation-help application topic))
                                      "tutorial forwards native topics to the real help implementation"))
                       (test-assert (functionp settings-function) "tutorial can open real settings")
+                      (test-assert (functionp authentication-function) "tutorial can open real authentication")
                       (test-assert (eq resize-callback #'application-pending-terminal-size)
                                    "tutorial follows the application's terminal resize source")
                       (setf presented (mapcar (lambda (page) (getf page :id)) pages))
@@ -300,4 +301,110 @@
                     "the user's original draft is restored")
        (test-assert (not (terminal-ui-fullscreen-p ui)) "the original inline mode is restored")
        (test-assert (not (terminal-ui-live-output-suspended-p ui)) "live output is available after the tour"))))
+  nil)
+
+
+(-> test-onboarding-authentication () null)
+(defun test-onboarding-authentication ()
+  "Drive real provider and method pickers through login, retry, back, and skip.
+
+Only replace provider effects and model discovery. Keep application-authenticate,
+its native method dispatch, terminal ownership, and the tour presenter real."
+  (dolist (scenario
+            '((:skip ((:paste "(auth)") :submit :submit) nil nil)
+              (:continue ((:paste "continue") :submit) nil nil (:submit))
+              (:browser ((:paste "(auth)") :submit (:paste "chatgpt") :submit :submit)
+               (:browser) nil)
+              (:device-code ((:paste "(auth)") :submit (:paste "chatgpt") :submit :down :submit)
+               (:device-code) nil)
+              (:provider-cancel ((:paste "(auth)") :submit :escape
+                                 (:paste "(auth)") :submit :submit) nil nil)
+              (:method-back ((:paste "(auth)") :submit (:paste "chatgpt") :submit
+                             :escape :submit) nil nil)
+              (:retry ((:paste "(auth)") :submit (:paste "chatgpt") :submit :submit
+                       (:paste "(auth)") :submit (:paste "chatgpt") :submit :down :submit)
+               (:browser :device-code) :failure)
+              (:login-cancel ((:paste "(auth)") :submit (:paste "chatgpt") :submit :submit
+                              (:paste "(auth)") :submit :submit)
+               (:browser) :cancel)))
+    (destructuring-bind (name events expected-methods first-outcome
+                         &optional (finish-events '(:submit :submit))) scenario
+      (onboarding-tests--call
+       (lambda (application controller configuration terminal)
+         (declare (ignore controller))
+         (setf (application-configuration application)
+               (configuration-copy configuration :boot-screen-p nil))
+         (let* ((ui (application-ui application))
+                (model (config :model (application-configuration application)))
+                (pages (list (onboarding-ui-test--page "first-provider" ':authentication)
+                             (onboarding-ui-test--page "finish")))
+                (methods nil)
+                (calls 0))
+           (terminal-ui-set-input ui "saved draft")
+           (dolist (event (append events finish-events))
+             (queued-recording-terminal-enqueue terminal event))
+           (test-call-with-function-replacements
+            (list
+             (list 'onboarding-pages (lambda (config) (declare (ignore config)) pages))
+             (list 'provider-authenticated-model
+                   (lambda (config provider) (declare (ignore config provider)) nil))
+             (list 'provider-authenticate
+                   (lambda (provider &key stream open-browser-p)
+                     (declare (ignore stream))
+                     (test-assert (typep provider 'codex-subscription-provider)
+                                  "picker resolves the actual registered provider")
+                     (test-assert open-browser-p "login uses the usual browser boundary")
+                     (push *chatgpt-authentication-method* methods)
+                     (incf calls)
+                     (when (= calls 1)
+                       (case first-outcome
+                         (:failure (error 'authentication-error :message "Fixture login failed"))
+                         (:cancel (error 'end-of-file))))
+                     "Authenticated fixture account.")))
+            (lambda ()
+              (test-assert (eq ':completed (application-onboard application))
+                           (format nil "~A returns from authentication to the tour" name))))
+           (test-assert (equal expected-methods (reverse methods))
+                        (format nil "~A dispatches exactly the selected login methods" name))
+           (test-assert (eq model (config :model (application-configuration application)))
+                        "skip or authentication without a discovered model keeps the existing model")
+           (test-assert (null (onboarding-state-pending configuration pages))
+                        "completed exercises are acknowledged")
+           (test-assert (null (queued-recording-terminal-events terminal))
+                        "all picker and tour input was consumed")
+           (test-assert (string= "saved draft" (line-editor-text (terminal-ui-editor ui)))
+                        "authentication restores the user's draft")
+           (test-assert (not (terminal-ui-fullscreen-p ui)) "inline mode is restored")
+           (test-assert (not (terminal-ui-live-output-suspended-p ui))
+                        "authentication restores output suspension"))))))
+  nil)
+
+(-> test-onboarding-authentication-pending () null)
+(defun test-onboarding-authentication-pending ()
+  "Offer the new provider lesson to existing users without forcing a login."
+  (onboarding-tests--call
+   (lambda (application controller configuration terminal)
+     (declare (ignore controller))
+     (setf (application-configuration application)
+           (configuration-copy configuration :boot-screen-p nil))
+     (let* ((pages (onboarding-pages configuration))
+            (old-pages (remove "first-provider" pages :test #'string=
+                               :key (lambda (page) (getf page :id)))))
+       (onboarding-state-record configuration old-pages ':completed)
+       (test-assert (equal '("first-provider")
+                           (mapcar (lambda (page) (getf page :id))
+                                   (onboarding-state-pending configuration pages)))
+                    "the new lesson revision is pending for an acknowledged old tour")
+       (dolist (event '((:paste "(auth)") :submit :escape :interrupt))
+         (queued-recording-terminal-enqueue terminal event))
+       (test-assert (eq ':interrupted (application-onboard application :new-only-p t))
+                    "cancelling a picker does not finish the lesson")
+       (test-assert (= 1 (length (onboarding-state-pending configuration pages)))
+                    "interruption after cancellation leaves authentication pending")
+       (dolist (event '((:paste "(auth)") :submit :submit :submit))
+         (queued-recording-terminal-enqueue terminal event))
+       (test-assert (eq ':completed (application-onboard application :new-only-p t))
+                    "explicit authentication skip completes the lesson")
+       (test-assert (null (onboarding-state-pending configuration pages))
+                    "skip is persisted as completion without credential data"))))
   nil)

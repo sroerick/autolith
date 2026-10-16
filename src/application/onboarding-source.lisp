@@ -129,7 +129,8 @@ newlines; decode links within strong text without treating code as markup."
          (exercise-text (cdr (assoc "EXERCISE" properties :test #'string=)))
          (exercise (cdr (assoc exercise-text
                                '(("continue" . :continue) ("help" . :help)
-                                 ("async" . :async) ("settings" . :settings))
+                                 ("async" . :async) ("settings" . :settings)
+                                 ("authentication" . :authentication))
                                :test #'equal)))
          (body (format nil "~{~A~^~%~}" (reverse lines))))
     (unless (and (non-empty-string-p title) (non-empty-string-p id)

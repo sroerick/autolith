@@ -78,7 +78,7 @@
            (ids (mapcar (lambda (page) (getf page :id)) pages))
            (revised '("lisp-listener" "prompt-function" "input-vault" "indexed-search"
                       "settings" "live-image" "mcp" "skills" "ready")))
-      (test-assert (equal ids '("welcome" "live-image" "ordinary-prompt" "lisp-listener" "asynchronous-lisp"
+      (test-assert (equal ids '("welcome" "live-image" "first-provider" "ordinary-prompt" "lisp-listener" "asynchronous-lisp"
                                 "prompt-function" "steering" "input-vault" "indexed-search"
                                 "settings" "detached-sessions" "goals" "missions"
                                 "recursive-inference" "child-agents" "agent-definition" "mcp" "skills"
@@ -87,7 +87,7 @@
       (dolist (page pages)
         (test-assert (= (getf page :version)
                         (cond
-                          ((member (getf page :id) '("missions" "agent-definition") :test #'string=)
+                          ((member (getf page :id) '("missions" "agent-definition" "first-provider") :test #'string=)
                            1)
                           ((string= "detached-sessions" (getf page :id))
                            5)
@@ -110,7 +110,8 @@
                      "the MCP lesson identifies the actual configuration root"))
       (test-assert (equal (loop for page in pages when (getf page :exercise)
                                collect (cons (getf page :id) (getf page :exercise)))
-                          '(("ordinary-prompt" . :continue) ("lisp-listener" . :help)
+                          '(("first-provider" . :authentication)
+                            ("ordinary-prompt" . :continue) ("lisp-listener" . :help)
                             ("asynchronous-lisp" . :async) ("settings" . :settings)))
                    "practice contracts use the authored metadata")))
   nil)

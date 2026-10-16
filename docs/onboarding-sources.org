@@ -134,6 +134,51 @@ Background evaluation running...
 #+begin_onboarding_text
 => 3  (background evaluation finished)
 #+end_onboarding_text
+
+#+name: auth-provider-title
+#+begin_onboarding_text
+Choose your first provider
+#+end_onboarding_text
+
+#+name: auth-skip
+#+begin_onboarding_text
+Skip authentication; keep any existing account and model
+#+end_onboarding_text
+
+#+name: auth-method-title
+#+begin_onboarding_text
+ChatGPT login method (Esc returns to providers)
+#+end_onboarding_text
+
+#+name: auth-browser
+#+begin_onboarding_text
+Direct browser login with a local OAuth callback
+#+end_onboarding_text
+
+#+name: auth-device-code
+#+begin_onboarding_text
+Device code: enter a code in your browser
+#+end_onboarding_text
+
+#+name: hint-auth-input
+#+begin_onboarding_text
+Type (auth) to pick a provider, or continue to skip signing in.
+#+end_onboarding_text
+
+#+name: hint-auth-result
+#+begin_onboarding_text
+Authentication step finished. Press Enter to continue.
+#+end_onboarding_text
+
+#+name: hint-auth-failed
+#+begin_onboarding_text
+Login did not complete. Type (auth) to retry, or continue to skip signing in.
+#+end_onboarding_text
+
+#+name: hint-auth-cancelled
+#+begin_onboarding_text
+Login cancelled. Type (auth) to try again, or continue to skip signing in.
+#+end_onboarding_text
 #+end_comment
 
 * Welcome to Autolith
@@ -163,6 +208,22 @@ Autolith records persistent self-modifications in a journal and replays them fro
 *Adapt the runtime to your needs.*
 
 Run =autolith --immutable= to prevent self-modification during a session.
+
+* Connect your first provider
+:PROPERTIES:
+:ID: first-provider
+:VERSION: 1
+:EXERCISE: authentication
+:END:
+Choose a provider and sign in before your first conversation.
+
+For *ChatGPT*, choose *browser* for direct browser OAuth or *device-code* to enter a code in your browser. For other providers, follow their login or API-key prompts.
+
+Don't want to sign in yet? Type =continue=.
+
+Press *Esc* in the method picker to return to providers, or in the provider picker to return here. You can retry after a cancelled or failed login.
+
+@@brand:PRACTICE  Type (auth) to sign in, or continue to skip.@@
 
 * Start with a conversation
 :PROPERTIES:

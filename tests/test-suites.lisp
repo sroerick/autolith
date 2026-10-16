@@ -147,7 +147,9 @@
   test-onboarding-incremental-interruption
   test-onboarding-fullscreen-restoration
   test-onboarding-startup-interruption
-  test-onboarding-settings-exercise)
+  test-onboarding-settings-exercise
+  test-onboarding-authentication
+  test-onboarding-authentication-pending)
 
 (define-test-suite job-completion-policy
   test-job-completion-policy-normalization

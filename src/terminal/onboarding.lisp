@@ -19,7 +19,8 @@
        (non-empty-string-p (getf page :title))
        (or (stringp (getf page :body))
            (terminal-styled-text-p (getf page :body)))
-       (not (null (member (getf page :exercise) '(nil :continue :help :async :settings) :test #'eq)))))
+       (not (null (member (getf page :exercise)
+                          '(nil :continue :help :async :settings :authentication) :test #'eq)))))
 
 (-> terminal-ui-onboarding--validate-pages (list) null)
 (defun terminal-ui-onboarding--validate-pages (pages)
@@ -114,7 +115,13 @@
                 (:continue "hint-continue")
                 (:help (if (eq stage ':help-output) "hint-help-output" "hint-help-input"))
                 (:async (if (eq stage ':result) "hint-async-result" "hint-async-input"))
-                (:settings (if (eq stage ':result) "hint-settings-result" "hint-settings-input")))))
+                (:settings (if (eq stage ':result) "hint-settings-result" "hint-settings-input"))
+                (:authentication
+                 (case stage
+                   (:result "hint-auth-result")
+                   (:failed "hint-auth-failed")
+                   (:cancelled "hint-auth-cancelled")
+                   (otherwise "hint-auth-input"))))))
     (if name
         (onboarding-source-text name)
         "")))
@@ -127,6 +134,7 @@
     (:help (if (eq stage ':help-output) "continue" "(help)"))
     (:async (unless (eq stage ':result) "? (+ 1 2)"))
     (:settings (unless (eq stage ':result) "(settings)"))
+    (:authentication (unless (eq stage ':result) "(auth)"))
     (otherwise nil)))
 
 (-> terminal-ui-onboarding--help-spans (function &key (:width integer)) list)
@@ -424,11 +432,12 @@ reader dispatch and never evaluate input, including quoted topic arguments."
 
 (-> terminal-ui-onboard
     (terminal-ui list &key (:help-function function) (:settings-function (option function))
+                         (:authentication-function (option function))
                          (:page-completed-function function) (:introduction-title string)
                          (:resize-callback (option function)) (:wait-function function))
     (values keyword list))
 (defun terminal-ui-onboard
-    (ui pages &key (help-function (constantly "")) settings-function
+    (ui pages &key (help-function (constantly "")) settings-function authentication-function
                   (page-completed-function (constantly nil))
                   (introduction-title "") resize-callback (wait-function #'sleep))
   "Present fullscreen PAGES with safe exercises through the real prompt editor.
@@ -439,16 +448,22 @@ plist. Hold exclusive input through snapshot, presentation and restoration;
 defer concurrent live output without dropping it. Only check exercises on Enter.
 Call HELP-FUNCTION once per accepted help request, with its optional native topic;
 cache its output across paints. Call SETTINGS-FUNCTION for the settings lesson.
+Call AUTHENTICATION-FUNCTION for provider selection and login; its outcome is
+:AUTHENTICATED, :SKIPPED, :CANCELLED, or :FAILED. Only the first two finish the
+exercise; cancellation and failure allow retry without acknowledging the page.
 Poll RESIZE-CALLBACK while idle; it returns pending dimensions as (ROWS . COLUMNS).
 Never evaluate demo input."
   (terminal-ui-onboarding--validate-pages pages)
   (unless (and (typep ui 'fullscreen-terminal-ui)
                (functionp help-function)
                (or (null settings-function) (functionp settings-function))
+               (or (null authentication-function) (functionp authentication-function))
                (functionp wait-function)
                (or (null resize-callback) (functionp resize-callback))
                (or settings-function
                    (notany (lambda (page) (eq (getf page :exercise) ':settings)) pages))
+               (or authentication-function
+                   (notany (lambda (page) (eq (getf page :exercise) ':authentication)) pages))
                (functionp page-completed-function)
                (stringp introduction-title))
     (error 'onboarding-error
@@ -534,6 +549,15 @@ Never evaluate demo input."
                 (submit-exercise (target)
                   (when (terminal-ui-onboarding--exercise-submitted-p ui target)
                     (case (exercise)
+                      (:authentication
+                       (terminal-ui-onboarding--reset-exercise ui)
+                       (setf stage
+                             (case (funcall authentication-function)
+                               ((:authenticated :skipped) ':result)
+                               (:cancelled ':cancelled)
+                               (otherwise ':failed))
+                             scroll-offset 0)
+                       (terminal-ui-onboarding--reset-exercise ui))
                       (:settings
                        (terminal-ui-onboarding--reset-exercise ui)
                        (funcall settings-function)
@@ -579,6 +603,9 @@ Never evaluate demo input."
                          (when action (terminal-ui-activate ui action))))
                       ((and (eq (exercise) ':help) (eq event ':submit))
                        (submit-help))
+                      ((and (eq (exercise) ':authentication) (eq event ':submit)
+                            (terminal-ui-onboarding--exercise-submitted-p ui "continue"))
+                       (advance))
                       ((and target (eq event ':submit))
                        (submit-exercise target))
                       (target

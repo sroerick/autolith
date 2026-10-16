@@ -46,6 +46,62 @@
         (setf (terminal-ui-live-output-suspended-p ui) suspended-p))))
   nil)
 
+(-> application-onboarding--authenticate (application) keyword)
+(defun application-onboarding--authenticate (application)
+  "Pick a provider and method, then use the normal authentication boundary.
+
+Skipping keeps the existing account and model. Picker cancellation returns to
+its caller; cancelling the method picker returns to provider selection. Restore
+the tour's output suspension even when provider authentication fails. Never
+retain provider output or condition details in onboarding state."
+  (let* ((ui (application-ui application))
+         (suspended-p (terminal-ui-live-output-suspended-p ui)))
+    (unwind-protect
+         (progn
+           (with-terminal-ui-locked (ui)
+             (setf (terminal-ui-live-output-suspended-p ui) nil))
+           (block selection
+             (loop
+               (let ((name
+                       (application--pick-identifier
+                        application
+                        :title (onboarding-source-text "auth-provider-title")
+                        :items (cons (list :name "skip" :argument nil
+                                           :description (onboarding-source-text "auth-skip"))
+                                     (application--authentication-provider-items application))
+                        :initial-name "skip" :search-p t)))
+                 (unless name
+                   (return-from selection ':cancelled))
+                 (when (string= name "skip")
+                   (return-from selection ':skipped))
+                 (let* ((provider (application--authentication-provider application name))
+                        (chatgpt-p (typep provider 'codex-subscription-provider))
+                        (method
+                          (when chatgpt-p
+                            (application--pick-identifier
+                             application
+                             :title (onboarding-source-text "auth-method-title")
+                             :items
+                             (list (list :name "browser" :argument nil
+                                         :description (onboarding-source-text "auth-browser"))
+                                   (list :name "device-code" :argument nil
+                                         :description (onboarding-source-text "auth-device-code")))
+                             :initial-name "browser"))))
+                   (when (or (not chatgpt-p) method)
+                     (return-from selection
+                       (handler-case
+                           (progn
+                             (application-authenticate
+                              application name
+                              (when method
+                                (if (string= method "browser") ':browser ':device-code)))
+                             ':authenticated)
+                         (authentication-error () ':failed)
+                         (end-of-file () ':cancelled)))))))))
+      (with-terminal-ui-locked (ui)
+        (setf (terminal-ui-live-output-suspended-p ui) suspended-p)
+        (terminal-ui-fullscreen-invalidate ui)))))
+
 (-> application-onboard (application &key (:new-only-p boolean)) keyword)
 (defun application-onboard (application &key new-only-p)
   "Replay the tour, or only pending revisions when NEW-ONLY-P is true.
@@ -87,6 +143,8 @@ remaining selected revisions; interruption leaves them pending."
                      :help-function (lambda (&optional topic)
                                       (application-operation-help application topic))
                       :settings-function (lambda () (application-onboarding--settings application))
+                       :authentication-function
+                       (lambda () (application-onboarding--authenticate application))
                       :resize-callback #'application-pending-terminal-size
                      :page-completed-function
                      (lambda (page)
