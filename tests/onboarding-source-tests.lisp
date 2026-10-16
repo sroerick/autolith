@@ -13,7 +13,7 @@
   (let* ((variables (make-hash-table :test #'eq))
          (value "/path/*literal*=@@/猫/")
          (source (onboarding-source-test--lesson
-                  (format nil "Plain *strong* =code=~%~%@@brand:brand~%line@@ @@dim:dim@@ @@lisp-prompt:*@@~%[[https://example.org][@@brand:site@@]]~%@@code:{{{:config-root}}}@@"))))
+                  (format nil "Plain *strong* =code=~%~%@@brand:brand~%line@@ @@dim:dim@@ @@lisp-prompt:*@@ @@success:green~%block@@~%[[https://example.org][@@brand:site@@]]~%@@code:{{{:config-root}}}@@"))))
     (setf (gethash ':config-root variables) value)
     (let* ((page (first (onboarding-source-pages source variables)))
            (body (getf page :body))
@@ -24,7 +24,7 @@
                    "metadata is decoded once")
       (test-assert (terminal-styled-text-p body) "all authored fragments become valid terminal content")
       (test-assert (equal (mapcar #'terminal-span-style spans)
-                          '(:plain :strong :plain :code :plain :brand :plain :dim :plain :lisp-prompt :plain :plain :code))
+                          '(:plain :strong :plain :code :plain :brand :plain :dim :plain :lisp-prompt :plain :success :plain :plain :code))
                    "each semantic style has its intended span")
       (test-assert (string= value (terminal-span-text (first (last spans))))
                    "interpolated paths are literal, not reparsed as markup")
@@ -77,18 +77,20 @@
     (let* ((pages (onboarding-pages configuration))
            (ids (mapcar (lambda (page) (getf page :id)) pages))
            (revised '("lisp-listener" "prompt-function" "input-vault" "indexed-search"
-                      "settings" "detached-sessions" "live-image" "mcp")))
+                      "settings" "live-image" "mcp" "skills" "ready")))
       (test-assert (equal ids '("welcome" "live-image" "ordinary-prompt" "lisp-listener" "asynchronous-lisp"
                                 "prompt-function" "steering" "input-vault" "indexed-search"
                                 "settings" "detached-sessions" "goals" "missions"
-                                "recursive-inference" "child-agents" "mcp" "skills"
+                                "recursive-inference" "child-agents" "agent-definition" "mcp" "skills"
                                 "fullscreen" "ready"))
-                   "stable IDs retain source order, with the live image intro second and a mission lesson")
+                   "stable IDs follow source order, including the agent definition after child agents")
       (dolist (page pages)
         (test-assert (= (getf page :version)
                         (cond
-                          ((string= "missions" (getf page :id))
+                          ((member (getf page :id) '("missions" "agent-definition") :test #'string=)
                            1)
+                          ((string= "detached-sessions" (getf page :id))
+                           5)
                           ((member (getf page :id) revised :test #'string=)
                            4)
                           (t

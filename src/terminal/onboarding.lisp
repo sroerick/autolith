@@ -80,7 +80,7 @@
 
 (-> terminal-ui-onboarding--footer
     (integer integer &key (:width integer) (:input-p boolean) (:scrollable-p boolean))
-    string)
+    list)
 (defun terminal-ui-onboarding--footer (index count &key (width 76) input-p scrollable-p)
   "Fit essential navigation into WIDTH, keeping Escape visible on narrow screens."
   (let ((variables (make-hash-table :test #'eq)))
@@ -88,19 +88,24 @@
           (gethash ':count variables) count
           (gethash ':action variables) (onboarding-source-text (if input-p "action-check" "action-next"))
           (gethash ':scroll variables) (if scrollable-p (onboarding-source-text "footer-scroll") ""))
-    (onboarding-source-text
-     (cond
-       ((>= width 70)
-        "footer-wide")
-       ((>= width 44)
-        "footer-medium")
-       ((>= width 26)
-        "footer-compact")
-       ((>= width 16)
-        "footer-small")
-       (t
-        "footer-minimal"))
-     variables)))
+    (mapcar (lambda (fragment)
+              (if (stringp fragment)
+                  (terminal-span ':dim fragment)
+                  (terminal-span (first fragment) (second fragment))))
+            (onboarding-source--inline
+             (onboarding-source-text
+              (cond
+                ((>= width 70)
+                 "footer-wide")
+                ((>= width 44)
+                 "footer-medium")
+                ((>= width 28)
+                 "footer-compact")
+                ((>= width 16)
+                 "footer-small")
+                (t
+                 "footer-minimal"))
+              variables)))))
 
 (-> terminal-ui-onboarding--exercise-hint ((option keyword) keyword) string)
 (defun terminal-ui-onboarding--exercise-hint (exercise stage)
@@ -220,12 +225,10 @@ Body scrolling never hides the exercise prompt. Recompute geometry each paint."
                            terminal (list (terminal-span ':strong hint)) card-width)))
              (footer (first (terminal-ui-onboarding--wrap-spans
                              terminal
-                             (list (terminal-span
-                                    ':strong
-                                    (terminal-ui-onboarding--footer
-                                     index count :width card-width
-                                     :input-p (not (null (terminal-ui-onboarding--exercise-target exercise stage)))
-                                     :scrollable-p t)))
+                             (terminal-ui-onboarding--footer
+                              index count :width card-width
+                              :input-p (not (null (terminal-ui-onboarding--exercise-target exercise stage)))
+                              :scrollable-p t)
                              card-width)))
              (prompt-height (max 1 (- height (length header)
                                      (if (and exercise (>= height 6)) (length hint-rows) 0)

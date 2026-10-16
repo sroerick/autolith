@@ -6,7 +6,7 @@ ID, VERSION, and optional EXERCISE identify the stable lesson revision and pract
 Bump VERSION only for a material lesson change. Keep the order of the headings.
 
 Use *strong*, =code=, [[https://example.org][link text]], and semantic spans
-@@brand:text@@, @@dim:text@@, @@lisp-prompt:text@@. Spans may cross newlines.
+@@brand:text@@, @@dim:text@@, @@lisp-prompt:text@@, @@success:text@@. Spans may cross newlines.
 Authored newlines and spaces are preserved, including aligned example columns.
 The org-templater slots {{{:config-root}}} and {{{:state-root}}} use runtime paths.
 Markup is decoded before interpolation, so paths remain literal text.
@@ -15,9 +15,12 @@ Edits are read on the next tour; an open tour keeps its current snapshot.
 Named text blocks below contain interface labels and practice instructions.
 Use org-templater slots for runtime values in these blocks.
 
+Final-slide lambda: block rendering of userland/bootsplash/logo.h (32 x 48),
+/root/nanobsd at c8317e418af736bb57dd2409c32aff47c8024c79.
+
 #+name: boot-linger
 #+begin_onboarding_text
-Begin onboarding by pressing Space
+Press Space to start onboarding.
 #+end_onboarding_text
 
 #+name: boot-start
@@ -47,32 +50,32 @@ next
 
 #+name: footer-wide
 #+begin_onboarding_text
-{{{:current}}}/{{{:count}}}  Enter {{{:action}}}  Shift-Tab back  Esc skip{{{:scroll}}}
+@@brand:{{{:current}}}/{{{:count}}}@@  @@lisp-prompt:Enter@@ {{{:action}}}  @@lisp-prompt:Shift-Tab@@ back  @@lisp-prompt:Esc@@ skip{{{:scroll}}}
 #+end_onboarding_text
 
 #+name: footer-medium
 #+begin_onboarding_text
-{{{:current}}}/{{{:count}}}  Enter {{{:action}}}  Shift-Tab back  Esc skip
+@@brand:{{{:current}}}/{{{:count}}}@@  @@lisp-prompt:Enter@@ {{{:action}}}  @@lisp-prompt:Shift-Tab@@ back  @@lisp-prompt:Esc@@ skip
 #+end_onboarding_text
 
 #+name: footer-compact
 #+begin_onboarding_text
-{{{:current}}}/{{{:count}}}  Enter {{{:action}}}  Esc skip
+@@brand:{{{:current}}}/{{{:count}}}@@  @@lisp-prompt:Enter@@ {{{:action}}}  @@lisp-prompt:Esc@@ skip
 #+end_onboarding_text
 
 #+name: footer-small
 #+begin_onboarding_text
-{{{:current}}}/{{{:count}}} Enter Esc
+@@brand:{{{:current}}}/{{{:count}}}@@ @@lisp-prompt:Enter Esc@@
 #+end_onboarding_text
 
 #+name: footer-minimal
 #+begin_onboarding_text
-{{{:current}}}/{{{:count}}}Esc
+@@brand:{{{:current}}}/{{{:count}}}@@@@lisp-prompt:Esc@@
 #+end_onboarding_text
 
 #+name: footer-scroll
 #+begin_onboarding_text
-  PgUp/PgDn scroll
+  @@lisp-prompt:PgUp/PgDn@@ scroll
 #+end_onboarding_text
 
 #+name: hint-continue
@@ -136,7 +139,7 @@ Background evaluation running...
 :ID: welcome
 :VERSION: 3
 :END:
-[[https://autolith.rocks][@@brand:Autolith@@]] is designed to be the most flexible agent.
+[[https://autolith.rocks][@@brand:Autolith@@]] is an agent you can inspect and change while it runs.
 
 I'm [[https://twitter.com/LukasHozda][*Lukáš Hozda*]]. I made this tour to help you get started.
 
@@ -153,11 +156,11 @@ Autolith runs inside a *live Common Lisp image*. You and the agent can inspect, 
 
 @@brand:inspect -> redefine -> test -> private commit@@
 
-Durable self-modifications are journaled and replayed from private image commits.
+Autolith records persistent self-modifications in a journal and replays them from private image commits.
 
-*Your needs can shape the runtime.* Changes are bounded by permissions, invariants, and the checks you require.
+*Adapt the runtime to your needs.*
 
-=autolith --immutable= disables mutation-capable active-image operations for the session.
+Run =autolith --immutable= to prevent self-modification during a session.
 
 * Start with a conversation
 :PROPERTIES:
@@ -183,16 +186,16 @@ Use familiar terminal editing shortcuts:
 :VERSION: 4
 :EXERCISE: help
 :END:
-Parenthesized input is local Common Lisp. Ordinary text goes to the agent.
+Start with a parenthesis to evaluate Common Lisp locally. Send ordinary text to the agent.
 
 =(help)=      basic help
 =(settings)=  settings
 
-When you start a Lisp form, the first prompt character changes to @@lisp-prompt:*@@. Watch it change below.
+When you start a Lisp form, you'll see @@lisp-prompt:*@@ at the start of the prompt. Try it below.
 
-*Use Lisp forms and normal arguments.*
+*Use Common Lisp syntax for forms and arguments.*
 
-@@brand:PRACTICE  Type  (help)  to see the real basic help, then continue.@@
+@@brand:PRACTICE  Type  (help)  to read the basic help, then continue.@@
 
 * Run Lisp in the background
 :PROPERTIES:
@@ -200,33 +203,33 @@ When you start a Lisp form, the first prompt character changes to @@lisp-prompt:
 :VERSION: 3
 :EXERCISE: async
 :END:
-Type *? followed by a space* before a Lisp form to evaluate it asynchronously.
+Type *? followed by a space* before a Lisp form to run it in the background.
 
 =? (+ 1 2)=
 
-Press Enter to run it in the background. You can keep typing while it finishes.
+Press Enter to run it. You can keep typing while it runs.
 
 @@brand:(form)    local evaluation
 ? (form)  background local evaluation@@
 
-*PRACTICE  Try ? (+ 1 2).  This safe demo shows the result 3.*
+*PRACTICE  Try ? (+ 1 2). You'll get 3.*
 
 * Compose requests with Lisp
 :PROPERTIES:
 :ID: prompt-function
 :VERSION: 4
 :END:
-Use =(prompt ...)= to submit text built in Lisp.
+Use =(prompt ...)= to send text you build in Lisp.
 
 =(prompt "Review this change")=
 
-Target a named, already-running child with =:to=:
+Use =:to= to send a request to a named child that is already running:
 =(prompt :to 'test-review
         "Run focused tests and report failures.")=
 
-The default target is the primary Autolith. *:to names a running child; it does not create one.*
+Without =:to=, you send the request to the primary Autolith. *Use :to for an already-running child.*
 
-Content can be computed, read from a file, or accompanied by images.
+Compute text, read it from a file, or include images.
 
 * Stay in control while work is active
 :PROPERTIES:
@@ -236,9 +239,9 @@ Content can be computed, read from a file, or accompanied by images.
 @@brand:NOW   Enter  -> steer the active turn
 NEXT  Tab    -> queue a follow-up@@
 
-*Press Enter to steer the current work.* All pending steers are submitted together at the next safe boundary.
+*Press Enter to steer the current work.* Autolith reads all pending steers together at the next safe point.
 
-*Press Tab to queue a follow-up.* Follow-ups are submitted one by one, in order, after the current work.
+*Press Tab to queue a follow-up.* Autolith handles follow-ups one at a time, in order, after the current work ends.
 
 =Focus on the parser first=
 =After that, review the documentation=
@@ -264,7 +267,7 @@ Put work aside without losing what you typed. The vault is for input, not secret
 :ID: indexed-search
 :VERSION: 4
 :END:
-Autolith uses *fff indexed search* for fast discovery.
+Use *fff indexed search* to find files and code quickly.
 
 =(search.files :query "parser")=           fuzzy file paths
 =(search.content :query "parse-request")=  exact identifiers
@@ -281,11 +284,12 @@ Autolith uses *fff indexed search* for fast discovery.
 Type =(settings)= to browse and change your settings.
 Press Esc when you're ready to return to the tour.
 
-For Lisp-level setup, edit:
+To configure Autolith in Lisp, edit:
 =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp=
 
-Durable preferences and onboarding acknowledgements live in the state directory.
-@@dim:The actual config and state directories appear below.@@
+Find saved preferences and completed lessons in the state directory.
+
+@@dim:Here are your Autolith config directories:@@
 
 @@code:Config root: {{{:config-root}}}
 State root:  {{{:state-root}}}@@
@@ -293,7 +297,7 @@ State root:  {{{:state-root}}}@@
 * Leave the terminal.  Keep the session.
 :PROPERTIES:
 :ID: detached-sessions
-:VERSION: 4
+:VERSION: 5
 :END:
 Use =(detach)= to disconnect your terminal while Autolith keeps working.
 
@@ -308,14 +312,15 @@ Use =(detach)= to disconnect your terminal while Autolith keeps working.
 To watch without sending input, use =attach --read-only=.
 To take over the session, use =attach --take-over=.
 Use =autolith lg= as shorthand for =autolith localgroup=.
-With one active session, omit =SESSION-ID=. With several, use an ID from =status=.
+With one active session, omit =SESSION-ID=.
+With several, use an ID from =status= or a unique prefix of 1+ characters.
 
 * Give Autolith an objective
 :PROPERTIES:
 :ID: goals
 :VERSION: 3
 :END:
-A request describes the next task. A *goal* gives autonomous work a longer-lived direction.
+Use a request for the next task. Set a *goal* for longer autonomous work.
 
 =(goal "Make the project ready for release")=
 =(goal :pause)=   pause autonomous work
@@ -329,7 +334,7 @@ For explicit acceptance criteria, verification gates, and budgets, use =(mission
 :ID: missions
 :VERSION: 1
 :END:
-Use a *mission* when work needs explicit acceptance criteria and turn, token, and time limits.
+Use a *mission* when you need explicit acceptance criteria and limits on turns, tokens, and time.
 
 =(mission :start
  '(:objective "Prepare a release summary"
@@ -344,7 +349,7 @@ To finish this example, inspect the result, then record your acceptance:
 =(mission :accept "review" "I checked and accept the summary")=
 =(mission :verify)=
 
-For automated checks, associate criteria with verification gates. Completion requires all criteria and gates to pass.
+For automated checks, link criteria to verification gates. To finish a mission, pass all criteria and gates.
 Use =(mission :cancel "Reason")= to stop instead.
 
 * Large inputs, focused reasoning
@@ -352,14 +357,14 @@ Use =(mission :cancel "Reason")= to stop instead.
 :ID: recursive-inference
 :VERSION: 3
 :END:
-*Recursive language models (RLM)* let Autolith examine large inputs through bounded views and smaller inference calls.
+Autolith can use *recursive language models (RLM)* to read a large input in smaller pieces.
 
 @@brand:large input
       -> selected views
       -> focused analyses
       -> combined result@@
 
-Autolith chooses this when a task benefits from it, such as reading a long document or comparing resources.
+Autolith chooses recursive inference when it helps, such as reading a long document or comparing resources.
 
 *You do not need to manage the recursion yourself.*
 
@@ -373,45 +378,70 @@ Autolith can start *child agents* for implementation, research, design, or revie
 @@brand:you -> primary Autolith -> named children
                         <- results and evidence@@
 
-Inspect roles with =(task.agents)=. Define a .sexp role with =:name, :description, :instructions= and optional tools, models, effort, or spawn policy.
+View roles with =(task.agents)=. Define a role in a .sexp file with =:name, :description, :instructions=.
+You can also set tools, models, effort, or spawn policy.
 
 =.autolith/agents/=  project roles
 =<config-root>/agents/=  user roles
 
 Steer a running child with =(prompt :to 'child-name "...")=.
 
+* Define an agent
+:PROPERTIES:
+:ID: agent-definition
+:VERSION: 1
+:END:
+Save this as =.autolith/agents/code-reader.sexp=:
+
+=(:name "code-reader"
+ :description "Read and explain code."
+ :instructions "Read relevant code. Cite files and line numbers."
+ :tools ("resource.read" "search.*"))=
+
+Use =(task.agents)= to find your new role.
+Ask Autolith to start a child with that role.
+
 * Connect external tools and services
 :PROPERTIES:
 :ID: mcp
 :VERSION: 4
 :END:
-*Model Context Protocol (MCP)* provides tools, resources, and reusable prompts from external servers.
+Connect external servers through *Model Context Protocol (MCP)* to use their tools, resources, and reusable prompts.
 
 =(mcp.status)=  inspect connections
 =(mcp.refresh)= refresh discovery
 
 Configure servers in =<config-root>/mcp.sexp=.
-Trusted project configuration can use =.autolith/mcp.sexp=.
-=init.lisp= can also register servers; use =(mcp)= for the configuration command and its help.
+For trusted projects, use =.autolith/mcp.sexp=.
+You can also register servers in =init.lisp=. Use =(mcp)= for configuration and help.
 
 @@code:Config root: {{{:config-root}}}@@
 
 * Turn expertise into a reusable Skill
 :PROPERTIES:
 :ID: skills
-:VERSION: 3
+:VERSION: 4
 :END:
-Skills are named instruction sets selected when relevant to a task.
+Give Autolith task instructions in a reusable Skill. Use either format.
 
-*Native format: SKILL.sexp*
-Use =:autolith-skill= with version, name, description, and instructions. Executable skills add EXECUTABLE.sexp with entrypoints, contracts, and capabilities.
+*SKILL.sexp*
+=(:autolith-skill :version 1
+ :name "review"
+ :description "Review a code change."
+ :instructions "Read the diff. Cite files and line numbers.")=
 
-*Standard format: SKILL.md*
-YAML frontmatter with name and description, followed by Markdown instructions, is compatible too.
+*SKILL.md*
+=---
+name: review
+description: Review a code change.
+---
+Read the diff. Cite files and line numbers.=
 
-=.autolith/skills/NAME/=  project skills
-=<config-root>/skills/NAME/=  user skills
-=(skills)= lists the catalog; =skill.load= selects instructions.
+=.autolith/skills/review/=  project skill
+=<config-root>/skills/review/=  user skill
+Use =(skills)= to browse the catalog and =skill.load= to load instructions.
+
+For executable Skills, add EXECUTABLE.sexp with entrypoints, contracts, and capabilities.
 
 * Choose your workspace view
 :PROPERTIES:
@@ -422,19 +452,29 @@ In *fullscreen mode*, scroll through the transcript while keeping the prompt in 
 
 =autolith --fullscreen=
 
-Save the preference through =(settings)=. Inline mode fits ordinary terminal scrollback.
+Save the preference through =(settings)=. Use inline mode with ordinary terminal scrollback.
 
 @@brand:resize freely@@ Scroll long lessons with Page Up/Page Down. Use Up/Down on reading pages.
 
-* Your next step
+* Welcome to your LISP MACHINE.
 :PROPERTIES:
 :ID: ready
-:VERSION: 3
+:VERSION: 4
 :END:
-*Give Autolith something real to do.*
+@@success:  ▄██▄
+    ▀█▄
+     ▀█▄
+      ▀█▄
+       ▀█▄
+        ▀█▄
+     ██▄ ▀█▄
+     ▀███▄▀█▄
+      ▀█▄▀███▄
+       ▀█▄▀███▄
+▀█▄▄    ██  ▀██▄
+  ▀▀██▄▄█▀   ▀▀█@@
 
+*Give Autolith something real to do.*
 =Explain this codebase and identify the next useful change=
 
-Replay the tour with =(onboard)=. Future launches show only new or revised lessons.
-
-@@brand:Welcome aboard.@@
+Replay the tour with =(onboard)=.

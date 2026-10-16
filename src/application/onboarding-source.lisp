@@ -90,7 +90,7 @@ newlines; decode links within strong text without treating code as markup."
                          (name (subseq text (+ cursor 2) colon))
                          (style (cdr (assoc name '(("brand" . :brand) ("dim" . :dim)
                                                   ("lisp-prompt" . :lisp-prompt)
-                                                  ("code" . :code))
+                                                  ("code" . :code) ("success" . :success))
                                             :test #'string=)))
                          (end (close-at "@@" (1+ colon))))
                     (unless style
