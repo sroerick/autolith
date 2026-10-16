@@ -5,6 +5,11 @@
 (defclass mission-tool (tool) ()
   (:documentation "A model operation over the current explicit session mission."))
 
+(defclass mission-tool-result (tool-result)
+  ((details :initarg :details :reader tool-result-details
+            :documentation "Portable mission snapshot retained for transcript replay."))
+  (:documentation "A mission result with its native durable presentation data."))
+
 (defmethod tool-execution-policy ((tool mission-tool))
   "Serialize mission transitions with other tool mutations in one provider batch."
   (declare (ignore tool))
@@ -43,20 +48,30 @@
                     (eq (tool-context-conversation context) (application-conversation application)))
           (mission--reject ':authority "Only the primary agent may change mission state."))
         (cond
-          ((string= (tool-name tool) "verify") (application-mission-verify application))
+          ((string= (tool-name tool) "verify")
+           (application-mission-verify application))
           ((string= (tool-name tool) "stop")
            (application-mission-stop
             application
-            (cond ((equal (tool-argument arguments "status") "blocked") ':blocked)
-                  ((equal (tool-argument arguments "status") "failed") ':failed)
-                  (t (mission--reject ':invalid "Stop status must be blocked or failed.")))
+            (cond
+              ((equal (tool-argument arguments "status") "blocked")
+               ':blocked)
+              ((equal (tool-argument arguments "status") "failed")
+               ':failed)
+              (t
+               (mission--reject ':invalid "Stop status must be blocked or failed.")))
             (tool-argument arguments "evidence" :required t)))
           ((string= (tool-name tool) "invalidate")
            (application-mission-invalidate application
                                           (tool-argument arguments "id" :required t)
                                           (tool-argument arguments "evidence" :required t))))
-        (tool-success (format nil "~S" (mission-context-goal mission))))
-    (mission-error (condition) (tool-failure (princ-to-string condition)))))
+        (let ((goal (mission-context-goal mission)))
+          (make-instance 'mission-tool-result
+                         :content (tool-result-content (tool-success (format nil "~S" goal)))
+                         :success-p t :category ':success
+                         :details (list :mission :goal (copy-tree goal)))))
+    (mission-error (condition)
+      (tool-failure (princ-to-string condition)))))
 
 (-> mission--read-data (string) t)
 (defun mission--read-data (text)

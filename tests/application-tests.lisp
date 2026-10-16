@@ -2126,6 +2126,128 @@
      "post-cancellation idle Ctrl-C does not arm a force window"))
   nil)
 
+(-> test-native-tool-result-presentation () null)
+(defun test-native-tool-result-presentation ()
+  "Present native job identities, outcomes and progress from live and durable data."
+  (with-test-configuration (configuration)
+    (let* ((conversation (conversation-create configuration))
+           (application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+      (dolist (case '((:running :notice) (:failed :failure)
+                      (:cancelled :notice) (:completed :success)))
+        (let* ((details (list :job-get :durable-p nil
+                              :job (list :id "worker-1" :agent "reviewer" :state (first case)
+                                         :summary "Review complete" :progress '(:duration-ms 42))))
+               (record (list :tool-result :tool "job.get" :status ':ok
+                             :output "#.(error \"never read output\")" :details details))
+               (live (conversation-record-entry application record)))
+          (test-assert (and (search "worker-1" (test-terminal-row-text live))
+                            (search "reviewer" (test-terminal-row-text live))
+                            (search "42 ms" (test-terminal-row-text live))
+                            (search "Review complete" (test-terminal-row-text live))
+                            (find (second case) (rest live) :key #'terminal-span-style))
+                       "native job state, role, duration and summary have semantic spans")
+          (conversation-append-tool-result conversation (make-identifier) :tool-name "job.get"
+                                           :output (getf (rest record) :output)
+                                           :success-p t :details details)
+          (let* ((loaded (conversation-load (conversation-pathname conversation)))
+                 (replayed (conversation-record-entry
+                            application (first (conversation-records-newest loaded 1)))))
+            (test-assert (equal live replayed)
+                         "durable replay uses retained native details with the same spans")))))))
+
+(-> test-native-role-and-continuity-presentation () null)
+(defun test-native-role-and-continuity-presentation ()
+  "Show rejected roles and completed jobs with failed retained outcomes."
+  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+    (dolist (case (list (list "task.agents"
+                              (task--agents-page '((:kind :diagnostic :name "broken" :cause "invalid role")) 0 20)
+                              "broken" "invalid role")
+                        (list "job.continuity"
+                              '(:classification :completed :job-id "completed-worker"
+                                :result (:status :failure :error "gate rejected"))
+                              "completed-worker" "gate rejected")))
+      (let* ((record (list :tool-result :tool (first case) :status ':ok
+                           :output "native output" :details (second case)))
+             (entry (conversation-record-entry application record))
+             (text (test-terminal-row-text entry)))
+        (test-assert (and (search (third case) text) (search (fourth case) text)
+                          (find ':failure (rest entry) :key #'terminal-span-style))
+                     "native discovery and continuity outcomes retain typed failure information")))
+    (let ((snapshot (list :job-id "json-progress" :state ':running
+                          :progress (list :request-count 2 :usage (json-object "total_tokens" 10)))))
+      (test-assert (search "json-progress"
+                           (test-terminal-row-text
+                            (apply #'append (application--native-snapshot-rows application snapshot))))
+                   "native snapshot projection accepts nested JSON usage objects"))))
+
+(-> test-native-tool-result-presentation-bounds () null)
+(defun test-native-tool-result-presentation-bounds ()
+  "Bound hostile native details, malformed metadata and deeply nested JSON."
+  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+    (dolist (details '(nil :corrupt (:job) (:job-get :job) (:job-get :job (:id))))
+      (let ((entry (conversation-record-entry
+                    application (list :tool-result :tool "job.get" :status ':ok
+                                      :output "fallback" :details details))))
+        (test-assert (search "fallback" (test-terminal-row-text entry))
+                     "malformed or absent native details use bounded text fallback")))
+    (let ((snapshot (list :job-id "cycle" :classification ':failed)))
+      (setf (getf snapshot :progress) snapshot)
+      (test-assert (search "cycle" (test-terminal-row-text
+                                    (apply #'append (application--native-snapshot-rows application snapshot))))
+                   "cyclic native progress is bounded before presentation")))
+  (let* ((summary (make-string 10000 :initial-element #\x))
+         (items (loop repeat 1000 collect (list :id "bounded" :state ':failed :summary summary)))
+         (record (list :tool-result :tool "task.run" :status ':ok
+                       :output "native output" :details (list :task-run :results items))))
+    (dolist (width '(1 4 12))
+      (let* ((application (application-tests--ui-application :columns width :compact-view-p nil))
+             (entry (conversation-record-entry application record))
+             (lines (application--display-lines (test-terminal-row-text entry))))
+        (test-assert (< (length lines) 40) "native result rows are bounded independently of input size")
+        (test-assert (every (lambda (line) (<= (text-cell-width line) width)) lines)
+                     "native result rows fit narrow terminals"))))
+  (let* ((application (application-tests--ui-application :columns 12 :compact-view-p nil))
+         (output (concatenate 'string (make-string 10000 :initial-element #\[)
+                              "0" (make-string 10000 :initial-element #\])))
+         (entry (conversation-record-entry
+                 application (list :tool-result :tool "unknown.run" :status ':ok :output output))))
+    (test-assert (< (length (test-terminal-row-text entry)) 100)
+                 "excessively nested JSON uses safe bounded text instead of recursive decoding")))
+
+(-> test-lisp-source-result-highlighting () null)
+(defun test-lisp-source-result-highlighting ()
+  "Present returned Lisp source and mutation forms using syntax token roles."
+  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+    (dolist (name '("lisp.source" "self.diff"))
+      (let* ((record (list :tool-result :tool name :status ':ok
+                           :output "(defun greet () \"hello\")"))
+             (entry (conversation-record-entry application record)))
+        (test-assert (and (find ':syntax-keyword entry :key #'terminal-span-style)
+                          (find ':syntax-function entry :key #'terminal-span-style)
+                          (find ':syntax-string entry :key #'terminal-span-style))
+                     "Lisp result previews retain keyword, function and string token styles")))))
+
+(-> test-lsp-result-severity-presentation () null)
+(defun test-lsp-result-severity-presentation ()
+  "Distinguish transport success, server failure and diagnostic severity in spans."
+  (let ((application (application-tests--ui-application :columns 120 :compact-view-p nil)))
+    (dolist (case '((1 :failure) (2 :notice) (3 :hint) (4 :dim)))
+      (let* ((output (lsp-tool--render
+                      (vector (json-object "server" "broken" "error" "offline")
+                              (json-object "server" "working" "result"
+                                           (json-object "status" "reported" "diagnostics"
+                                                        (vector (json-object "severity" (first case)
+                                                                             "message" "diagnostic")))))))
+             (entry (conversation-record-entry
+                     application (list :tool-result :tool "lsp.diagnostics" :status ':ok :output output))))
+        (test-assert (and (eq (terminal-span-style (first entry)) ':success)
+                          (find-if (lambda (span) (and (eq (terminal-span-style span) ':failure)
+                                                       (string= (terminal-span-text span) "offline"))) entry)
+                          (find-if (lambda (span) (and (eq (terminal-span-style span) (second case))
+                                                       (string= (terminal-span-text span)
+                                                                (princ-to-string (first case))))) entry))
+                     "server and diagnostic severity spans are independent of transport success")))))
+
 (-> test-tool-execution-handoff-presentation () null)
 (defun test-tool-execution-handoff-presentation ()
   "Present actual tool handoffs and their durable replay as bounded background state."

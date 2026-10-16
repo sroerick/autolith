@@ -920,6 +920,11 @@
   test-cancellation-completion-clears-interrupt-state
   test-failed-turn-publishes-durable-wreckage
   test-transcript-entries
+  test-native-tool-result-presentation
+  test-native-role-and-continuity-presentation
+  test-native-tool-result-presentation-bounds
+  test-lisp-source-result-highlighting
+  test-lsp-result-severity-presentation
   test-tool-execution-handoff-presentation
   test-recovery-cursor-normalization
   test-recovery-diagnosis-prompt
@@ -971,6 +976,7 @@
   test-mission-inference-reservation-recovery)
 
 (define-test-suite missions
+  test-mission-tool-result-presentation
   test-mission-accounting
   test-mission-unknown-usage-and-recovery
   test-mission-gate-retries

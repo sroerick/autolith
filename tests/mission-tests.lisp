@@ -46,6 +46,36 @@
   "Return one final provider response with exact, configurable usage."
   (agent-test-result (make-identifier) (list (agent-test-message text)) :usage usage))
 
+(-> test-mission-tool-result-presentation () null)
+(defun test-mission-tool-result-presentation ()
+  "Retain mission gate and outcome details across the tool and durable UI boundary."
+  (with-test-configuration (configuration)
+    (let* ((application (mission-test--application configuration))
+           (conversation (application-conversation application))
+           (context (mission-test--context application))
+           (registry (application-tool-registry application)))
+      (setf (application-compact-view-p application) nil)
+      (application-mission-start
+       application (mission-test--specification
+                    :gates '((:id "build" :kind :command :command "exit 0"))))
+      (let* ((result (tool-execute (tool-registry-find registry "mission" "stop")
+                                   context (json-object "status" "failed" "evidence" "compiler rejected")))
+             (details (tool-result-details result)))
+        (test-assert (and (tool-result-success-p result)
+                          (eq (first details) ':mission)
+                          (getf (getf (rest details) :goal) :gates))
+                     "a successful mission mutation retains its failed policy state and gates")
+        (conversation-append-tool-result conversation (make-identifier) :tool-name "mission.stop"
+                                         :success-p t :output (tool-result-content result) :details details)
+        (let* ((loaded (conversation-load (conversation-pathname conversation)))
+               (record (first (conversation-records-newest loaded 1)))
+               (entry (conversation-record-entry application record))
+               (text (test-terminal-row-text entry)))
+          (test-assert (and (search "build" text) (search "failed" text)
+                            (find ':failure (rest entry) :key #'terminal-span-style)
+                            (search "compiler rejected" text))
+                       "mission replay shows gate identity and semantic failure evidence"))))))
+
 (-> test-mission-accounting () null)
 (defun test-mission-accounting ()
   "Exercise exact shared accounting across primary, inherited and nested inference."

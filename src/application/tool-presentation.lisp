@@ -399,6 +399,9 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
 (defparameter *application-tool-structure-depth* 4
   "The maximum nesting depth expanded for one untrusted structured tool value.")
 
+(defparameter *application-tool-structure-budget* nil
+  "Dynamically bound remaining value count for one structured result preview.")
+
 (-> application--presentation-value (t) string)
 (defun application--presentation-value (value)
   "Return a concise readable presentation of one JSON VALUE without JSON syntax."
@@ -418,6 +421,46 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
     (t
      (bounded-string value :limit 500))))
 
+(-> application--structured-value-style (string t) keyword)
+(defun application--structured-value-style (label value)
+  "Return semantic state and diagnostic severity styling for a structured field."
+  (let* ((separator (position #\. label :from-end t))
+         (field     (subseq label (if separator (1+ separator) 0))))
+    (cond
+      ((member field '("error" "condition-report") :test #'string-equal)
+       (if value ':failure ':dim))
+      ((and (string-equal field "severity") (integerp value))
+       (case value
+         (1
+          ':failure)
+         (2
+          ':notice)
+         (3
+          ':hint)
+         (4
+          ':dim)
+         (otherwise
+          ':code)))
+      ((and (member field '("status" "state" "outcome" "classification") :test #'string-equal)
+            (or (stringp value) (keywordp value)))
+       (let ((state (string-downcase (string value))))
+         (cond
+           ((member state '("failed" "failure" "error" "exhausted") :test #'string=)
+            ':failure)
+           ((member state '("cancelled" "canceled" "aborted" "blocked" "paused" "running"
+                            "queued" "pending" "active" "abandoned" "live-owned-detached"
+                            "dead-needing-decision" "reconstructible-checkpoint"
+                            "safe-restartable-specification")
+                    :test #'string=)
+            ':notice)
+           ((member state '("completed" "success" "succeeded" "verified" "passed" "accepted")
+                    :test #'string=)
+            ':success)
+           (t
+            ':code))))
+      (t
+       ':code))))
+
 (-> application--structured-value-rows
     (application string t &key (:depth integer))
     list)
@@ -427,6 +470,9 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
 
 Objects and arrays are expanded recursively so unregistered and dynamic tools
 never fall back to raw JSON argument syntax.  DEPTH bounds untrusted nesting."
+  (when *application-tool-structure-budget*
+    (when (minusp (decf *application-tool-structure-budget*))
+      (return-from application--structured-value-rows nil)))
   (cond
     ((json-object-p value)
      (if (plusp depth)
@@ -465,8 +511,9 @@ never fall back to raw JSON argument syntax.  DEPTH bounds untrusted nesting."
     ((and (stringp value) (find #\Newline value))
      (append
       (list (application--tool-section-row label))
-      (application--preview-rows value ':code *application-tool-call-lines*
-                                 :gutter "│ ")))
+      (application--preview-rows (bounded-string value :limit 2000)
+                                 (application--structured-value-style label value)
+                                 *application-tool-call-lines* :gutter "│ ")))
     (t
      (application--tool-field-rows
       application
@@ -474,7 +521,18 @@ never fall back to raw JSON argument syntax.  DEPTH bounds untrusted nesting."
                   :value (if (stringp value)
                              (bounded-string value :limit 500)
                              (application--presentation-value value))
-                  :style ':code))))))
+                  :style (application--structured-value-style label value)))))))
+
+(-> application--structured-key-less-p (string string) boolean)
+(defun application--structured-key-less-p (left right)
+  "Order identities and semantic states before potentially lengthy payloads."
+  (let* ((priority '("truncated" "server" "id" "name" "state" "status" "severity" "error"
+                     "objective" "message" "summary" "evidence" "gates" "criteria"))
+         (left-rank (or (position left priority :test #'string=) 100))
+         (right-rank (or (position right priority :test #'string=) 100)))
+    (if (= left-rank right-rank)
+        (not (null (string< left right)))
+        (< left-rank right-rank))))
 
 (-> application--structured-object-rows
     (application json-object &key (:prefix (option string))
@@ -492,7 +550,7 @@ structural discriminator as a readable heading instead."
             (loop for key being the hash-keys of object
                   unless (member key excluded-keys :test #'string=)
                     collect key)
-            #'string<))
+           #'application--structured-key-less-p))
          (visible-count (min *application-tool-structure-items* (length keys)))
          (omitted (- (length keys) visible-count)))
     (append
@@ -1917,6 +1975,27 @@ OPERATION's own declared target line so they stay numbered."
                                   *application-tool-output-lines*
                                   :gutter "│ ")))))
 
+(-> application--structured-json-safe-p (string) boolean)
+(defun application--structured-json-safe-p (text)
+  "Bound JSON input size and nesting before invoking the recursive decoder."
+  (and (<= (length text) 131072)
+       (loop with depth = 0
+             with quoted-p = nil
+             with escaped-p = nil
+             for character across text
+             do (cond
+                  (escaped-p
+                   (setf escaped-p nil))
+                  ((and quoted-p (char= character #\\))
+                   (setf escaped-p t))
+                  ((char= character #\")
+                   (setf quoted-p (not quoted-p)))
+                  ((not quoted-p)
+                   (case character
+                     ((#\{ #\[) (incf depth))
+                     ((#\} #\]) (decf depth)))))
+             never (> depth 32))))
+
 (-> application--structured-output-value (string) (values t boolean))
 (defun application--structured-output-value (output)
   "Decode a JSON object or array OUTPUT for transcript presentation.
@@ -1925,7 +2004,8 @@ Only complete object and array documents opt into this path.  Other output
 remains ordinary bounded tool text, including malformed untrusted JSON."
   (let ((trimmed (string-trim '(#\Space #\Tab #\Newline #\Return) output)))
     (if (and (plusp (length trimmed))
-             (member (char trimmed 0) '(#\{ #\[)))
+             (member (char trimmed 0) '(#\{ #\[))
+             (application--structured-json-safe-p trimmed))
         (handler-case
             (let ((value (json-decode trimmed)))
               (if (or (json-object-p value)
@@ -1938,17 +2018,23 @@ remains ordinary bounded tool text, including malformed untrusted JSON."
 
 (-> application--structured-output-rows (application string) list)
 (defun application--structured-output-rows (application output)
-  "Return safe recursive fields for JSON OUTPUT or a bounded text preview."
+  "Return bounded recursive fields for JSON OUTPUT or a safe text preview."
   (multiple-value-bind (value structured-p)
       (application--structured-output-value output)
     (if structured-p
-        (if (json-object-p value)
-            (application--structured-object-rows application value)
-            (application--structured-value-rows application "result" value))
+        (let* ((*application-tool-structure-budget* 64)
+               (rows (if (json-object-p value)
+                         (application--structured-object-rows application value :depth 8)
+                         (application--structured-value-rows application "result" value :depth 8))))
+          (if (or (> (length rows) *application-tool-output-lines*)
+                  (minusp *application-tool-structure-budget*))
+              (append (subseq rows 0 (min (length rows) *application-tool-output-lines*))
+                      (list (list (terminal-span ':dim "… more fields"))))
+              rows))
         (application--preview-rows output ':dim *application-tool-output-lines*
                                    :gutter "│ "))))
 
-(-> application--mcp-content-sections (list string) list)
+(-> application--mcp-content-sections (t string) list)
 (defun application--mcp-content-sections (details output)
   "Return valid MCP section metadata, or NIL for a malformed or clipped record."
   (when (and (proper-list-p details)
@@ -1991,6 +2077,179 @@ remains ordinary bounded tool text, including malformed untrusted JSON."
                 (list (list (terminal-span ':dim "… more content"))))
         rows)))
 
+(-> application--native-details-value (t) (values t boolean))
+(defun application--native-details-value (details)
+  "Project retained native task or mission DETAILS into bounded display data.
+
+Never read serialized Lisp. Limit traversal, including malformed or circular
+lists, independently of the producer's transport limits."
+  (block invalid
+    (let ((remaining 256))
+      (labels ((project (value depth)
+                 (when (or (minusp (decf remaining)) (zerop depth))
+                   (return-from project "… more details"))
+                 (cond
+                   ((stringp value)
+                    (bounded-string value :limit 500))
+                   ((keywordp value)
+                    (string-downcase (symbol-name value)))
+                   ((or (null value) (numberp value) (eq value t) (json-false-p value))
+                    value)
+                   ((json-object-p value)
+                    (let ((object (make-hash-table :test #'equal)) (count 0))
+                      (block fields
+                        (maphash (lambda (key item)
+                                   (unless (stringp key)
+                                     (return-from invalid (values nil nil)))
+                                   (when (>= count 64)
+                                     (setf (gethash "…" object) "more fields")
+                                     (return-from fields nil))
+                                   (incf count)
+                                   (setf (gethash (bounded-string key :limit 80) object)
+                                         (project item (1- depth))))
+                                 value))
+                      object))
+                   ((consp value)
+                    (if (keywordp (first value))
+                        (let ((object (make-hash-table :test #'equal))
+                              (tail value))
+                          (loop repeat 64
+                                while tail
+                                do (unless (and (consp tail) (keywordp (first tail))
+                                                (consp (rest tail)))
+                                     (return-from invalid (values nil nil)))
+                                   (setf (gethash (string-downcase (symbol-name (first tail))) object)
+                                         (project (second tail) (1- depth))
+                                         tail (cddr tail)))
+                          (when tail (setf (gethash "…" object) "more fields"))
+                          object)
+                        (let ((items nil) (tail value))
+                          (loop repeat *application-tool-structure-items*
+                                while (consp tail)
+                                do (push (project (first tail) (1- depth)) items)
+                                   (setf tail (rest tail)))
+                          (unless (or (null tail) (consp tail))
+                            (return-from invalid (values nil nil)))
+                          (when tail (push "… more items" items))
+                          (coerce (nreverse items) 'vector))))
+                   ((and (vectorp value) (not (stringp value)))
+                    (let* ((count (min (length value) *application-tool-structure-items*))
+                           (items (loop for index below count
+                                        collect (project (aref value index) (1- depth)))))
+                      (when (< count (length value))
+                        (setf items (append items (list "… more items"))))
+                      (coerce items 'vector)))
+                   (t
+                    (return-from invalid (values nil nil))))))
+        (when (consp details)
+          (let ((tagged-p (member (first details)
+                                  '(:task-run :task-agents :job-list :job-get :job-wait
+                                    :job-cancel :job-send :mission))))
+            (when (or tagged-p
+                      (member (first details)
+                              '(:job :continuity-list :classification :job-id :execution-id)))
+              (let ((value (project (if tagged-p (rest details) details) 8)))
+                (if (json-object-p value)
+                    (values value t)
+                    (values nil nil))))))))))
+
+(-> application--native-job-rows (application json-object) list)
+(defun application--native-job-rows (application object)
+  "Show one bounded native task, agent, or job identity and its progress."
+  (let* ((result       (json-get object "result"))
+         (progress     (json-get object "progress"))
+         (diagnostic-p (equal (json-get object "kind") "diagnostic"))
+         (state        (or (json-get object "state") (json-get object "classification")
+                           (json-get object "status") (and diagnostic-p "failed")))
+         (status       (and (json-object-p result) (json-get result "status")))
+         (identity     (or (json-get object "id") (json-get object "name")
+                           (json-get object "job-id") (json-get object "execution-id") "task"))
+         (role         (or (json-get object "agent") (json-get object "role")
+                           (json-get object "tool")))
+         (summary      (or (and (json-object-p result)
+                                (or (json-get result "summary") (json-get result "label")
+                                    (json-get result "output") (json-get result "content")))
+                           (json-get object "summary") (json-get object "description")))
+         (failure      (or (and (json-object-p result) (json-get result "error"))
+                           (json-get object "cause") (json-get object "condition-report")
+                           (json-get object "cancellation-reason")))
+         (duration     (or (and (json-object-p progress) (json-get progress "duration-ms"))
+                           (and (json-object-p result) (json-get result "duration-ms"))
+                           (json-get object "duration-ms")))
+         (requests     (and (json-object-p progress) (json-get progress "request-count")))
+         (current-tool (and (json-object-p progress) (json-get progress "current-tool")))
+         (path         (or (json-get object "path") (json-get object "pathname")
+                           (and (json-object-p result) (json-get result "output-path")))))
+    (append
+     (list (append
+            (list (terminal-span (if (or (equal status "failure") (equal state "failed"))
+                                     ':failure ':strong)
+                                 (sanitize-text (application--presentation-value identity) :single-line-p t)))
+            (loop for value in (list state (unless (equal state status) status))
+                  when value
+                    append (list (terminal-span ':dim " · ")
+                                 (terminal-span (application--structured-value-style "state" value)
+                                                (sanitize-text (application--presentation-value value)
+                                                               :single-line-p t))))))
+     (application--tool-field-rows
+      application
+      (loop for (label value style) in
+            (list (list "role" role ':code)
+                  (list "duration" (and duration (format nil "~A ms" duration)) ':plain)
+                  (list "requests" (and requests (princ-to-string requests)) ':plain)
+                  (list "current tool" current-tool ':code)
+                  (list "summary" summary ':plain)
+                  (list "condition" failure (if (equal state "cancelled") ':notice ':failure))
+                  (list "path" path ':code))
+            when value
+              collect (list :label label
+                            :value (bounded-string (application--presentation-value value) :limit 200)
+                            :style style))))))
+
+(-> application--native-details-rows (application list) list)
+(defun application--native-details-rows (application record)
+  "Render retained portable native details with bounded semantic fields."
+  (multiple-value-bind (value valid-p)
+      (application--native-details-value (getf (rest record) :details))
+    (when valid-p
+      (let* ((job (json-get value "job"))
+             (items (or (json-get value "results") (json-get value "jobs")
+                        (json-get value "entries")))
+             (rows (cond
+                     ((json-object-p job)
+                      (application--native-job-rows application job))
+                     ((or (json-get value "classification") (json-get value "job-id"))
+                      (application--native-job-rows application value))
+                     ((and (vectorp items) (not (stringp items)))
+                      (if (zerop (length items))
+                          (list (list (terminal-span ':dim "no entries")))
+                          (loop for item across items
+                                if (json-object-p item)
+                                  append (application--native-job-rows application item)
+                                else
+                                  collect (list (terminal-span ':dim "… more entries")))))
+                     (t
+                      (application--structured-object-rows application value :depth 8))))
+             (paging (when (json-get value "next-offset")
+                       (application--tool-field-rows
+                        application
+                        (list (list :label "next offset"
+                                    :value (princ-to-string (json-get value "next-offset")))))))
+             (all-rows (append rows paging)))
+        (if (> (length all-rows) *application-tool-output-lines*)
+            (append (subseq all-rows 0 *application-tool-output-lines*)
+                    (list (list (terminal-span ':dim "… more details"))))
+            all-rows)))))
+
+(-> application--native-snapshot-rows (application list) list)
+(defun application--native-snapshot-rows (application snapshot)
+  "Return bounded semantic span rows for one native job or continuity SNAPSHOT.
+
+Accept :ID or :JOB-ID, :STATE or :CLASSIFICATION, :PROGRESS, :RESULT and :PATH.
+The same projection is used for retained tool details and inspector snapshots."
+  (application--native-details-rows
+   application (list :tool-result :details (list :job snapshot))))
+
 (-> application--generic-tool-result-entry (application list) list)
 (defun application--generic-tool-result-entry (application record)
   "Return a readable fallback entry for tool result RECORD.
@@ -2001,7 +2260,8 @@ re-emitting untrusted serialized JSON."
     (application--tool-result-entry
      application
      record
-     :rows (or (application--mcp-content-rows application record)
+     :rows (or (application--native-details-rows application record)
+               (application--mcp-content-rows application record)
                (if (application--tool-result-success-p record)
                    (application--structured-output-rows application output)
                    (application--failure-result-rows output))))))
@@ -2366,23 +2626,21 @@ that follow are the model's next observation, not something the user reads."
       (application--tool-result-entry
        application
        record
-       :rows (application--preview-rows
+       :rows (application--source-preview-rows
               (or (getf (rest record) :output) "")
-              ':code
-              *application-tool-output-lines*
-              :gutter "│ "))
+              :language *application-common-lisp-language*
+              :limit *application-tool-output-lines*))
       (call-next-method)))
 
 (defmethod application-tool-result-entry
     ((tool self-diff-tool) (application application) record)
-  "Present pending active-image mutations as bounded code text."
+  "Present pending active-image mutations as bounded Lisp source."
   (if (application--tool-result-success-p record)
       (application--tool-result-entry
        application
        record
-       :rows (application--preview-rows
+       :rows (application--source-preview-rows
               (or (getf (rest record) :output) "")
-              ':code
-              *application-tool-output-lines*
-              :gutter "│ "))
+              :language *application-common-lisp-language*
+              :limit *application-tool-output-lines*))
       (call-next-method)))
