@@ -4117,3 +4117,27 @@
                     "MCP content sections share one bounded preview plus an omission row")))))
         (mcp-manager-close manager))))
   nil)
+
+
+(-> test-mcp-malformed-presentation-metadata () null)
+(defun test-mcp-malformed-presentation-metadata ()
+  "Fall back to readable output when replayed MCP section metadata is invalid."
+  (let ((application (application-tests--ui-application :columns 80 :compact-view-p nil)))
+    (dolist (details
+              '((:mcp-content :sections ((:text -1 1)))
+                (:mcp-content :sections ((:text 3 2)))
+                (:mcp-content :sections ((:text 0 500)))
+                (:mcp-content :sections ((:text "0" 3)))
+                (:mcp-content :sections ((:text 0)))
+                (:mcp-content :sections ((:unknown 0 3)))
+                (:mcp-content :sections (:text 0 3))
+                (:mcp-content :sections . 1)))
+      (let* ((record (list :tool-result :tool "unavailable.operation"
+                           :status ':ok :output "{\"answer\":42}"
+                           :details details))
+             (entry (conversation-record-entry application record)))
+        (test-assert (and entry
+                          (search "answer" (terminal--spans-text entry))
+                          (search "42" (terminal--spans-text entry)))
+                     "malformed section metadata cannot prevent transcript replay"))))
+  nil)

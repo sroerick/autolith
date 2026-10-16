@@ -1946,31 +1946,48 @@ remains ordinary bounded tool text, including malformed untrusted JSON."
         (application--preview-rows output ':dim *application-tool-output-lines*
                                    :gutter "│ "))))
 
+(-> application--mcp-content-sections (list string) list)
+(defun application--mcp-content-sections (details output)
+  "Return valid MCP section metadata, or NIL for a malformed or clipped record."
+  (when (and (proper-list-p details)
+             (eq (first details) ':mcp-content)
+             (evenp (length (rest details))))
+    (let ((sections (getf (rest details) :sections)))
+      (when (and (proper-list-p sections)
+                 (<= (length sections) (1+ *mcp-maximum-content-blocks*))
+                 (every (lambda (section)
+                          (and (proper-list-p section)
+                               (= (length section) 3)
+                               (member (first section) '(:text :structured))
+                               (typep (second section) '(integer 0))
+                               (typep (third section) '(integer 0))
+                               (<= (second section) (third section) (length output))))
+                        sections))
+        sections))))
+
 (-> application--mcp-content-rows (application list) list)
 (defun application--mcp-content-rows (application record)
-  "Format persisted MCP content sections independently within one row budget."
-  (let* ((details (getf (rest record) :details))
-         (output (or (getf (rest record) :output) ""))
+  "Format validated MCP content sections independently within one row budget."
+  (let* ((output (or (getf (rest record) :output) ""))
+         (sections (application--mcp-content-sections
+                    (getf (rest record) :details) output))
          (rows nil)
          (processed 0))
-    (when (and (consp details) (eq (first details) ':mcp-content))
-      (let ((sections (getf (rest details) :sections)))
-        (dolist (section sections)
-          (when (>= (length rows) *application-tool-output-lines*)
-            (return))
-          (incf processed)
-          (destructuring-bind (kind start end) section
-            (declare (ignore kind))
-            (when (< start (length output))
-              (setf rows
-                    (append rows
-                            (application--structured-output-rows
-                             application (subseq output start (min end (length output)))))))))
-        (if (or (> (length rows) *application-tool-output-lines*)
-                (< processed (length sections)))
-            (append (subseq rows 0 (min (length rows) *application-tool-output-lines*))
-                    (list (list (terminal-span ':dim "… more content"))))
-            rows)))))
+    (dolist (section sections)
+      (when (>= (length rows) *application-tool-output-lines*)
+        (return))
+      (incf processed)
+      (destructuring-bind (kind start end) section
+        (declare (ignore kind))
+        (setf rows
+              (append rows
+                      (application--structured-output-rows
+                       application (subseq output start end))))))
+    (if (or (> (length rows) *application-tool-output-lines*)
+            (< processed (length sections)))
+        (append (subseq rows 0 (min (length rows) *application-tool-output-lines*))
+                (list (list (terminal-span ':dim "… more content"))))
+        rows)))
 
 (-> application--generic-tool-result-entry (application list) list)
 (defun application--generic-tool-result-entry (application record)
