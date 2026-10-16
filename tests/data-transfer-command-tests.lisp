@@ -147,7 +147,8 @@
 (-> test-data-transfer-receipt-presentation () null)
 (defun test-data-transfer-receipt-presentation ()
   "Exercise typed receipts and fullscreen reflow of long, wide native paths."
-  (let* ((path "猫/wide archive/subdirectory/another directory/archive.sexp")
+  (let* ((path (uiop:native-namestring
+                #P"猫/wide archive/subdirectory/another directory/archive.sexp"))
          (report (list :pathname path :workspace "猫/workspace/"
                        :conversations 11 :memories 12 :agendas 13
                        :plans 14 :papercuts 15 :files 16))
