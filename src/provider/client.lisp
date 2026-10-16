@@ -1043,3 +1043,69 @@ this endpoint is unavailable."
       (if (provider--native-compaction-unavailable-p condition)
           nil
           (error condition)))))
+
+;;;; -- Fleet analytics export (autolith-analytics M1) --
+
+(defparameter *llm-usage-events-file*
+  (or (uiop:getenv "ANALYTICS_EVENTS_FILE")
+      (merge-pathnames "dev/wyo.tech/autolith-analytics/events/autolith.jsonl"
+                       (user-homedir-pathname)))
+  "Append target for llm-usage events (see autolith-analytics docs/schema-v1.md).")
+
+(defun llm-usage--json-string (value)
+  "Render VALUE as a quoted JSON string with minimal escaping."
+  (with-output-to-string (out)
+    (write-char #\" out)
+    (loop for char across (princ-to-string value)
+          do (cond ((member char '(#\" #\\))
+                    (write-char #\\ out)
+                    (write-char char out))
+                   ((char< char #\space)
+                    (format out "\\u~4,'0x" (char-code char)))
+                   (t (write-char char out))))
+    (write-char #\" out)))
+
+(defun llm-usage--iso-utc ()
+  "Return the current time as an ISO-8601 UTC string."
+  (let ((universal (get-universal-time)))
+    (multiple-value-bind (second minute hour day month year)
+        (decode-universal-time
+         (+ universal (nth-value 8 (decode-universal-time universal))))
+      (format nil "~4d-~2,'0d-~2,'0dT~2,'0d:~2,'0d:~2,'0dZ"
+              year month day hour minute second))))
+
+(defun llm-usage--export (conversation result wall-seconds)
+  "Append one best-effort llm-usage event for a completed provider call.
+A failed append never blocks or signals the provider path."
+  (ignore-errors
+    (let ((usage (provider-result-usage result))
+          (wall (when wall-seconds (format nil ",\"wall_s\":~,1f" wall-seconds))))
+      (when (hash-table-p usage)
+        (ensure-directories-exist *llm-usage-events-file*)
+        (with-open-file (out *llm-usage-events-file*
+                             :direction :output :if-exists :append
+                             :if-does-not-exist :create)
+          (write-line
+           (format nil
+                   "{\"ts\":~A,\"schema_v\":1,\"source\":\"autolith\",\"kind\":\"llm-usage\",\"actor\":~A,\"model\":~A,\"tokens_in\":~A,\"tokens_out\":~A,\"cached_tokens\":~A,\"requests\":1~A}"
+                   (llm-usage--json-string (llm-usage--iso-utc))
+                   (llm-usage--json-string
+                    (or (uiop:getenv "ANALYTICS_ACTOR") (uiop:getenv "USER") "unknown"))
+                   (llm-usage--json-string
+                    (or (and conversation (conversation-model conversation)) "unknown"))
+                   (or (gethash "input_tokens" usage) 0)
+                   (or (gethash "output_tokens" usage) 0)
+                   (or (gethash "cached_input_tokens" usage) 0)
+                   wall)
+           out))))))
+
+(defmethod provider-stream-turn :around
+    ((provider t) (conversation conversation) &key &allow-other-keys)
+  "Export one analytics llm-usage event per completed provider call."
+  (let ((started (get-internal-real-time))
+        (result (call-next-method)))
+    (llm-usage--export
+     conversation result
+     (/ (- (get-internal-real-time) started)
+        (float internal-time-units-per-second)))
+    result))
