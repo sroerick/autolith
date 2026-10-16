@@ -240,6 +240,16 @@
   test-context-rule-tool-events
   test-context-rule-generation-and-diagnostics)
 
+(define-test-suite saved-context-rule
+  test-saved-context-rule-persistence-and-replacement
+  test-saved-context-rule-scope-and-precedence
+  test-saved-context-rule-corruption-is-reported
+  test-saved-context-rule-resolution-boundaries
+  test-saved-context-rule-corrupt-input-boundaries
+  test-saved-context-rule-save-preserves-corruption
+  test-saved-context-rule-publication-failures
+  test-saved-context-rule-concurrent-writers)
+
 (define-test-suite relax
   test-relax-setting-and-command
   test-relax-warning-rebuilds-with-system-prompt)

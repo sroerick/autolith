@@ -64,6 +64,66 @@
     (context-rule--reject field "Rule trigger values must be a bounded proper list of nonempty strings."))
   (mapcar #'copy-seq values))
 
+(-> context-rule--output-text (hash-table (integer 1)) string)
+(defun context-rule--output-text (item maximum-characters)
+  "Extract visible output from ITEM without allocating an unbounded copy."
+  (let ((remaining maximum-characters))
+    (with-output-to-string (stream)
+      (flet ((append-text (text)
+               (when (and (stringp text) (plusp remaining))
+                 (let ((count (min remaining (length text))))
+                   (write-string text stream :end count)
+                   (decf remaining count)))))
+        (cond
+          ((and (equal (json-get item "type") "message")
+                (equal (json-get item "role") "assistant"))
+           (let ((content (json-get item "content")))
+             (typecase content
+               (string
+                (append-text content))
+               (vector
+                (loop for block across content
+                      while (plusp remaining)
+                      when (and (json-object-p block)
+                                (member (json-get block "type") '("output_text" "text")
+                                        :test #'equal)
+                                (stringp (json-get block "text")))
+                        do (append-text (json-get block "text"))
+                           (append-text (string #\Newline)))))))
+          ((equal (json-get item "type") "function_call")
+           (append-text (json-get item "name"))
+           (append-text (string #\Newline))
+           (append-text (json-get item "arguments"))))))))
+
+(-> context-rule-recent-outputs
+    (conversation &key (:limit (integer 1)) (:maximum-characters (integer 1))) list)
+(defun context-rule-recent-outputs (conversation &key (limit 16) (maximum-characters 8000))
+  "Return bounded recent visible assistant text and generated tool arguments.
+
+User messages, tool results and reasoning are excluded. Values are detached
+strings in chronological order from the current durable provider projection."
+  (let ((outputs nil)
+        (count 0))
+    (dolist (item (reverse (conversation-input-items-for-request
+                           conversation :include-ephemeral-p nil)))
+      (when (= count limit)
+        (return))
+      (when (json-object-p item)
+        (let ((text (context-rule--output-text item maximum-characters)))
+          (when (non-empty-string-p text)
+            (push text outputs)
+            (incf count)))))
+    outputs))
+
+(-> context-rule-output-matches-p (list list) boolean)
+(defun context-rule-output-matches-p (needles outputs)
+  "Return true when a literal NEEDLE occurs in observed assistant OUTPUTS."
+  (and (some (lambda (needle)
+               (some (lambda (output) (search needle output :test #'char-equal))
+                     outputs))
+             needles)
+       t))
+
 (-> context-rule--validate (t) list)
 (defun context-rule--validate (rule)
   "Return a detached validated rule without executing its declarative predicates."
@@ -78,8 +138,9 @@
     (unless (and predicates (context-rule--plist-p predicates)
                  (loop for tail on predicates by #'cddr
                        always (member (first tail)
-                                      '(:paths :languages :tools :namespaces :roles :diagnostics :events))))
-      (context-rule--reject ':when "A rule requires at least one recognized metadata predicate."))
+                                      '(:paths :languages :tools :namespaces :roles
+                                        :diagnostics :events :output-contains))))
+      (context-rule--reject ':when "A rule requires at least one recognized metadata or output predicate."))
     (loop for (field values) on predicates by #'cddr
           do (unless (context-rule--values field values)
                (context-rule--reject field "A rule predicate requires at least one value.")))
@@ -177,26 +238,39 @@ ignored. Metadata never grants tool authority."
           (context-rule--remember identifier facts)))))
   nil)
 
+(-> context-rule--workspace-name ((or string pathname)) string)
+(defun context-rule--workspace-name (directory)
+  "Normalize DIRECTORY, resolving links when it exists."
+  (let ((pathname (uiop:ensure-directory-pathname directory)))
+    (namestring (if (probe-file pathname)
+                    (platform-truename *platform* pathname)
+                    pathname))))
+
 (-> context-rule--matches-p (list request-context) boolean)
 (defun context-rule--matches-p (rule request)
   "Match conjunctive fields and disjunctive values against one detached snapshot."
   (and (not (request-context-compaction-p request))
        (or (null (getf rule :workspace))
-           (equal (namestring (uiop:ensure-directory-pathname (getf rule :workspace)))
-                  (namestring (uiop:ensure-directory-pathname
-                               (config :working-directory (request-context-configuration request))))))
+           (equal (context-rule--workspace-name (getf rule :workspace))
+                  (context-rule--workspace-name
+                   (config :working-directory (request-context-configuration request)))))
        (let ((facts
                (with-lock-held (*context-lock*)
                  (copy-tree (gethash (conversation-identifier (request-context-conversation request))
                                      *context-rule-facts*)))))
-         (loop for (field values) on (getf rule :when) by #'cddr
-               always (some (lambda (value)
-                              (some (lambda (fact)
-                                      (if (eq field ':paths)
-                                          (uiop:string-prefix-p value fact)
-                                          (equal value fact)))
-                                    (getf facts field)))
-                            values)))
+          (loop for (field values) on (getf rule :when) by #'cddr
+                always
+                (if (eq field ':output-contains)
+                    (context-rule-output-matches-p
+                     values (context-rule-recent-outputs
+                             (request-context-conversation request)))
+                    (some (lambda (value)
+                            (some (lambda (fact)
+                                    (if (eq field ':paths)
+                                        (uiop:string-prefix-p value fact)
+                                        (equal value fact)))
+                                  (getf facts field)))
+                          values))))
        t))
 
 (-> register-context-rule (list &key (:source keyword)) string)

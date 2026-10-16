@@ -1347,6 +1347,9 @@
            #:debug-register-default-tools
            #:register-context-rule
            #:unregister-context-rule
+           #:context-rule-save
+           #:context-rule-saved
+           #:context-rule-saved-path
            #:context-rule-note
            #:worker-tool-call
            #:worker-tool-context
