@@ -165,8 +165,24 @@
 
 (-> tool-canonical-name (tool) string)
 (defun tool-canonical-name (tool)
-  "Return TOOL's dotted human-readable name."
+  "Return TOOL's dotted dispatch identity."
   (format nil "~A.~A" (tool-namespace tool) (tool-name tool)))
+
+(-> tool-display-namespace (tool) string)
+(defgeneric tool-display-namespace (tool)
+  (:documentation "Return TOOL's namespace label for user interfaces."))
+
+(defmethod tool-display-namespace ((tool tool))
+  "Use the dispatch namespace for ordinary tools."
+  (tool-namespace tool))
+
+(-> tool-display-name (tool) string)
+(defgeneric tool-display-name (tool)
+  (:documentation "Return TOOL's complete readable identity for user interfaces."))
+
+(defmethod tool-display-name ((tool tool))
+  "Use the dotted dispatch identity for ordinary tools."
+  (tool-canonical-name tool))
 
 (-> tool-authorization-identity-fields (tool) list)
 (defgeneric tool-authorization-identity-fields (tool)

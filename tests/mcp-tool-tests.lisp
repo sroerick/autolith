@@ -4005,3 +4005,60 @@
        :validate t
        :if-does-not-exist ':ignore)))
   nil)
+
+
+(-> test-mcp-readable-presentation () null)
+(defun test-mcp-readable-presentation ()
+  "Exercise readable MCP identity at the transcript boundary without altering dispatch."
+  (with-test-configuration (configuration)
+    (multiple-value-bind (manager transport) (test-mcp--manager configuration)
+      (declare (ignore transport))
+      (unwind-protect
+           (let* ((registry (let ((registry (make-instance 'tool-registry)))
+                              (mcp-tool-registry-register-manager registry manager)
+                              registry))
+                  (tool (test-mcp--tool-with-raw-name registry "read/file"))
+                  (application (application-tests--ui-application
+                                :columns 120 :compact-view-p nil))
+                  (call (json-object "type" "function_call"
+                                     "namespace" (tool-namespace tool)
+                                     "name" (tool-name tool)
+                                     "call_id" "readable-mcp"
+                                     "arguments" "{}"))
+                  (wire-json (json-encode call)))
+             (setf (application-tool-registry application) registry)
+             (dolist (entry
+                      (list
+                       (response-item-entry application call)
+                       (conversation-record-entry
+                        application
+                        (list :tool-result :tool (tool-canonical-name tool)
+                              :status ':ok :output "done"))
+                       (conversation-record-entry
+                        application
+                        (list :tool-result :tool (tool-canonical-name tool)
+                              :status ':error :output "unavailable"))))
+               (let ((text (terminal--spans-text entry)))
+                 (test-assert (search "Test Server.read/file" text)
+                              "MCP calls and both result statuses show the exact readable identity")
+                 (test-assert (not (search (tool-canonical-name tool) text))
+                              "MCP wire identifiers do not enter the displayed entry")))
+             (let ((text
+                     (terminal--spans-text
+                      (response-item-entry
+                       application
+                       (json-object
+                        "type" "tool_search_output"
+                        "tools" (vector (json-object "type" "namespace"
+                                                     "name" (tool-namespace tool))))))))
+               (test-assert (search "Test Server" text)
+                            "schema discovery displays the configured MCP server")
+               (test-assert (not (search (tool-namespace tool) text))
+                            "schema discovery omits the encoded MCP namespace"))
+             (test-assert (string= wire-json (json-encode call))
+                          "display conversion does not mutate the provider call")
+             (test-assert (eq tool (application--find-tool
+                                   application (tool-canonical-name tool)))
+                          "provider dispatch resolves the encoded identity"))
+        (mcp-manager-close manager))))
+  nil)

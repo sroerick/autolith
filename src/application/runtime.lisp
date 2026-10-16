@@ -2031,6 +2031,26 @@ the fence's raw source; that span becomes a widget copying the source."
                           (subseq canonical-name 0 separator)
                           (subseq canonical-name (1+ separator))))))
 
+(-> application--tool-display-name (application string) string)
+(defun application--tool-display-name (application canonical-name)
+  "Return a readable tool label, falling back to an unavailable dispatch identity."
+  (let ((tool (application--find-tool application canonical-name)))
+    (if tool
+        (tool-display-name tool)
+        canonical-name)))
+
+(-> application--tool-namespace-display-name (application string) string)
+(defun application--tool-namespace-display-name (application namespace)
+  "Return the readable label for one registered tool NAMESPACE."
+  (let* ((registry (and (slot-boundp application 'tool-registry)
+                        (application-tool-registry application)))
+         (tool (and registry
+                    (find namespace (tool-registry-tools registry)
+                          :key #'tool-namespace :test #'string=))))
+    (if tool
+        (tool-display-namespace tool)
+        namespace)))
+
 (defmethod tool-compact-result-visible-p ((tool shell-run-tool))
   "Keep successful external commands visible in compact presentation."
   t)
@@ -2174,7 +2194,14 @@ column is WIDTH cells, or otherwise wide enough for the longest label present."
     (option list))
 (defun application--tool-search-entry (application item)
   "Return one compact row naming namespaces expanded by tool search ITEM."
-  (let ((names (application--tool-search-namespaces item)))
+  (let ((names (remove-duplicates
+                (mapcar (lambda (namespace)
+                          (sanitize-text
+                           (application--tool-namespace-display-name
+                            application namespace)
+                           :single-line-p t))
+                        (application--tool-search-namespaces item))
+                :test #'string=)))
     (when names
       (let* ((maximum-width
                (max 1

@@ -1082,6 +1082,16 @@ retained value is credential-redacted or projected."
   "Honor the user's trusted read-only classification for one MCP provider tool."
   (mcp-provider-tool-trusted-read-only-p tool))
 
+(defmethod tool-display-namespace ((tool mcp-provider-tool))
+  "Label TOOL with the configured server name rather than its wire namespace."
+  (mcp-server-runtime-name (mcp-provider-tool-runtime tool)))
+
+(defmethod tool-display-name ((tool mcp-provider-tool))
+  "Show TOOL's configured server and exact advertised operation name."
+  (format nil "~A.~A"
+          (tool-display-namespace tool)
+          (mcp-tool-name (mcp-provider-tool-raw-tool tool))))
+
 (defmethod tool-authorization-identity-fields ((tool mcp-provider-tool))
   "Identify TOOL by its configured server and exact server-advertised name."
   (list

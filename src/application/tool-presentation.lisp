@@ -551,6 +551,16 @@ structural discriminator as a readable heading instead."
   (let ((*application-provider-call-presentation* call))
     (call-next-method)))
 
+(defmethod application-tool-call-entry :around
+    ((tool mcp-provider-tool) (application application) (call hash-table))
+  "Render MCP identity labels without changing the provider call or dispatch names."
+  (let ((display-call (make-hash-table :test (hash-table-test call))))
+    (maphash (lambda (key value) (setf (gethash key display-call) value)) call)
+    (setf (gethash "namespace" display-call) (tool-display-namespace tool)
+          (gethash "name" display-call)
+          (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
+    (call-next-method tool application display-call)))
+
 (defmethod application-tool-call-entry
     ((tool tool) (application application) (call hash-table))
   "Present CALL using the generic readable argument layout."
@@ -1717,7 +1727,8 @@ OPERATION's own declared target line so they stay numbered."
 (defun application--tool-result-entry (application record &key detail rows)
   "Return RECORD's status header with optional DETAIL and styled ROWS."
   (let* ((success-p (application--tool-result-success-p record))
-         (tool-name (getf (rest record) :tool))
+         (tool-name (application--tool-display-name
+                     application (getf (rest record) :tool)))
          (timing (application--tool-result-timing record))
          (complete-detail
            (cond
@@ -1969,7 +1980,9 @@ re-emitting untrusted serialized JSON."
     (application--tool-entry
      application
      :style (if (eq state ':failed) ':failure ':notice)
-     :header (format nil "↪ ~A" (getf (rest record) :tool))
+     :header (format nil "↪ ~A"
+                     (application--tool-display-name
+                      application (getf (rest record) :tool)))
      :detail (format nil "~A · ~A" status (getf job :id))
      :rows (unless (application-compact-view-p application)
              (application--tool-field-rows

@@ -259,6 +259,7 @@
 
 (define-test-suite mcp-tool
   test-mcp-tools
+  test-mcp-readable-presentation
   test-mcp-reload-registry-rollback
   test-mcp-reload-registry-isolation
   test-mcp-reload-transaction-boundary)
