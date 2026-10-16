@@ -218,7 +218,8 @@
 (define-test-suite permissions
     test-command-permission-persistence
     test-command-permission-corruption
-    test-command-permission-write-failure)
+    test-command-permission-write-failure
+    test-external-permission-persistence)
 
 (define-test-suite context
   test-session-state-context-contributor

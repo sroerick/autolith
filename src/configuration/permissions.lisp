@@ -10,13 +10,19 @@
     :initarg :command
     :reader command-permission-command
     :type non-empty-string
-    :documentation "The exact shell command approved by the user.")
+    :documentation "The exact command or external request approved by the user.")
+   (kind
+    :initarg :kind
+    :initform ':command
+    :reader command-permission-kind
+    :type (member :command :external-tool)
+    :documentation "The operation domain, separating shell and external requests.")
    (directory
     :initarg :directory
     :reader command-permission-directory
     :type non-empty-string
-    :documentation "The canonical working directory in which COMMAND is approved."))
-  (:documentation "One exact persistent shell command approval."))
+    :documentation "The canonical working directory of the approval."))
+  (:documentation "One exact persistent operation approval."))
 
 (defclass permission-state ()
   ((rules
@@ -43,7 +49,7 @@
 
 (-> permissions--rule-form-p (t) boolean)
 (defun permissions--rule-form-p (form)
-  "Return true when FORM is one exact command permission record."
+  "Return true when FORM is one exact operation permission record."
   (and (record-check form
                      :properties-p t
                      :fields (list (list :indicator ':command
@@ -51,7 +57,10 @@
                                          :required t)
                                    (list :indicator ':directory
                                          :validate #'non-empty-string-p
-                                         :required t))
+                                         :required t)
+                                   (list :indicator ':kind
+                                         :validate (lambda (value)
+                                                     (member value '(:command :external-tool)))))
                      :allow-other-keys nil)
        t))
 
@@ -81,6 +90,7 @@
    'permission-state
    :rules (loop for rule in (record-property form ':rules)
                 collect (make-instance 'command-permission
+                                       :kind (getf rule :kind ':command)
                                        :command (copy-seq (getf rule :command))
                                        :directory (copy-seq (getf rule :directory))))))
 
@@ -132,38 +142,37 @@
         ':version *permissions-version*
         ':rules
         (loop for rule in (permission-state-rules state)
-              collect (list ':command
-                            (command-permission-command rule)
-                            ':directory
-                            (command-permission-directory rule)))))
+              collect (append (list ':command (command-permission-command rule)
+                                    ':directory (command-permission-directory rule))
+                              (unless (eq (command-permission-kind rule) ':command)
+                                (list ':kind (command-permission-kind rule)))))))
 
 
 (-> permissions-allowed-p
-    (permission-state string (or pathname string))
+    (permission-state string (or pathname string) &key (:kind keyword))
     boolean)
-(defun permissions-allowed-p (state command directory)
-  "Return true when exact COMMAND is permanently approved in DIRECTORY."
+(defun permissions-allowed-p (state command directory &key (kind ':command))
+  "Return true when exact COMMAND of KIND is permanently approved in DIRECTORY."
   (let ((directory-name (permissions--directory-name directory)))
     (not
      (null
       (find-if (lambda (rule)
-                 (and (string= command (command-permission-command rule))
+                 (and (eq kind (command-permission-kind rule))
+                      (string= command (command-permission-command rule))
                       (string= directory-name
                                (command-permission-directory rule))))
                (permission-state-rules state))))))
 
 (-> permissions-allow
-    (&key
-     (:configuration configuration)
-     (:state permission-state)
-     (:command string)
-     (:directory (or pathname string)))
+    (&key (:configuration configuration) (:state permission-state)
+          (:command string) (:directory (or pathname string)) (:kind keyword))
     null)
-(defun permissions-allow (&key configuration state command directory)
-  "Permanently approve exact COMMAND in DIRECTORY unless already present."
-  (unless (non-empty-string-p command)
+(defun permissions-allow (&key configuration state command directory (kind ':command))
+  "Permanently approve exact COMMAND of KIND in DIRECTORY unless already present."
+  (unless (and (non-empty-string-p command)
+               (member kind '(:command :external-tool)))
     (error 'permissions-error
-           :message "Cannot approve an empty shell command."
+           :message "Cannot approve an empty operation or an unknown permission kind."
            :pathname (configuration-permissions-path configuration)
            :operation ':validate
            :cause nil))
@@ -178,8 +187,8 @@
          (lambda (current)
            (let ((rules (permission-state-rules current)))
              (if (find-if (lambda (rule)
-                            (and (string= command
-                                         (command-permission-command rule))
+                            (and (eq kind (command-permission-kind rule))
+                                 (string= command (command-permission-command rule))
                                  (string= directory-name
                                           (command-permission-directory rule))))
                           rules)
@@ -190,6 +199,7 @@
                    :rules (append rules
                                   (list (make-instance
                                          'command-permission
+                                         :kind kind
                                          :command (copy-seq command)
                                          :directory (copy-seq directory-name)))))
                   nil t))))
@@ -198,7 +208,7 @@
                           (permission-state-rules committed))))
       (sexp-store:store-error (cause)
         (error 'permissions-error
-               :message (format nil "Could not persist command permissions at ~A: ~A"
+               :message (format nil "Could not persist operation permissions at ~A: ~A"
                                 (configuration-permissions-path configuration)
                                 cause)
                :pathname (configuration-permissions-path configuration)

@@ -123,3 +123,58 @@
                         "a failed approval does not mutate caller state"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+(-> test-external-permission-persistence () null)
+(defun test-external-permission-persistence ()
+  "Exercise domain isolation, stale merging, reload, clear, and publication failure."
+  (with-test-configuration (configuration root)
+   (let* ((state (permissions-load configuration))
+          (stale (permissions-load configuration))
+          (other (merge-pathnames "other/" root)))
+     (ensure-directories-exist other)
+     (permissions-allow :configuration configuration :state state :command
+                        "same-key" :directory root)
+     (test-assert
+      (not (permissions-allowed-p state "same-key" root :kind ':external-tool))
+      "a shell approval cannot authorize an external call")
+     (permissions-allow :configuration configuration :state stale :command
+                        "same-key" :directory root :kind ':external-tool)
+     (let ((loaded (permissions-load configuration)))
+       (test-assert
+        (and (permissions-allowed-p loaded "same-key" root)
+             (permissions-allowed-p loaded "same-key" root :kind
+                                    ':external-tool)
+             (= 2 (length (permission-state-rules loaded))))
+        "stale external approval merges with shell rules on disk")
+       (test-assert
+        (not
+         (permissions-allowed-p loaded "same-key" other :kind ':external-tool))
+        "external approvals are workspace-scoped")
+       (permissions-clear configuration loaded)
+       (test-assert
+        (null (permission-state-rules (permissions-load configuration)))
+        "the standard clear operation removes external rules too"))
+     (test-call-with-function-replacements
+      (list
+       (list 'sexp-store:store-transact
+             (lambda (&rest arguments)
+               (declare (ignore arguments))
+               (error 'store-error :message "forced failure" :pathname
+                      (configuration-permissions-path configuration) :operation
+                      ':write))))
+      (lambda ()
+        (test-assert
+         (handler-case
+          (progn
+           (permissions-allow :configuration configuration :state state
+                              :command "failed-key" :directory root :kind
+                              ':external-tool)
+           nil)
+          (permissions-error nil t))
+         "external publication failure is a typed permission failure")
+        (test-assert
+         (not
+          (permissions-allowed-p state "failed-key" root :kind
+                                 ':external-tool))
+         "failed publication never grants an external approval")))))
+  nil)
