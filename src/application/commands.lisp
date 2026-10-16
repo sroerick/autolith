@@ -1999,6 +1999,13 @@ are forwarded to TERMINAL-UI-SELECT."
                             "current provider"
                             "registered provider")))))
 
+(-> application--authentication-provider-visible-count (application) (integer 1))
+(defun application--authentication-provider-visible-count (application)
+  "Show up to twenty providers in fullscreen, otherwise use the inline limit."
+  (if (terminal-ui-fullscreen-p (application-ui application))
+      20
+      *terminal-ui-visible-completions*))
+
 (-> application--pick-authentication-provider (application) (option string))
 (defun application--pick-authentication-provider (application)
   "Prompt for one registered provider to authenticate."
@@ -2006,6 +2013,7 @@ are forwarded to TERMINAL-UI-SELECT."
    application
    :title "pick the provider to authenticate"
    :items (application--authentication-provider-items application)
+   :visible-count (application--authentication-provider-visible-count application)
    :initial-name
    (provider-model-provider-name
     (config :model

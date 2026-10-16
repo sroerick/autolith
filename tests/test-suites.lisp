@@ -833,6 +833,7 @@
   test-terminal-path-completion
   test-terminal-path-completion-history
   test-terminal-modal-selection
+  test-terminal-fullscreen-picker-capacity
   test-terminal-picker-detail-column
   test-terminal-application-read-resize
   test-terminal-non-tty-fallback)

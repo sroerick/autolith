@@ -2131,6 +2131,47 @@
 
 
 
+(-> test-terminal-fullscreen-picker-capacity () null)
+(defun test-terminal-fullscreen-picker-capacity ()
+  "Keep a twenty-entry picker navigable across terminal height changes."
+  (dolist (height '(40 24 12))
+    (let* ((events (append (make-list 25 :initial-element ':down)
+                           '(:inspect :shrink :inspect :grow :inspect :submit)))
+           (terminal (make-instance 'scripted-terminal :events events
+                                                      :columns 100 :rows height))
+           (ui (terminal-ui-create :terminal terminal :fullscreen-p t))
+           (items (loop for index below 30
+                        collect (list :name (format nil "provider-~2,'0D" index)
+                                      :description "registered provider")))
+           (inspections 0))
+      (with-terminal-ui (active-ui ui)
+        (test-assert
+         (string= "provider-25"
+                  (terminal-ui-select
+                   active-ui :title "providers" :items items :visible-count 20
+                   :on-event
+                   (lambda (event selector)
+                     (when (member event '(:shrink :grow :inspect))
+                       (case event
+                         (:shrink
+                          (terminal-ui-resize ui 100 :rows 12))
+                         (:grow
+                          (terminal-ui-resize ui 100 :rows 40))
+                         (:inspect
+                          (incf inspections)
+                          (test-assert
+                           (= (min 20 (- (terminal-rows terminal) 5))
+                              (length (clinedi:selector-window selector)))
+                           "the candidate window fits the available height")
+                          (test-assert
+                           (some (lambda (row) (search "provider-25" row))
+                                 (terminal-ui-fullscreen--frame ui nil))
+                           "the selected provider is visible after scrolling or resizing")))
+                       ':continue))))
+         "navigation and acceptance preserve the selected provider")
+        (test-assert (= inspections 3) "shrink and grow each repaint the picker"))))
+  nil)
+
 (-> test-terminal-picker-detail-column () null)
 (defun test-terminal-picker-detail-column ()
   "Test picker details and descriptions align in columns under group headings."

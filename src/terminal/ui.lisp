@@ -2375,14 +2375,21 @@ readiness polling, resize coordination and lifecycle cleanup belong to Clinedi."
            (current-hint (or hint (and search-p
                                       "type searches, backspace edits, enter selects, esc cancels"))))
       (labels ((publish ()
-                 (setf (terminal-ui-selector ui)
-                       (clinedi:selection-session-selector session)
-                       (terminal-ui-selector-title ui)
-                       (terminal-ui--picker-search-title
-                        base-title (clinedi:selection-session-query session)
-                        (length (selector-items
-                                 (clinedi:selection-session-selector session))))
-                       (terminal-ui-selector-hint ui) current-hint))
+                 (let* ((selector (clinedi:selection-session-selector session))
+                        ;; The selector composer reserves three rows; fullscreen
+                        ;; reserves two more for the transcript and legend.
+                        (count (if (terminal-ui-fullscreen-p ui)
+                                   (min visible-count
+                                        (max 1 (- (terminal-rows (terminal-ui-terminal ui)) 5)))
+                                   visible-count)))
+                   (unless (= count (selector-visible-count selector))
+                     (reinitialize-instance selector :visible-count count))
+                   (setf (terminal-ui-selector ui) selector
+                         (terminal-ui-selector-title ui)
+                         (terminal-ui--picker-search-title
+                          base-title (clinedi:selection-session-query session)
+                          (length (selector-items selector)))
+                         (terminal-ui-selector-hint ui) current-hint)))
 
                (handle-custom (event selector)
                  (let ((action (and on-event (funcall on-event event selector))))

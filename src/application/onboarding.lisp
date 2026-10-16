@@ -69,6 +69,7 @@ retain provider output or condition details in onboarding state."
                         :items (cons (list :name "skip" :argument nil
                                            :description (onboarding-source-text "auth-skip"))
                                      (application--authentication-provider-items application))
+                        :visible-count (application--authentication-provider-visible-count application)
                         :initial-name "skip" :search-p t)))
                  (unless name
                    (return-from selection ':cancelled))
