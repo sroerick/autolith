@@ -45,7 +45,17 @@
                    "-Root" (uiop:native-namestring installed)
                    "-Workspace" (uiop:native-namestring
                                  (uiop:pathname-parent-directory-pathname script-root)))
-             :output ':interactive :error-output ':interactive))))))
+             :output ':interactive :error-output ':interactive)
+            ;; Export the installed selection to this process and its test workers.
+            (autolith-script-setenv
+             "CL_EXEC_SANDBOX_WINDOWS_HELPER"
+             (string-trim '(#\Return #\Newline)
+                          (uiop:run-program
+                           (list powershell "-NoProfile" "-ExecutionPolicy" "Bypass" "-File"
+                                 (uiop:native-namestring installer) "-Action" "Resolve"
+                                 "-Root" (uiop:native-namestring installed))
+                           :output ':string :error-output ':interactive
+                           :external-format ':utf-8))))))))
 
 #-(or linux darwin freebsd netbsd openbsd win32)
 (format t "~&Skipping the cl-exec-sandbox native helper on this platform.~%")

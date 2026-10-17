@@ -23,7 +23,7 @@
 
 (-> test-build-sandbox-packaged-helpers () null)
 (defun test-build-sandbox-packaged-helpers ()
-  "Build POSIX helpers only when a platform-required packaged helper is missing."
+  "Build required helpers and export the selected Windows bundle to workers."
   (let* ((script (asdf:system-relative-pathname :autolith "script/build-sandbox.lisp"))
          (existing (namestring script))
          (missing (namestring (merge-pathnames "missing-sandbox-helper" script))))
@@ -60,7 +60,34 @@
                (eq built-p (if (eq platform ':linux)
                                linux-build-p
                                (not (eq process-group ':existing))))
-               "Packaged helper detection respects platform requirements"))))))))
+               "Packaged helper detection respects platform requirements"))))))
+    (dolist (explicit '(nil "" "explicit-helper.exe"))
+      (let ((*features* (cons ':win32
+                             (set-difference *features*
+                                             '(:linux :darwin :freebsd
+                                               :netbsd :openbsd :win32))))
+            (selected (namestring (merge-pathnames "selected-helper.exe" script)))
+            (actions nil))
+        (with-test-environment (("CL_EXEC_SANDBOX_WINDOWS_HELPER" explicit))
+          (test-call-with-function-replacements
+           (list (list 'uiop:run-program
+                       (lambda (command &rest options)
+                         (declare (ignore options))
+                         (let ((action (second (member "-Action" command :test #'equal))))
+                           (push action actions)
+                           (when (equal action "Resolve")
+                             (format nil "~A~C~C" selected #\Return #\Newline))))))
+           (lambda () (load script)))
+          (test-assert (equal (reverse actions)
+                              (if (and explicit (plusp (length explicit)))
+                                  '("Validate")
+                                  '("BuildInstall" "Resolve")))
+                       "Windows helper setup validates overrides or resolves its installed bundle")
+          (test-assert (equal (uiop:getenv "CL_EXEC_SANDBOX_WINDOWS_HELPER")
+                              (if (and explicit (plusp (length explicit)))
+                                  explicit
+                                  selected))
+                       "Windows test workers inherit the helper selection"))))))
 
 (-> test-release-runtime-openbsd-linker () null)
 (defun test-release-runtime-openbsd-linker ()
