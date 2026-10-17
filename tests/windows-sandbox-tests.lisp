@@ -144,6 +144,51 @@
                          (format nil "profile cleanup fixture failed: ~A~%~A"
                                  output diagnostics)))))))
 
+(-> test-windows-shell-sandbox-git-null () null)
+(defun test-windows-shell-sandbox-git-null ()
+  "Exercise unmodified Git and its /dev/null handling through shell.run."
+  (when (windows-sandbox-tests--enabled-p)
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let* ((workspace (merge-pathnames "workspace/" root))
+             (git (or (uiop:getenv "AUTOLITH_TEST_GIT")
+                      (uiop:native-namestring
+                       (merge-pathnames
+                        "Git/cmd/git.exe"
+                        (uiop:ensure-directory-pathname
+                         (or (uiop:getenv "ProgramFiles") "C:/Program Files/")))))))
+        (ensure-directories-exist workspace)
+        (multiple-value-bind (output diagnostics status)
+            (uiop:run-program (list git "init" "--quiet")
+                              :directory workspace
+                              :output ':string :error-output ':string
+                              :ignore-error-status t)
+          (test-assert (eql status 0)
+                       (format nil "Git initialization failed: ~A~%~A"
+                               output diagnostics)))
+        (with-open-file (stream (merge-pathnames "probe.txt" workspace)
+                                :direction ':output)
+          (write-line "autolith-git-null-probe" stream))
+        (dolist (case (list (list "status --porcelain" 0 "?? probe.txt")
+                           (list "rev-parse --show-toplevel" 0
+                                 (string-right-trim
+                                  "/" (substitute #\/ #\\
+                                                  (uiop:native-namestring workspace))))
+                           (list "diff --no-index -- /dev/null probe.txt" 1
+                                 "+autolith-git-null-probe")))
+          (destructuring-bind (arguments expected-status expected-output) case
+            (let* ((result
+                     (windows-sandbox-tests--command
+                      workspace
+                      (format nil "& ~A ~A; exit $LASTEXITCODE"
+                              (test-fixture-shell-quote *platform* git) arguments)))
+                   (content (tool-result-content result)))
+              (test-assert
+               (and (search (format nil "exit ~D" expected-status) content)
+                    (search expected-output content))
+               (format nil "Sandboxed Git ~A failed: ~A" arguments content))))))))
+  nil)
+
 (defun test-windows-shell-sandbox-integration ()
   "Exercise native Windows shell containment through shell.run."
   (when (windows-sandbox-tests--enabled-p)

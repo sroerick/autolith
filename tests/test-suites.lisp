@@ -842,6 +842,7 @@
     test-windows-sandbox-bundle-installation
       test-windows-sandbox-profile-cleanup-helper
     test-windows-shell-sandbox-integration
+    test-windows-shell-sandbox-git-null
     test-windows-shell-sandbox-async
     test-windows-shell-sandbox-network
     test-windows-shell-sandbox-missing-helper-fails-closed))
