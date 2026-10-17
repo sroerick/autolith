@@ -21,17 +21,19 @@ try {
   $env:COLORLISP_NATIVE_LIBRARY = Join-Path $Release 'native\colorlisp.dll'
   . (Join-Path $Release 'libexec\autolith\bin\autolith-sandbox.ps1')
   Set-AutolithSandboxDefault (Join-Path $Release 'native\sandbox')
-    # Run the native publication, reparse, and ACL gate from the packaged fixture itself.
-    $powershell = if ($env:POWERSHELL) { $env:POWERSHELL } else { 'powershell.exe' }
-    $bundleGate = Join-Path $Release 'libexec\autolith\script\check-windows-sandbox-bundle.ps1'
-    $bundleGateRoot = Join-Path $Root 'packaged-bundle-gate'
-    & $powershell -NoProfile -ExecutionPolicy Bypass -File $bundleGate -Root $bundleGateRoot >> $log 2>&1
-    if ($LASTEXITCODE -ne 0) { throw 'Packaged native bundle publication gate failed.' }
+  # Run the native publication, reparse, and ACL gate from the packaged fixture itself.
+  $powershell = if ($env:POWERSHELL) { $env:POWERSHELL } else { 'powershell.exe' }
+  $bundleGate = Join-Path $Release 'libexec\autolith\script\check-windows-sandbox-bundle.ps1'
+  $bundleGateRoot = Join-Path $Root 'packaged-bundle-gate'
+  & $powershell -NoProfile -ExecutionPolicy Bypass -File $bundleGate -Root $bundleGateRoot >> $log 2>&1
+  if ($LASTEXITCODE -ne 0) { throw 'Packaged native bundle publication gate failed.' }
   # Exercise a fresh packaged launch with Git but without native compilers in PATH.
-  $env:AUTOLITH_TEST_GIT = (Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
+  $env:AUTOLITH_TEST_GIT = (Get-Command git.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
   $gitDirectory = Split-Path -Parent $env:AUTOLITH_TEST_GIT
   $systemRoot = [Environment]::GetEnvironmentVariable('SystemRoot')
   $env:PATH = "$gitDirectory;$(Join-Path $Release 'native');$(Join-Path $systemRoot 'System32');$systemRoot"
+  & git.exe --version >> $log 2>&1
+  if ($LASTEXITCODE -ne 0) { throw 'Git is unavailable in the compiler-free test environment.' }
   & (Join-Path $Release 'bin\autolith.ps1') --version >> $log 2>&1
   if ($LASTEXITCODE -ne 0) { throw 'Standard-user packaged launcher failed without a toolchain.' }
   $source = Join-Path $Release 'libexec\autolith'
