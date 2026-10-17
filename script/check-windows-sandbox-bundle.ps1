@@ -65,6 +65,8 @@ if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
   try {
     @'
 param([Parameter(Mandatory=$true)][string]$OutputDirectory)
+if (Test-Path -LiteralPath $OutputDirectory) { throw 'Builder output must be new.' }
+New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
 [IO.File]::WriteAllText($env:AUTOLITH_BUNDLE_TEST_BUILD_LOG, $OutputDirectory)
 foreach ($name in @('cl-exec-sandbox-windows.exe','cl-exec-sandbox-compat64.dll','cl-exec-sandbox-compat32.dll','LICENSE-Detours.txt')) {
   [IO.File]::WriteAllText((Join-Path $OutputDirectory $name), "unique-build-$name")
@@ -88,6 +90,61 @@ foreach ($name in @('cl-exec-sandbox-windows.exe','cl-exec-sandbox-compat64.dll'
     Assert (-not (Test-Path -LiteralPath $failedOutput)) 'Failed build output was not removed.'
     Assert ((Get-AutolithSandboxSelection $private) -eq $built) 'Failed builder changed selection.'
   } finally { $env:AUTOLITH_BUNDLE_TEST_BUILD_LOG = $savedBuildLog }
+    # Several installers must be able to publish distinct complete generations concurrently.
+    $concurrentRoot = Join-Path $Root 'concurrent'
+    $concurrentWorkspace = Join-Path $Root 'concurrent-workspace'
+    New-Item -ItemType Directory -Force -Path $concurrentWorkspace | Out-Null
+    $concurrentSources = foreach ($number in 1..3) {
+      $directory = Join-Path $Root ('concurrent-source-' + $number)
+      New-Item -ItemType Directory -Path $directory | Out-Null
+      foreach ($name in $AutolithSandboxFiles) {
+        [IO.File]::WriteAllText((Join-Path $directory $name), "concurrent-$number-$name")
+      }
+      [PSCustomObject]@{ Directory = $directory; Identity = Get-AutolithSandboxIdentity $directory }
+    }
+    $processes = @()
+    try {
+      foreach ($fixture in $concurrentSources) {
+        $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Action Install -Source "{1}" -Root "{2}" -Workspace "{3}"' -f $installer, $fixture.Directory, $concurrentRoot, $concurrentWorkspace
+        $process = [Diagnostics.Process]::new()
+        $process.StartInfo = [Diagnostics.ProcessStartInfo]::new()
+        $process.StartInfo.FileName = $powershell
+        $process.StartInfo.Arguments = $arguments
+        $process.StartInfo.UseShellExecute = $false
+        $process.StartInfo.CreateNoWindow = $true
+        Assert ($process.Start()) 'Concurrent installer did not start.'
+        $processes += $process
+      }
+      $deadline = [DateTime]::UtcNow.AddSeconds(30)
+      while ($processes | Where-Object { -not $_.HasExited }) {
+        Assert ([DateTime]::UtcNow -lt $deadline) 'Concurrent publication timed out.'
+        $selectorPath = Join-Path $concurrentRoot 'selected'
+        if (Test-Path -LiteralPath $selectorPath) {
+          try {
+            $selected = Get-AutolithSandboxSelection $concurrentRoot
+            Assert (Test-Path -LiteralPath $selected) 'Concurrent reader saw a missing selected helper.'
+          } catch {
+            throw "Concurrent reader observed an incomplete publication: $($_.Exception.Message)"
+          }
+        }
+        Start-Sleep -Milliseconds 25
+      }
+      foreach ($process in $processes) {
+        $process.WaitForExit()
+        Assert ($process.ExitCode -eq 0) "Concurrent installer failed with exit code $($process.ExitCode)."
+      }
+      $selected = Get-AutolithSandboxSelection $concurrentRoot
+      Assert (Test-Path -LiteralPath $selected) 'Concurrent publication selected no helper.'
+      foreach ($fixture in $concurrentSources) {
+        Assert (Test-Path -LiteralPath (Join-Path $concurrentRoot $fixture.Identity)) 'A published generation was lost.'
+      }
+      Assert (Test-Path -LiteralPath $installed) 'The previous generation was not retained after concurrent publication.'
+    } finally {
+      foreach ($process in $processes) {
+        if (-not $process.HasExited) { $process.Kill() }
+        $process.Dispose()
+      }
+    }
 } else {
   'Native private ACL and MoveFileEx publication cases require Windows.'
 }
