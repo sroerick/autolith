@@ -14,8 +14,6 @@ try {
   $env:HOME = $Root
   $env:USERPROFILE = $Root
   New-Item -ItemType Directory -Force -Path $env:TEMP,$env:LOCALAPPDATA,$env:APPDATA | Out-Null
-  & (Join-Path $Release 'bin\autolith.ps1') --version >> $log 2>&1
-  if ($LASTEXITCODE -ne 0) { throw 'Standard-user packaged launcher failed.' }
   $env:AUTOLITH_SBCL = Join-Path $Release 'runtime\sbcl.exe'
   $env:SBCL_HOME = Join-Path $Release 'runtime'
   $env:AUTOLITH_SBCL_SOURCE_ROOT = Join-Path $Release 'libexec\sbcl-source'
@@ -23,7 +21,11 @@ try {
   $env:COLORLISP_NATIVE_LIBRARY = Join-Path $Release 'native\colorlisp.dll'
   . (Join-Path $Release 'libexec\autolith\bin\autolith-sandbox.ps1')
   Set-AutolithSandboxDefault (Join-Path $Release 'native\sandbox')
-  $env:PATH = "$(Join-Path $Release 'native');$env:PATH"
+  # Exercise a fresh packaged launch without MSVC, clang, or other developer tools in PATH.
+  $systemRoot = [Environment]::GetEnvironmentVariable('SystemRoot')
+  $env:PATH = "$(Join-Path $Release 'native');$(Join-Path $systemRoot 'System32');$systemRoot"
+  & (Join-Path $Release 'bin\autolith.ps1') --version >> $log 2>&1
+  if ($LASTEXITCODE -ne 0) { throw 'Standard-user packaged launcher failed without a toolchain.' }
   $source = Join-Path $Release 'libexec\autolith'
   Set-Location $source
   & (Join-Path $source 'script\check.ps1') --suite windows-sandbox --jobs 1 --timeout 120 >> $log 2>&1
