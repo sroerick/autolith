@@ -31,7 +31,9 @@ try {
   $env:AUTOLITH_TEST_GIT = (Get-Command git.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
   $gitDirectory = Split-Path -Parent $env:AUTOLITH_TEST_GIT
   $systemRoot = [Environment]::GetEnvironmentVariable('SystemRoot')
-  $env:PATH = "$gitDirectory;$(Join-Path $Release 'native');$(Join-Path $systemRoot 'System32');$systemRoot"
+  $windowsPowerShell = Join-Path $systemRoot 'System32\WindowsPowerShell\v1.0'
+  $env:PATH = "$gitDirectory;$windowsPowerShell;$(Join-Path $Release 'native');$(Join-Path $systemRoot 'System32');$systemRoot"
+  Get-Command powershell.exe -CommandType Application -ErrorAction Stop | Out-Null
   & git.exe --version >> $log 2>&1
   if ($LASTEXITCODE -ne 0) { throw 'Git is unavailable in the compiler-free test environment.' }
   & (Join-Path $Release 'bin\autolith.ps1') --version >> $log 2>&1
