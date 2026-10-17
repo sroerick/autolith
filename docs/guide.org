@@ -1352,6 +1352,14 @@ count; inspect =job.continuity=, =job.*= and their resources for full details.
 Provider-family changes use the portable handoff and exclude foreign private
 context.
 
+Set =ANALYTICS_EVENTS_FILE= to export completed streaming calls as UTF-8 JSONL
+usage events. =ANALYTICS_ACTOR= overrides the operating-system username. Each
+schema-v1 =llm-usage= event contains the UTC timestamp, actor, model, request
+count, elapsed seconds, and known input, output, and cached token counts.
+Unknown token counts are omitted. Export is disabled without a destination.
+Appends are synchronous and serialized across processes; export errors do not
+abort a completed provider call.
+
 Idle cache compaction is enabled by default. After a completed request with at
 least 32,768 prompt tokens and 131,072 characters of summarizable history, an
 idle session can compact two minutes before its estimated cache expiry. The

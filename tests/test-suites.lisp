@@ -421,6 +421,12 @@
   nous-authentication-test--refresh-redaction)
 
 
+(define-test-suite provider-usage-export
+  test-provider-usage-export-opt-in
+  test-provider-usage-export-fields
+  test-provider-usage-export-failures
+  test-provider-usage-export-concurrent)
+
 (define-test-suite provider
   test-provider-deferred-tool-models
   test-provider-deferred-tool-loading
