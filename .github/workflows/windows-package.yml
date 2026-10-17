@@ -7,6 +7,10 @@ on:
         description: Run the full source test suite
         type: boolean
         default: true
+      sandbox-revision:
+        description: Exact 40-hex cl-exec-sandbox revision for native candidate verification
+        type: string
+        default: ''
   push:
     branches: [master]
     paths:
@@ -77,9 +81,16 @@ jobs:
             "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           }
 
+      - name: Build explicit native candidate
+        uses: ./.github/actions/windows-native-bundle
+        with:
+          revision: ${{ inputs.sandbox-revision }}
       - name: Bootstrap with shared caches
         uses: ./.github/actions/windows-bootstrap
 
+      - name: Check native bundle publication and ACLs
+        shell: pwsh
+        run: script\check-windows-sandbox-bundle.ps1 -Root (Join-Path $env:RUNNER_TEMP 'bundle-check')
       - name: Package Windows release
         shell: pwsh
         run: |
@@ -180,10 +191,17 @@ jobs:
             "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           }
 
+      - name: Build explicit native candidate
+        uses: ./.github/actions/windows-native-bundle
+        with:
+          revision: ${{ inputs.sandbox-revision }}
       - name: Bootstrap with shared caches
         id: bootstrap
         uses: ./.github/actions/windows-bootstrap
 
+      - name: Check native bundle publication and ACLs
+        shell: pwsh
+        run: script\check-windows-sandbox-bundle.ps1 -Root (Join-Path $env:RUNNER_TEMP 'bundle-check')
       - name: Check
         shell: pwsh
         env:
