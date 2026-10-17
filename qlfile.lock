@@ -136,8 +136,8 @@
   :version "git-cd180c2b8f9cb4731be05c39320bbf91b0e2e63d"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-exec-sandbox.git" :ref "378a2ac0cab6d1b645636f26c10a5e62772c5b6e")
-  :version "git-378a2ac0cab6d1b645636f26c10a5e62772c5b6e"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-exec-sandbox.git" :ref "776d1ac226f4dcd2f601bfcecc9fd6a7954f525a")
+  :version "git-776d1ac226f4dcd2f601bfcecc9fd6a7954f525a"))
 ("cl-hashline" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-hashline.git" :ref "9a989dc73bf46ff3f8e8c6921126612e2451a8a8")
