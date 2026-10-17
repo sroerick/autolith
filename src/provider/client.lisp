@@ -1065,40 +1065,67 @@ this endpoint is unavailable."
                    (t (write-char char out))))
     (write-char #\" out)))
 
+;; FIX 1 (PR #107 review): the old body re-derived UTC by adding the local
+;; zone back onto universal time before decoding in the local zone, which is
+;; off by one zone offset on any non-UTC host (and breaks on fractional-zone
+;; locales). Decode with explicit zone 0 for true UTC.
+
+;; FIX 1 (PR #107 review): the old body re-derived UTC by adding the local
+;; zone back onto universal time before decoding in the local zone, which is
+;; off by one zone offset on any non-UTC host (and breaks on fractional-zone
+;; locales). Decode with explicit zone 0 for true UTC.
+
+;; FIX 1 (PR #107 review): the old body re-derived UTC by adding the local
+;; zone back onto universal time before decoding in the local zone, which is
+;; off by one zone offset on any non-UTC host (and breaks on fractional-zone
+;; locales). Decode with explicit zone 0 for true UTC.
+
+;; FIX 1 (PR #107 review): the old body re-derived UTC by adding the local
+;; zone back onto universal time before decoding in the local zone, which is
+;; off by one zone offset on any non-UTC host (and breaks on fractional-zone
+;; locales). Decode with explicit zone 0 for true UTC.
+
 (defun llm-usage--iso-utc ()
   "Return the current time as an ISO-8601 UTC string."
-  (let ((universal (get-universal-time)))
-    (multiple-value-bind (second minute hour day month year)
-        (decode-universal-time
-         (+ universal (nth-value 8 (decode-universal-time universal))))
-      (format nil "~4d-~2,'0d-~2,'0dT~2,'0d:~2,'0d:~2,'0dZ"
-              year month day hour minute second))))
+  (multiple-value-bind (second minute hour day month year)
+      (decode-universal-time (get-universal-time) 0)
+    (format nil "~4d-~2,'0d-~2,'0dT~2,'0d:~2,'0d:~2,'0dZ"
+            year month day hour minute second)))
+
+;; FIX 2 (PR #107 review): token fields are emitted only when the usage map
+;; actually carries the number. Unknown was previously rendered as 0, which
+;; downstream rollups sum as real usage. A present 0 still round-trips; only
+;; absent keys are omitted.
 
 (defun llm-usage--export (conversation result wall-seconds)
   "Append one best-effort llm-usage event for a completed provider call.
 A failed append never blocks or signals the provider path."
   (ignore-errors
     (let ((usage (provider-result-usage result))
-          (wall (when wall-seconds (format nil ",\"wall_s\":~,1f" wall-seconds))))
+              (wall (if wall-seconds (format nil ",\"wall_s\":~,1f" wall-seconds) "")))
       (when (hash-table-p usage)
-        (ensure-directories-exist *llm-usage-events-file*)
-        (with-open-file (out *llm-usage-events-file*
-                             :direction :output :if-exists :append
-                             :if-does-not-exist :create)
-          (write-line
-           (format nil
-                   "{\"ts\":~A,\"schema_v\":1,\"source\":\"autolith\",\"kind\":\"llm-usage\",\"actor\":~A,\"model\":~A,\"tokens_in\":~A,\"tokens_out\":~A,\"cached_tokens\":~A,\"requests\":1~A}"
-                   (llm-usage--json-string (llm-usage--iso-utc))
-                   (llm-usage--json-string
-                    (or (uiop:getenv "ANALYTICS_ACTOR") (uiop:getenv "USER") "unknown"))
-                   (llm-usage--json-string
-                    (or (and conversation (conversation-model conversation)) "unknown"))
-                   (or (gethash "input_tokens" usage) 0)
-                   (or (gethash "output_tokens" usage) 0)
-                   (or (gethash "cached_input_tokens" usage) 0)
-                   wall)
-           out))))))
-
+        (labels ((token-field (json-name hash-key)
+                    (or (let ((v (gethash hash-key usage)))
+                          (when v
+                            (format nil ",\"~A\":~A" json-name v)))
+                        "")))
+          (ensure-directories-exist *llm-usage-events-file*)
+          (with-open-file (out *llm-usage-events-file*
+                               :direction :output :if-exists :append
+                               :if-does-not-exist :create)
+            (write-line
+             (format nil
+                     "{\"ts\":~A,\"schema_v\":1,\"source\":\"autolith\",\"kind\":\"llm-usage\",\"actor\":~A,\"model\":~A~A~A~A,\"requests\":1~A}"
+                     (llm-usage--json-string (llm-usage--iso-utc))
+                     (llm-usage--json-string
+                      (or (uiop:getenv "ANALYTICS_ACTOR") (uiop:getenv "USER") "unknown"))
+                     (llm-usage--json-string
+                      (or (and conversation (conversation-model conversation)) "unknown"))
+                     (token-field "tokens_in" "input_tokens")
+                     (token-field "tokens_out" "output_tokens")
+                     (token-field "cached_tokens" "cached_input_tokens")
+                     wall)
+               out)))))))
 (defmethod provider-stream-turn :around
     ((provider t) (conversation conversation) &key &allow-other-keys)
   "Export one analytics llm-usage event per completed provider call."
