@@ -995,13 +995,8 @@ can omit. Bounded retries cover handles released just after a child process exit
   nil)
 
 (defmethod platform-shell-command-line ((platform win32-platform) command)
-  "Run COMMAND in a PowerShell drive rooted at the native working directory."
-  ;; Avoid probing the inaccessible volume root during provider path resolution.
-  (list "powershell.exe" "-NoProfile" "-NonInteractive" "-Command"
-        (format nil "~A~%~A~%~A"
-                "New-PSDrive -Name AutolithWorkspace -PSProvider FileSystem -Root ([Environment]::CurrentDirectory) -ErrorAction Stop | Out-Null"
-                "Set-Location -LiteralPath 'AutolithWorkspace:\\' -ErrorAction Stop"
-                command)))
+  "Run COMMAND through native PowerShell in both sandboxed and full-access modes."
+  (list "powershell.exe" "-NoProfile" "-NonInteractive" "-Command" command))
 
 (defmethod platform-open-url ((platform win32-platform) url)
   "Hand URL to the shell's protocol handler, which opens the default browser."
