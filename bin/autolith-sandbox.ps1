@@ -5,7 +5,6 @@ $env:PSModulePath = (@($AutolithSandboxHostModules) + @(
   $env:PSModulePath -split [IO.Path]::PathSeparator |
     Where-Object { $_ -and $_ -ne $AutolithSandboxHostModules }
 )) -join [IO.Path]::PathSeparator
-Import-Module (Join-Path $AutolithSandboxHostModules 'Microsoft.PowerShell.Security') -ErrorAction Stop
 $AutolithSandboxFiles = @('cl-exec-sandbox-windows.exe', 'cl-exec-sandbox-compat64.dll', 'cl-exec-sandbox-compat32.dll', 'LICENSE-Detours.txt')
 
 function Assert-AutolithSandboxPath([string]$Path) {
@@ -59,18 +58,35 @@ function Get-AutolithSandboxExplicitSelection([string]$Path) {
 function Set-AutolithSandboxPrivateAcl([string]$Directory) {
   # Only the installing account, SYSTEM, and administrators can modify this tree.
   Assert-AutolithSandboxPath $Directory
-  # Modify the existing DACL without requesting owner or audit privileges.
-  $acl = Get-Acl -LiteralPath $Directory
-  $acl.SetAccessRuleProtection($true, $false)
-  foreach ($rule in $acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])) {
-    $acl.RemoveAccessRuleSpecific($rule)
+  if (-not ('AutolithSandboxAcl' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class AutolithSandboxAcl {
+  [DllImport("advapi32.dll", EntryPoint="SetNamedSecurityInfoW", CharSet=CharSet.Unicode, ExactSpelling=true)]
+  public static extern uint SetNamedSecurityInfo(string path, uint objectType, uint information,
+                                                IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
+}
+'@
   }
+  $acl = [Security.AccessControl.DirectorySecurity]::new()
+  $acl.SetAccessRuleProtection($true, $false)
   foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User,
                      [Security.Principal.SecurityIdentifier]::new('S-1-5-18'),
                      [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))) {
     $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
   }
-  Set-Acl -LiteralPath $Directory -AclObject $acl
+  $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
+  $bytes = [byte[]]::new($descriptor.DiscretionaryAcl.BinaryLength)
+  $descriptor.DiscretionaryAcl.GetBinaryForm($bytes, 0)
+  $dacl = [Runtime.InteropServices.Marshal]::AllocHGlobal($bytes.Length)
+  try {
+    [Runtime.InteropServices.Marshal]::Copy($bytes, 0, $dacl, $bytes.Length)
+    # SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION.
+    $errorCode = [AutolithSandboxAcl]::SetNamedSecurityInfo(
+      $Directory, 1, [uint32]2147483652, [IntPtr]::Zero, [IntPtr]::Zero, $dacl, [IntPtr]::Zero)
+    if ($errorCode -ne 0) { throw [ComponentModel.Win32Exception]::new([int]$errorCode) }
+  } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($dacl) }
 }
 
 function Install-AutolithSandboxBundle([string]$Source, [string]$Root, [string]$Workspace) {
