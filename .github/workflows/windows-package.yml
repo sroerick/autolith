@@ -16,6 +16,7 @@ on:
       - "native/**"
       - "qlfile*"
       - "autolith.asd"
+      - "VERSION"
       - "tests/**"
       - "sbcl.version"
       - "sbcl-*-releases.sha256"
