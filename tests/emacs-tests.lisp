@@ -110,12 +110,46 @@
 
 (-> emacs-test-executable () (option pathname))
 (defun emacs-test-executable ()
-  "Return the emacs executable on PATH, or NIL."
-  (loop for entry in (uiop:split-string (or (uiop:getenv "PATH") "") :separator ":")
-        for candidate = (and (plusp (length entry))
-                             (merge-pathnames "emacs" (uiop:ensure-directory-pathname entry)))
-        when (and candidate (platform-executable-file-p *platform* candidate))
-          return candidate))
+  "Return the Emacs executable on the native PATH, or NIL."
+  (loop for directory in (uiop:getenv-pathnames "PATH" :ensure-directory t)
+        when directory
+          do (loop for name in '("emacs" "emacs.exe")
+                   for candidate = (merge-pathnames name directory)
+                   when (platform-executable-file-p *platform* candidate)
+                     do (return-from emacs-test-executable candidate))))
+
+(-> test-emacs-executable-discovery () null)
+(defun test-emacs-executable-discovery ()
+  "Resolve native PATH entries, spaces, empty entries and Windows executable names."
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (let* ((first (merge-pathnames "Program Files/Emacs/bin/" root))
+           (second (merge-pathnames "later/bin/" root))
+           (missing (merge-pathnames "missing/" root))
+           (first-executable (merge-pathnames "emacs.exe" first))
+           (second-executable (merge-pathnames "emacs.exe" second))
+           (separator (uiop:inter-directory-separator)))
+      (dolist (executable (list first-executable second-executable))
+        (ensure-directories-exist executable)
+        (publish-file executable "Emacs discovery fixture")
+        (platform-copy-file-permissions *platform* sb-ext:*runtime-pathname* executable))
+      (with-test-environment (("PATH" ""))
+        (test-assert (null (emacs-test-executable))
+                     "An empty PATH has no Emacs executable."))
+      (with-test-environment (("PATH" (uiop:native-namestring missing)))
+        (test-assert (null (emacs-test-executable))
+                     "An absent PATH directory has no Emacs executable."))
+      (with-test-environment
+          (("PATH" (format nil "~C~A~C~A~C~C~A~C"
+                           separator (uiop:native-namestring missing)
+                           separator (uiop:native-namestring first)
+                           separator separator (uiop:native-namestring second)
+                           separator)))
+        (test-assert (equal (emacs-test-executable) first-executable)
+                     "Native separators preserve drive letters and paths with spaces.")
+        (delete-file first-executable)
+        (test-assert (equal (emacs-test-executable) second-executable)
+                     "Lookup continues to the next PATH directory.")))))
 
 
 ;;;; -- Protocol --

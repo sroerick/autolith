@@ -625,6 +625,7 @@
   test-slynk-context-note)
 
 (define-test-suite emacs
+  test-emacs-executable-discovery
   test-emacs-server-quoting
   test-emacs-server-fake-replies
   test-emacs-tools-registration
