@@ -197,21 +197,42 @@
 
 (-> test-application-async-lisp-readable-results () null)
 (defun test-application-async-lisp-readable-results ()
-  "Share local value formatting and direct report presentation in background jobs."
+  "Retain native data and string contracts through asynchronous job snapshots."
   (async-lisp-tests--call-with-application
    (lambda (application)
-     (dolist (case '(("? (task.agents)" nil)
-                     ("? (list (task.agents))" t)))
-       (destructuring-bind (source composed-p) case
-         (application-run-async-lisp-input application source)
-         (let* ((job (async-lisp-tests--last-job application))
-                (record (async-lisp-tests--wait job))
-                (text (getf record :content)))
-           (test-assert (eq ':completed (job-state job))
-                        "Report presentation must complete its asynchronous job.")
-           (test-assert (if composed-p
-                            (search "⇒ (\"" text)
-                            (and (not (search "⇒ \"" text))
-                                 (not (search "(:TASK-AGENTS" text))))
-                        "Only a direct native result uses the report layout."))))))
+     (let ((execute (symbol-function 'tool-execute))
+           (native nil)
+           (content nil)
+           (fixture nil))
+       (test-call-with-function-replacements
+        (list (list 'tool-execute
+                    (lambda (&rest arguments)
+                      (let ((result (or fixture (apply execute arguments))))
+                        (setf native (if (typep result 'mission-tool-result)
+                                         (getf (rest (tool-result-details result)) :goal)
+                                         (tool-result-details result))
+                              content (tool-result-content result))
+                        result))))
+        (lambda ()
+          (dolist (result (list nil
+                                (application-operation-tests--native-result
+                                 '(:goal :id "async" :status :active :gates nil) :mission-p t)
+                                (application-operation-tests--native-result nil)))
+            (setf fixture result)
+            (dolist (source '("? (task.agents :limit 1)"
+                              "? (list (task.agents :limit 1))"
+                              "? (copy-seq (task.agents :limit 1))"))
+              (application-run-async-lisp-input application source)
+              (let* ((job (async-lisp-tests--last-job application))
+                     (record (async-lisp-tests--wait job))
+                     (text (getf record :content))
+                     (value (let ((*read-eval* nil))
+                              (read-from-string (subseq text (+ 2 (search "⇒ " text)))))))
+                (test-assert (eq ':completed (job-state job))
+                             "Native formatting completes its asynchronous job.")
+                (test-assert (equal value
+                                    (cond ((search "(list " source) (list content))
+                                          ((search "copy-seq" source) content)
+                                          (t native)))
+                             "Async readback preserves every native field or the returned string contract.")))))))))
   nil)

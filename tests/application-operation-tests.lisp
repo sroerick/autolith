@@ -1079,12 +1079,20 @@
 
 ;;;; -- Local Lisp Result Presentation --
 
+(-> application-operation-tests--native-result (t &key (:mission-p boolean)) tool-result)
+(defun application-operation-tests--native-result (value &key mission-p)
+  "Construct a native result with the task or mission data contract."
+  (make-instance (if mission-p 'mission-tool-result 'task-tool-result)
+                 :content (format nil "~S" value)
+                 :success-p t :category ':success
+                 :details (if mission-p (list :mission :goal value) value)))
+
 (-> test-application-lisp-result-presentations () null)
 (defun test-application-lisp-result-presentations ()
-  "Keep native report provenance separate from ordinary Lisp string values."
+  "Retain exact native S-expressions without parsing unknown string values."
   (multiple-value-bind (application root terminal tool)
       (application-operation-tests--application)
-    (declare (ignore terminal))
+    (declare (ignore terminal tool))
     (unwind-protect
          (test-call-with-function-replacements
           (list (list 'application-authorize-command
@@ -1094,123 +1102,158 @@
                       (lambda (&rest arguments)
                         (declare (ignore arguments)) ':allow)))
           (lambda ()
-            (let* ((evaluation
-                     (application-lisp-evaluate
-                      "(progn (format t \"captured~%\") (values (test-operation.echo :text \"report\") \"(:looks :like :lisp)\"))"
-                      :application application))
-                   (presentations (application-lisp-evaluation-presentations evaluation)))
-              (test-assert (eq ':ok (application-lisp-evaluation-status evaluation))
-                           "A direct native result completes its evaluation.")
-              (test-assert (= 1 (application-operation-test-tool-calls tool))
-                           "Presentation must not execute a form a second time.")
-              (test-assert (and (first presentations) (null (second presentations)))
-                           "Only the exact native result string gets a report layout.")
-              (test-assert (string= (read-from-string
-                                    (second (application-lisp-evaluation-values evaluation)))
-                                   "(:looks :like :lisp)")
-                           "A Lisp-looking string is an ordinary string value.")
-              (test-assert (search "report" (terminal--spans-text (first presentations)))
-                           "Report spans include the actual native output.")
-              (test-assert (string= (application-lisp-evaluation-output evaluation)
-                                   (format nil "captured~%"))
-                           "Captured output is separate from multiple return values."))
-            (dolist (source '("(list (test-operation.echo :text \"nested\"))"
-                              "(copy-seq (test-operation.echo :text \"copy\"))"
-                              "\"sandboxed allow: ordinary\""))
-              (let ((evaluation (application-lisp-evaluate source :application application)))
-                (test-assert (every #'null (application-lisp-evaluation-presentations evaluation))
-                             "Composed, copied, and ordinary strings keep Lisp syntax.")
-                (test-assert (handler-case
-                                 (let ((*read-eval* nil))
-                                   (read-from-string (first (application-lisp-evaluation-values evaluation)))
-                                   t)
-                               (error () nil))
-                             "Composed results keep readable string/list contracts.")))
-            (let ((source "(test-operation.echo :text \"retained-report\")"))
-              (conversation-append-user-message (application-conversation application)
-                                                "Start retained-output fixture.")
-              (application-run-lisp-input application source :interactive-p nil)
-              (let* ((record (first (last (conversation-user-operation-snapshot
-                                          (application-conversation application)))))
-                     (properties (rest record))
-                     (retained (getf properties :result)))
-                (test-assert (string= source (getf properties :source))
-                             "Retained operations preserve exact submitted source.")
-                (test-assert (and (search "retained-report" retained)
-                                  (not (search "\\\"retained-report" retained)))
-                             "Retention stores the report layout rather than quoted tool text.")
-                (test-assert (equal record
-                                    (first (last (conversation-user-operation-snapshot
-                                                  (conversation-load
-                                                   (conversation-pathname
-                                                    (application-conversation application)))))))
-                             "A reloaded conversation preserves the rendered report text.")
-                (test-assert (equal record
-                                    (let ((*read-eval* nil))
-                                      (read-from-string (write-to-string record))))
-                             "The retained record contains only readable data.")))
+            (dolist (case
+                     (list
+                      (list '(:task-agents :offset 0 :count 1 :total 1 :next-offset nil
+                              :entries ((:kind :agent :name "scout" :source :bundled
+                                         :description "All original fields."
+                                         :pathname #P"roles/scout.md" :models ("@smol")
+                                         :reasoning-effort :medium
+                                         :tools ("resource.read" "search.*") :spawns nil
+                                         :output-contract-p nil :blocking-p nil))) nil)
+                      (list '(:goal :id "review" :objective "Retain native data"
+                              :status :active :gates ((:id "output" :accepted-p nil))
+                              :budget (:tokens 10000000 :calls 1000)) t)
+                      (list nil nil)))
+              (destructuring-bind (native mission-p) case
+                (let* ((result (application-operation-tests--native-result native :mission-p mission-p))
+                       (content (tool-result-content result))
+                       (calls 0))
+                  (test-call-with-function-replacements
+                   (list (list 'tool-execute
+                               (lambda (&rest arguments)
+                                 (declare (ignore arguments))
+                                 (incf calls)
+                                 result)))
+                   (lambda ()
+                     (dolist (columns '(60 80 120))
+                       (setf (application-ui application)
+                             (terminal-ui-create
+                              :terminal (make-instance 'recording-terminal :columns columns)))
+                       (let* ((evaluation
+                                (application-lisp-evaluate
+                                 "(progn (format t \"captured~%\") (values (test-operation.echo :text \"native\") \"(:looks :like :lisp)\"))"
+                                 :application application))
+                              (values (application-lisp-evaluation-values evaluation))
+                              (text (terminal--spans-text (application-lisp--result-entry evaluation))))
+                         (test-assert (eq ':ok (application-lisp-evaluation-status evaluation))
+                                      "Native rendering preserves successful execution.")
+                         (test-assert (equal native (read-from-string (first values)))
+                                      "Readback retains the tagged root, field order, and value types at every width.")
+                         (test-assert (string= (read-from-string (second values)) "(:looks :like :lisp)")
+                                      "A Lisp-looking string keeps its string type.")
+                         (test-assert (and (search "⇒ " text)
+                                           (string= (application-lisp-evaluation-output evaluation)
+                                                    (format nil "captured~%")))
+                                      "Captured output stays separate from prefixed return values.")))
+                     (test-assert (= calls 3) "Rendering does not execute the form twice.")
+                     (dolist (source '("(copy-seq (test-operation.echo :text \"copy\"))"
+                                       "(concatenate 'string (test-operation.echo :text \"copy\") \"\")"))
+                       (test-assert
+                        (string= content
+                                 (read-from-string
+                                  (first (application-lisp-evaluation-values
+                                          (application-lisp-evaluate source :application application)))))
+                        "Copied and composed native strings keep Lisp string notation."))
+                     (let ((evaluation (application-lisp-evaluate
+                                        "(list (test-operation.echo :text \"nested\"))" :application application)))
+                       (test-assert (equal (list content)
+                                           (read-from-string (first (application-lisp-evaluation-values evaluation))))
+                                    "A tool result inside a list keeps the returned string contract."))
+                     (test-assert
+                      (eq t (read-from-string
+                             (first (application-lisp-evaluation-values
+                                     (application-lisp-evaluate
+                                      "(stringp (test-operation.echo :text \"contract\"))" :application application)))))
+                      "Projection affects display only, not the tool return value.")
+                     (let ((source "(test-operation.echo :text \"retain\")"))
+                       (conversation-append-user-message (application-conversation application) "Retain native output.")
+                       (application-run-lisp-input application source :interactive-p nil)
+                       (let* ((record (first (last (conversation-user-operation-snapshot
+                                                   (application-conversation application)))))
+                              (retained (getf (rest record) :result)))
+                         (test-assert (equal native (read-from-string (subseq retained 2)))
+                                      "Retained output contains the full native S-expression.")
+                         (test-assert (equal record
+                                             (first (last (conversation-user-operation-snapshot
+                                                           (conversation-load
+                                                            (conversation-pathname (application-conversation application)))))))
+                                      "Replay preserves the same native display text.")))
+                     (test-call-with-function-replacements
+                      (list (list 'application-lisp--native-tool-value
+                                  (lambda (value)
+                                    (declare (ignore value))
+                                    (error "projection failed"))))
+                      (lambda ()
+                        (let ((evaluation (application-lisp-evaluate
+                                           "(test-operation.echo :text \"fallback\")" :application application)))
+                          (test-assert (and (eq ':ok (application-lisp-evaluation-status evaluation))
+                                            (string= content (read-from-string
+                                                              (first (application-lisp-evaluation-values evaluation)))))
+                                       "Projection failures fall back to the returned string.")))))))))
+            ;; Unknown tools can carry metadata that is not their returned value.
             (test-call-with-function-replacements
-             (list (list 'application-tool-result-entry
-                         (lambda (&rest arguments)
-                           (declare (ignore arguments))
-                           (error "presentation failed"))))
+             (list (list 'tool-result-details (lambda (result)
+                                               (declare (ignore result))
+                                               '(:unrelated :metadata))))
              (lambda ()
-               (let ((evaluation
-                       (application-lisp-evaluate
-                        "(test-operation.echo :text \"fallback\")"
-                        :application application)))
-                 (test-assert (and (eq ':ok (application-lisp-evaluation-status evaluation))
-                                   (null (first (application-lisp-evaluation-presentations evaluation)))
-                                   (search "fallback" (first (application-lisp-evaluation-values evaluation))))
-                              "A report printer failure falls back without hiding successful execution."))))))
+               (dolist (source '("(test-operation.echo :text \"plain\")"
+                                 "\"(:looks :like :lisp)\""))
+                 (let ((evaluation (application-lisp-evaluate source :application application)))
+                   (test-assert (stringp (read-from-string (first (application-lisp-evaluation-values evaluation))))
+                                "Unknown tool metadata and ordinary strings do not become native forms.")))))
+            ;; A real object printer failure must not hide a successful tool call.
+            (let ((result (make-instance 'task-tool-result :content "printer fallback"
+                                        :success-p t :category ':success
+                                        :details (make-instance 'lisp-values-tests--broken-printer))))
+              (test-call-with-function-replacements
+               (list (list 'tool-execute (lambda (&rest arguments)
+                                          (declare (ignore arguments)) result)))
+               (lambda ()
+                 (let ((evaluation (application-lisp-evaluate
+                                    "(test-operation.echo :text \"printer\")" :application application)))
+                   (test-assert (and (eq ':ok (application-lisp-evaluation-status evaluation))
+                                     (string= "printer fallback"
+                                              (read-from-string (first (application-lisp-evaluation-values evaluation)))))
+                                "Native printer failures fall back without changing evaluation success.")))))))
       (ignore-errors (terminal-ui-stop (application-ui application)))
       (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-
 (-> test-application-lisp-shared-report-identity () null)
 (defun test-application-lisp-shared-report-identity ()
-  "Use Lisp string display when repeated tool calls reuse one content object."
+  "Reject reused content identities, including a native/unknown pair in either order."
   (multiple-value-bind (application root terminal tool)
       (application-operation-tests--application)
     (declare (ignore terminal tool))
     (unwind-protect
-         (let ((shared (copy-seq "shared report"))
-               (calls 0)
-               (layouts 0))
-           (test-call-with-function-replacements
-            (list (list 'tool-execute
-                        (lambda (&rest arguments)
-                          (declare (ignore arguments))
-                          (incf calls)
-                          (let ((result (tool-success shared)))
-                            (test-assert (eq shared (tool-result-content result))
-                                         "The fixture must reuse the exact content object.")
-                            result)))
-                  (list 'tool-result-details
-                        (lambda (result)
-                          (declare (ignore result))
-                          (list :invocation calls)))
-                  (list 'application-tool-result-entry
-                        (lambda (&rest arguments)
-                          (declare (ignore arguments))
-                          (incf layouts)
-                          (list (terminal-span ':plain "ambiguous report")))))
-            (lambda ()
-              (let ((evaluation
-                      (application-lisp-evaluate
-                       "(values (test-operation.echo :text \"first\") (test-operation.echo :text \"second\"))"
-                       :application application)))
-                (test-assert (and (eq ':ok (application-lisp-evaluation-status evaluation))
-                                  (= calls 2) (zerop layouts))
-                             "Ambiguous identities must not select one call's report layout.")
-                (test-assert (every #'null (application-lisp-evaluation-presentations evaluation))
-                             "Both aliased values fall back to ordinary Lisp strings.")
-                (test-assert (equal (mapcar #'read-from-string
-                                           (application-lisp-evaluation-values evaluation))
-                                    (list shared shared))
-                             "Fallback display preserves both returned string values.")))))
+         (dolist (kinds '((t t) (t nil) (nil t)))
+           (let ((shared (copy-seq "shared report"))
+                 (calls 0))
+             (test-call-with-function-replacements
+              (list (list 'tool-execute
+                          (lambda (&rest arguments)
+                            (declare (ignore arguments))
+                            (let ((native-p (nth calls kinds)))
+                              (incf calls)
+                              (make-instance (if native-p 'task-tool-result 'tool-result)
+                                             :content shared :success-p t :category ':success)))))
+              (lambda ()
+                ;; Install known native data only on the typed results.
+                (test-call-with-function-replacements
+                 (list (list 'tool-result-details (lambda (result)
+                                                   (declare (ignore result))
+                                                   (list :task :invocation calls))))
+                 (lambda ()
+                   (let ((evaluation (application-lisp-evaluate
+                                      "(values (test-operation.echo :text \"first\") (test-operation.echo :text \"second\"))"
+                                      :application application)))
+                     (test-assert (and (eq ':ok (application-lisp-evaluation-status evaluation)) (= calls 2))
+                                  "Ambiguous native and unknown calls execute once each.")
+                     (test-assert (equal (mapcar #'read-from-string (application-lisp-evaluation-values evaluation))
+                                         (list shared shared))
+                                  "Both reused identities fall back to the original Lisp string."))))))))
       (ignore-errors (terminal-ui-stop (application-ui application)))
       (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))

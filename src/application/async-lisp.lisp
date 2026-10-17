@@ -41,8 +41,7 @@
       (declare (ignore restart-names selected-restart))
       (let* ((evaluation
                (application-lisp-evaluation-create
-                :status status :values (first values)
-                :presentations (second values) :condition condition))
+                :status status :values (first values) :condition condition))
              (text (terminal--spans-text
                     (application-lisp--result-entry evaluation))))
         (if (eq status ':ok)

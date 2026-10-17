@@ -30,7 +30,8 @@
   string)
 
 (-> application-lisp--render-value
-    (t &key (:columns (integer 1)) (:initial-column (integer 0))) string)
+    (t &key (:columns (integer 1)) (:initial-column (integer 0)))
+    (values string boolean))
 (defun application-lisp--render-value (value &key (columns 80) (initial-column 0))
   "Render VALUE for a human within COLUMNS available terminal columns.
 
@@ -38,7 +39,8 @@ Preserve reader syntax for representable values, including strings and shared
 structure. Use the standard # and ... markers at depth 10 and length 100;
 limit output to 200 lines and 16000 characters. An output-limit notice marks
 an incomplete prefix. Printer failures produce a safe unreadable marker.
-This display policy does not change machine serialization or worker output."
+Return the printed text and whether printing succeeded. This display policy
+does not change machine serialization or worker output."
   (let* ((tag (gensym "VALUE-OUTPUT-LIMIT"))
          (stream (make-instance 'application-lisp-value-stream
                                 :builder (bounded-output-stream--make-builder 16000)
@@ -67,12 +69,13 @@ This display policy does not change machine serialization or worker output."
                 (catch tag
                   (write value :stream stream)
                   nil)))
-          (if truncated-p
-              (concatenate 'string (bounded-output-stream-text stream)
-                           (format nil "~%... [output truncated]"))
-              (bounded-output-stream-text stream)))
+          (values (if truncated-p
+                      (concatenate 'string (bounded-output-stream-text stream)
+                                   (format nil "~%... [output truncated]"))
+                      (bounded-output-stream-text stream))
+                  t))
       (error ()
-        "#<printing failed>"))))
+        (values "#<printing failed>" nil)))))
 
 (-> application-lisp-value--plist-p (t) boolean)
 (defun application-lisp-value--plist-p (value)
@@ -118,4 +121,4 @@ Keep reader syntax for strings, symbols, and shared or circular structures.
 Limit depth to 10, sequence length to 100, lines to 200, and characters to
 16000. Use standard printer omission markers and an explicit notice when
 character output stops early. A failed object printer produces a safe marker."
-  (application-lisp--render-value value :columns columns))
+  (values (application-lisp--render-value value :columns columns)))

@@ -1,7 +1,8 @@
 (in-package #:autolith)
 
 (defvar *application-lisp-tool-results* nil
-  "Evaluation-local identity map from native tool strings to display provenance.")
+  "Evaluation-local EQ map from tool content to a printed native value wrapper.
+A present NIL entry records unknown or ambiguous provenance.")
 
 ;;;; -- User-Facing Operation Protocol --
 
@@ -944,6 +945,45 @@ wait for the serialized application boundary."
       (:quit
        (error 'application-operation-loop-action :action ':quit)))))
 
+(-> application-lisp--native-tool-value (tool-result) (values t boolean))
+(defgeneric application-lisp--native-tool-value (result)
+  (:documentation
+   "Return RESULT's exact native value and presence flag, or NIL and NIL.
+Only result types with an explicit native data contract opt in."))
+
+(defmethod application-lisp--native-tool-value ((result tool-result))
+  "Leave unknown tool strings in their original Lisp string notation."
+  (declare (ignore result))
+  (values nil nil))
+
+(defmethod application-lisp--native-tool-value ((result task-tool-result))
+  "Project the exact native task or job form."
+  (values (tool-result-details result) t))
+
+(defmethod application-lisp--native-tool-value ((result mission-tool-result))
+  "Project the actual mission goal rather than its transcript envelope."
+  (multiple-value-bind (key goal)
+      (get-properties (rest (tool-result-details result)) '(:goal))
+    (values goal (not (null key)))))
+
+(-> application-lisp--snapshot-tool-value
+    (tool-result application) list)
+(defun application-lisp--snapshot-tool-value (result application)
+  "Snapshot known native data as printed text, including a native NIL value.
+Projection or printing failures leave the original string available as fallback.
+No live result, tool, or native data object escapes in the snapshot."
+  (handler-case
+      (multiple-value-bind (value present-p)
+          (application-lisp--native-tool-value result)
+        (when present-p
+          (multiple-value-bind (text printed-p)
+              (application-lisp--render-value
+               value :columns (application-lisp--value-columns application)
+                     :initial-column 2)
+            (when printed-p
+              (list text)))))
+    (error () nil)))
+
 (defmethod application-operation-invoke
     ((operation application-tool-operation) application arguments &key context)
   "Invoke a tool through its decoder, execution method, and caller's explicit capabilities."
@@ -980,13 +1020,10 @@ wait for the serialized application boundary."
                :tool-name canonical-name))
       (when *application-lisp-tool-results*
         (let ((content (tool-result-content result)))
-          ;; A reused string cannot identify one invocation's report metadata.
+          ;; Even an unknown result makes a reused content identity ambiguous.
           (setf (gethash content *application-lisp-tool-results*)
                 (unless (nth-value 1 (gethash content *application-lisp-tool-results*))
-                  (list tool (list :tool-result :tool canonical-name
-                                   :status ':ok :output content
-                                   :details (handler-case (tool-result-details result)
-                                              (error () nil))))))))
+                  (application-lisp--snapshot-tool-value result application)))))
       (tool-result-content result))))
 
 (defmethod application-operation-invoke
