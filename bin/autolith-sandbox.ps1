@@ -1,6 +1,11 @@
 # Shared by source bootstrap, source launch, and packaged releases.
-# Use this host's built-in module when launched from another PowerShell edition.
-Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security') -ErrorAction Stop
+# Keep built-in modules consistent in this host and its PowerShell children.
+$AutolithSandboxHostModules = Join-Path $PSHOME 'Modules'
+$env:PSModulePath = (@($AutolithSandboxHostModules) + @(
+  $env:PSModulePath -split [IO.Path]::PathSeparator |
+    Where-Object { $_ -and $_ -ne $AutolithSandboxHostModules }
+)) -join [IO.Path]::PathSeparator
+Import-Module (Join-Path $AutolithSandboxHostModules 'Microsoft.PowerShell.Security') -ErrorAction Stop
 $AutolithSandboxFiles = @('cl-exec-sandbox-windows.exe', 'cl-exec-sandbox-compat64.dll', 'cl-exec-sandbox-compat32.dll', 'LICENSE-Detours.txt')
 
 function Assert-AutolithSandboxPath([string]$Path) {
