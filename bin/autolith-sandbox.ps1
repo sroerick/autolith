@@ -139,7 +139,8 @@ public static class AutolithSandboxMove {
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     while (-not [AutolithSandboxMove]::MoveFileEx($selector, (Join-Path $rootPath 'selected'), 1)) {
       $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-      if ($errorCode -notin @(32, 33) -or [DateTime]::UtcNow -ge $deadline) {
+      # A replaced selector can still be delete-pending in another installer.
+      if ($errorCode -notin @(5, 32, 33) -or [DateTime]::UtcNow -ge $deadline) {
         throw [ComponentModel.Win32Exception]::new($errorCode)
       }
       Start-Sleep -Milliseconds 25
