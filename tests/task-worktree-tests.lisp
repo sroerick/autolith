@@ -386,7 +386,8 @@
            (task-worktree-tests--git configuration source
                                     (list "worktree" "add" "--detach" (namestring linked)))
            (setf source (platform-truename *platform* linked)
-                 configuration (configuration-copy configuration :working-directory source))))
+                 configuration (configuration-copy configuration :working-directory source)
+                 (agent-configuration parent) configuration)))
        (setf (task-job-command-authorization-function job) #'task-worktree-tests--sandboxed
              (getf (task-job-item job) :isolation)
              (task-worktree-normalize-options (json-object "artifactKind" "commit-range")))
