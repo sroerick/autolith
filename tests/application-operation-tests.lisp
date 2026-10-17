@@ -1191,6 +1191,19 @@
                                             (string= content (read-from-string
                                                               (first (application-lisp-evaluation-values evaluation)))))
                                        "Projection failures fall back to the returned string.")))))))))
+            (let ((result (application-operation-tests--native-result '(:goal :id "MUTABLE"))))
+              (test-call-with-function-replacements
+               (list (list 'tool-execute (lambda (&rest arguments)
+                                          (declare (ignore arguments)) result)))
+               (lambda ()
+                 (let ((evaluation (application-lisp-evaluate
+                                    "(nstring-downcase (test-operation.echo :text \"mutate\"))"
+                                    :application application)))
+                   (test-assert
+                    (and (eq ':ok (application-lisp-evaluation-status evaluation))
+                         (equal (string-downcase (format nil "~S" '(:goal :id "MUTABLE")))
+                                (read-from-string (first (application-lisp-evaluation-values evaluation)))))
+                    "Destructively changed tool content uses its current Lisp string value.")))))
             ;; Unknown tools can carry metadata that is not their returned value.
             (test-call-with-function-replacements
              (list (list 'tool-result-details (lambda (result)

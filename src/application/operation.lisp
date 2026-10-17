@@ -970,6 +970,7 @@ Only result types with an explicit native data contract opt in."))
     (tool-result application) list)
 (defun application-lisp--snapshot-tool-value (result application)
   "Snapshot known native data as printed text, including a native NIL value.
+Retain a content copy to detect destructive changes to the returned string.
 Projection or printing failures leave the original string available as fallback.
 No live result, tool, or native data object escapes in the snapshot."
   (handler-case
@@ -981,7 +982,7 @@ No live result, tool, or native data object escapes in the snapshot."
                value :columns (application-lisp--value-columns application)
                      :initial-column 2)
             (when printed-p
-              (list text)))))
+              (list text (copy-seq (tool-result-content result)))))))
     (error () nil)))
 
 (defmethod application-operation-invoke

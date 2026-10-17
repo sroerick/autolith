@@ -708,12 +708,12 @@ caller."
 (defun application-lisp--render-values (values application)
   "Snapshot VALUES as printed Lisp strings.
 
-Use registered native data only for an unambiguous, identical tool content value.
+Use registered native data only for an unambiguous, unchanged tool content value.
 The caller captures printer output and binds the evaluation-local provenance map.
 No raw values or tool objects escape in the returned list."
   (mapcar (lambda (value)
             (let ((native (gethash value *application-lisp-tool-results*)))
-              (or (first native)
+              (or (and native (string= value (second native)) (first native))
                   (application-lisp--render-value
                    value :columns (application-lisp--value-columns application)
                          :initial-column 2))))
