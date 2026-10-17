@@ -1205,7 +1205,9 @@
   test-application-lisp-value-printer-failure)
 
 (define-test-suite lisp-result-presentation
-  test-application-lisp-result-presentations)
+  test-application-lisp-result-presentations
+  test-application-lisp-shared-report-identity
+  test-application-lisp-terminal-widths)
 
 (define-test-suite lisp-value-evaluation
   test-application-lisp-value-evaluation-safety)

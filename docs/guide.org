@@ -716,6 +716,17 @@ file stays in the draft.
 The clanker sees both your source input and its evaluated result apart
 from any other effects it may have.
 
+Local Lisp results use syntax highlighting and width-aware pretty printing.
+Small values fit on one line; longer property lists use aligned keyword/value
+rows. Each returned value has its own =⇒= marker. Captured output appears in a
+separate section. Large or circular values use bounded previews.
+
+When a native tool returns a report directly, the terminal uses the tool's
+report layout. Ordinary Lisp strings use string-literal notation. Tool calls
+inside larger expressions return their usual values, so =(list (task.agents))=
+produces a list containing the report string. The retained result includes the
+same display text.
+
 Start input with =?= followed by whitespace to evaluate one form asynchronously
 in the active image. Use this for a blocking operation or a bare variable:
 

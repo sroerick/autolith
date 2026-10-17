@@ -1167,3 +1167,76 @@
       (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+
+(-> test-application-lisp-shared-report-identity () null)
+(defun test-application-lisp-shared-report-identity ()
+  "Use Lisp string display when repeated tool calls reuse one content object."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (let ((shared (copy-seq "shared report"))
+               (calls 0)
+               (layouts 0))
+           (test-call-with-function-replacements
+            (list (list 'tool-execute
+                        (lambda (&rest arguments)
+                          (declare (ignore arguments))
+                          (incf calls)
+                          (let ((result (tool-success shared)))
+                            (test-assert (eq shared (tool-result-content result))
+                                         "The fixture must reuse the exact content object.")
+                            result)))
+                  (list 'tool-result-details
+                        (lambda (result)
+                          (declare (ignore result))
+                          (list :invocation calls)))
+                  (list 'application-tool-result-entry
+                        (lambda (&rest arguments)
+                          (declare (ignore arguments))
+                          (incf layouts)
+                          (list (terminal-span ':plain "ambiguous report")))))
+            (lambda ()
+              (let ((evaluation
+                      (application-lisp-evaluate
+                       "(values (test-operation.echo :text \"first\") (test-operation.echo :text \"second\"))"
+                       :application application)))
+                (test-assert (and (eq ':ok (application-lisp-evaluation-status evaluation))
+                                  (= calls 2) (zerop layouts))
+                             "Ambiguous identities must not select one call's report layout.")
+                (test-assert (every #'null (application-lisp-evaluation-presentations evaluation))
+                             "Both aliased values fall back to ordinary Lisp strings.")
+                (test-assert (equal (mapcar #'read-from-string
+                                           (application-lisp-evaluation-values evaluation))
+                                    (list shared shared))
+                             "Fallback display preserves both returned string values.")))))
+      (ignore-errors (terminal-ui-stop (application-ui application)))
+      (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-application-lisp-terminal-widths () null)
+(defun test-application-lisp-terminal-widths ()
+  "Exercise layout and result prefixes at actual terminal widths."
+  (dolist (columns '(60 80 120))
+    (multiple-value-bind (application root)
+        (lisp-machine-tests--application
+         :terminal (make-instance 'recording-terminal :columns columns :styled-p t))
+      (unwind-protect
+           (let* ((evaluation
+                    (application-lisp-evaluate
+                     "(list :name \"scout\" :source :bundled :models '(\"@smol\") :tools '(\"resource.read\" \"search.*\" \"web_search\") :blocking-p nil)"
+                     :application application))
+                  (text (terminal--spans-text (application-lisp--result-entry evaluation)))
+                  (lines (uiop:split-string text :separator '(#\Newline))))
+             (test-assert (every (lambda (line) (< (text-cell-width line) columns)) lines)
+                          "Breakable result rows and their prefix fit the terminal width.")
+             (test-assert (equal (read-from-string (subseq text 2))
+                                 '(:name "scout" :source :bundled :models ("@smol")
+                                   :tools ("resource.read" "search.*" "web_search") :blocking-p nil))
+                          "Prefix-aware terminal layout preserves the displayed Lisp value."))
+        (ignore-errors (terminal-ui-stop (application-ui application)))
+        (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))
+        (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
+  nil)

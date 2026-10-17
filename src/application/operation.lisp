@@ -979,11 +979,14 @@ wait for the serialized application boundary."
                :message (tool-result-content result)
                :tool-name canonical-name))
       (when *application-lisp-tool-results*
-        (setf (gethash (tool-result-content result) *application-lisp-tool-results*)
-              (list tool (list :tool-result :tool canonical-name
-                               :status ':ok :output (tool-result-content result)
-                               :details (handler-case (tool-result-details result)
-                                          (error () nil))))))
+        (let ((content (tool-result-content result)))
+          ;; A reused string cannot identify one invocation's report metadata.
+          (setf (gethash content *application-lisp-tool-results*)
+                (unless (nth-value 1 (gethash content *application-lisp-tool-results*))
+                  (list tool (list :tool-result :tool canonical-name
+                                   :status ':ok :output content
+                                   :details (handler-case (tool-result-details result)
+                                              (error () nil))))))))
       (tool-result-content result))))
 
 (defmethod application-operation-invoke
