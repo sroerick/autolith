@@ -18,6 +18,19 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Shell-log search result limit
+
+- Problem: =resource.read= advertised 50 search results but rejected requests
+  above 20 for =shell-log:= resources.
+- Behavior: accept up to 50 bounded excerpts per shell-log search.
+- Scope and location: private =*shell-log-resource-maximum-results*= definition,
+  image commit =d7be1e92-d766-4913-8387-5bc5d3341843=, private Git
+  =3c4551024b63a5ce6c940ac769c0360f7a0797cd=.
+- Verification: the previously rejected 25-result request succeeds; the
+  validator accepts 50 and rejects 51. Clean-process private replay passed.
+- Removal condition: discard the override after installing an equivalent
+  tracked search limit or scheme-specific tool description.
+
 ** Isolated patches beside unrelated edits
 
 - Problem: isolated patch checks required an entirely clean integration target,
