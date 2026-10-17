@@ -59,8 +59,12 @@ function Get-AutolithSandboxExplicitSelection([string]$Path) {
 function Set-AutolithSandboxPrivateAcl([string]$Directory) {
   # Only the installing account, SYSTEM, and administrators can modify this tree.
   Assert-AutolithSandboxPath $Directory
-  $acl = [Security.AccessControl.DirectorySecurity]::new()
+  # Modify the existing DACL without requesting owner or audit privileges.
+  $acl = Get-Acl -LiteralPath $Directory
   $acl.SetAccessRuleProtection($true, $false)
+  foreach ($rule in $acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])) {
+    $acl.RemoveAccessRuleSpecific($rule)
+  }
   foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User,
                      [Security.Principal.SecurityIdentifier]::new('S-1-5-18'),
                      [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))) {
