@@ -149,3 +149,4 @@ foreach ($name in @('cl-exec-sandbox-windows.exe','cl-exec-sandbox-compat64.dll'
   'Native private ACL and MoveFileEx publication cases require Windows.'
 }
 'Sandbox bundle behavior checks passed.'
+exit 0
