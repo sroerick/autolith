@@ -18,6 +18,23 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Authorized paths in explicit delimiter checks
+
+- Problem: =lisp.paren-check= authorized an external path, then supplied a
+  separate workspace-root list to Parenchek and rejected the same path.
+- Behavior: authorize once through =workspace-tool-path=; derive the backend's
+  path-stability scope from that authorized path. Retain snapshot and requested
+  directory traversal checks.
+- Scope and location: private =tool-execute= method for =lisp-paren-check-tool=,
+  image commit =c812075b-89aa-44dc-a2b4-14f17f5675f1=, private Git
+  =72d99b8e3bd2e62c40156eee6ed12b9d8aaa08c2=.
+- Verification: the two failed scratchpad files and their 13-file source tree
+  pass. External calls ask once; denied and sandbox-only decisions reject them,
+  full access permits them, and workspace paths need no external approval.
+  Clean-process private replay passed.
+- Removal condition: replace the override after installing equivalent tracked
+  tool path handling.
+
 ** Shell-log search result limit
 
 - Problem: =resource.read= advertised 50 search results but rejected requests
