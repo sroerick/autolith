@@ -35,6 +35,18 @@ function Get-AutolithSandboxSelection([string]$Root) {
   $directory = Join-Path $Root $identity
   if ((Get-AutolithSandboxIdentity $directory) -cne $identity) { throw 'Selected sandbox bundle is incomplete or corrupt.' }
   return (Join-Path $directory 'cl-exec-sandbox-windows.exe')
+
+}
+function Get-AutolithSandboxExplicitSelection([string]$Path) {
+  $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+  Assert-AutolithSandboxPath $item.FullName
+  if ($item.PSIsContainer -or $item.Name -cne 'cl-exec-sandbox-windows.exe' -or
+      $item.Length -eq 0 -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw "Invalid explicit sandbox helper: $Path"
+  }
+  $identity = Get-AutolithSandboxIdentity $item.DirectoryName
+  if (-not $identity) { throw "Explicit sandbox helper bundle is incomplete: $Path" }
+  return $item.FullName
 }
 
 function Set-AutolithSandboxPrivateAcl([string]$Directory) {

@@ -25,19 +25,27 @@
          (script-root (uiop:pathname-directory-pathname *load-truename*))
          (installer (merge-pathnames "windows-sandbox.ps1" script-root))
          (installed (merge-pathnames "native/sandbox/"
-                                     (autolith-application-root ':data))))
-    (unless (probe-file builder)
-      (error "cl-exec-sandbox Windows helper builder is missing at ~A." builder))
+                                     (autolith-application-root ':data)))
+         (explicit (uiop:getenv "CL_EXEC_SANDBOX_WINDOWS_HELPER"))
+         (powershell (or (uiop:getenv "POWERSHELL") "powershell.exe")))
     (uiop:with-current-directory (system-root)
-      (uiop:run-program
-       (list (or (uiop:getenv "POWERSHELL") "powershell.exe")
-             "-NoProfile" "-ExecutionPolicy" "Bypass" "-File"
-             (uiop:native-namestring installer) "-Action" "BuildInstall"
-             "-Builder" (uiop:native-namestring builder)
-             "-Root" (uiop:native-namestring installed)
-             "-Workspace" (uiop:native-namestring
-                           (uiop:pathname-parent-directory-pathname script-root)))
-       :output ':interactive :error-output ':interactive))))
+      (if (and explicit (plusp (length explicit)))
+          (uiop:run-program
+           (list powershell "-NoProfile" "-ExecutionPolicy" "Bypass" "-File"
+                 (uiop:native-namestring installer) "-Action" "Validate"
+                 "-Source" explicit "-Root" (uiop:native-namestring installed))
+           :output ':interactive :error-output ':interactive)
+          (progn
+            (unless (probe-file builder)
+            (error "cl-exec-sandbox Windows helper builder is missing at ~A." builder))
+          (uiop:run-program
+           (list powershell "-NoProfile" "-ExecutionPolicy" "Bypass" "-File"
+                 (uiop:native-namestring installer) "-Action" "BuildInstall"
+                 "-Builder" (uiop:native-namestring builder)
+                 "-Root" (uiop:native-namestring installed)
+                 "-Workspace" (uiop:native-namestring
+                               (uiop:pathname-parent-directory-pathname script-root)))
+            :output ':interactive :error-output ':interactive)))))
 
 #-(or linux darwin freebsd netbsd openbsd win32)
 (format t "~&Skipping the cl-exec-sandbox native helper on this platform.~%")
