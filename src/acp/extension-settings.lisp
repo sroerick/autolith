@@ -151,6 +151,8 @@
       (error 'acp-extension-unavailable :reason "The requested setting is not adjustable."))
     (application-apply-setting application (setting-name setting)
                                (if (argo:json-false-p value) nil value))
+    (when (member (setting-name setting) '(:idle-compaction-p :prompt-cache-retention-seconds))
+      (acp-completion-wake session))
     (when (eq (setting-name setting) ':permission-mode)
       (with-lock-held ((acp-session-lock session))
         (setf (acp-session-mode session) (application-permission-mode application))

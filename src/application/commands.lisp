@@ -284,9 +284,8 @@ transcript renderer, including in fullscreen."
     (:model-changed
      "the model changed since the previous request")
     (:idle
-     (format nil "idle for ~D min, past the ~D min provider cache lifetime"
-             (round (getf miss :idle-seconds) 60)
-             (round *prompt-cache-lifetime-seconds* 60)))
+     (format nil "idle for ~D min; cached context may have expired"
+             (round (getf miss :idle-seconds) 60)))
     (:context-rewritten
      "earlier context was rewritten")
     (:resumed
@@ -334,6 +333,7 @@ prefix with re-read history points at routing or an expired cache."
 
 The first request of each conversation seeds the baseline from its newest
 persisted provider usage, so a resumed session notices its cold cache."
+  (application-idle-compaction-note-started application)
   (let ((conversation (application-conversation application)))
     (unless (equal (application-prompt-cache-conversation-id application)
                    (conversation-identifier conversation))
@@ -353,6 +353,7 @@ persisted provider usage, so a resumed session notices its cold cache."
 
 The completed request's usage becomes the next baseline whether or not the
 notice preference is on, so enabling it mid-session takes effect immediately."
+  (application-idle-compaction-note-completed application (getf details :usage))
   (let* ((usage (getf details :usage))
          (model (application-prompt-cache-request-model application))
          (miss (prompt-cache-miss-detect
@@ -2559,6 +2560,9 @@ the settings page and the slash commands behave identically."
       (:reasoning-traces-p (application-set-reasoning-traces application value))
       (:turn-timestamps-p (application-set-turn-timestamps application value))
       (:cache-miss-notices-p (application-set-cache-miss-notices application value))
+      ((:idle-compaction-p :prompt-cache-retention-seconds)
+       (setf (config name configuration) value)
+       (application-idle-compaction-wake application))
       (:compact-view-p
        (unless (eq (application-compact-view-p application) value)
          (setf (application-compact-view-p application) value)

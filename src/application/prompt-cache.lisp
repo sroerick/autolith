@@ -3,7 +3,7 @@
 ;;;; -- Prompt-Cache Misses --
 
 (defparameter *prompt-cache-lifetime-seconds* 300
-  "The idle gap after which provider prompt caches are assumed to have expired.")
+  "The inactivity heuristic used to explain cache misses, not a provider expiry guarantee.")
 
 (defparameter *prompt-cache-miss-minimum-tokens* 1024
   "The smallest previously cached prompt whose loss is worth reporting.")
@@ -24,6 +24,49 @@
   "Why a provider request re-read context the prompt cache should have served."
   '(member :model-changed :idle :context-rewritten :resumed :prefix-changed
            :prefix-stalled))
+
+(defclass prompt-cache-episode ()
+  ((conversation
+    :initarg :conversation
+    :reader prompt-cache-episode-conversation
+    :type conversation
+    :documentation "The exact conversation served by this request.")
+   (provider
+    :initarg :provider
+    :reader prompt-cache-episode-provider
+    :type model-provider
+    :documentation "The provider instance whose cache may contain the prompt.")
+   (model
+    :initarg :model
+    :reader prompt-cache-episode-model
+    :type string
+    :documentation "The model selected when the request started.")
+   (process-id
+    :initform (current-process-id)
+    :reader prompt-cache-episode-process-id
+    :type integer
+    :documentation "The process that established the local monotonic cache clock.")
+   (started-at
+    :initarg :started-at
+    :reader prompt-cache-episode-started-at
+    :type real
+    :documentation "The monotonic request start in seconds, before response generation.")
+   (prompt-tokens
+    :initform nil
+    :accessor prompt-cache-episode-prompt-tokens
+    :type (option (integer 0))
+    :documentation "The completed request's prompt size, or NIL while in flight.")
+   (history-characters
+    :initform 0
+    :accessor prompt-cache-episode-history-characters
+    :type (integer 0)
+    :documentation "The bounded textual history size eligible for summarization.")
+   (sequence
+    :initform nil
+    :accessor prompt-cache-episode-sequence
+    :type (option (integer 0))
+    :documentation "The durable conversation boundary after request completion."))
+  (:documentation "One process-local cache opportunity, consumed before idle compaction."))
 
 (defclass prompt-cache-baseline ()
   ((prompt-tokens

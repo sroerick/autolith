@@ -192,9 +192,15 @@ fragments that providers interleave with empty content deltas."
       (:user-message-persisted
        (setf (acp-observer-turn-sequence observer) (getf details :sequence)))
       (:provider-request-started
+       (application-idle-compaction-note-started
+        (acp-session-application (acp-observer-session observer)))
        (text-buffer-clear (acp-observer-streamed-text observer))
        (when (acp-observer-thought-state observer)
          (setf (acp-observer-thought-state observer) ':boundary)))
+      (:provider-request-completed
+       (application-idle-compaction-note-completed
+        (acp-session-application (acp-observer-session observer))
+        (getf details :usage)))
       (:assistant-response-persisted
        (let ((text (getf details :text)) (streamed (acp-observer-streamed-text observer)))
          (when (and (stringp text) (uiop:string-prefix-p streamed text)
@@ -202,6 +208,9 @@ fragments that providers interleave with empty content deltas."
            (acp-observer--send
             observer (agentcomms:acp-update-agent-message
                       (agentcomms:acp-text-content (subseq text (length streamed))))))))
+      ((:compaction-started :compaction-completed)
+       (setf (application-idle-compaction-episode
+              (acp-session-application (acp-observer-session observer))) nil))
       (:tool-call-started
        (acp-observer--send
         observer

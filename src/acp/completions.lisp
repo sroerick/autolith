@@ -39,9 +39,79 @@
           (application--record-goal application))
         t))))
 
+(-> acp-completion--idle-delay (acp-session) (option real))
+(defun acp-completion--idle-delay (session)
+  "Return the idle compaction delay when ACP has no higher-priority work."
+  (application-idle-compaction-delay
+   (acp-session-application session)))
+
+(-> acp-completion--idle-ready-locked-p (application-input-controller) boolean)
+(defun acp-completion--idle-ready-locked-p (controller)
+  "Check native idle admission while holding CONTROLLER's lock."
+  (and (not (application-input-controller-active-p controller))
+       (not (application-input-controller-stopping-p controller))
+       (not (application-input-controller-failure controller))
+       (not (application-input-controller-queued-work-paused-p controller))
+       (null (application-input-controller-follow-up-edit-index controller))
+       (every #'deque-empty-p
+              (list (application-input-controller-work-items controller)
+                    (application-input-controller-initial-work-items controller)
+                    (application-input-controller-pending-apply-items controller)
+                    (application-input-controller-steering-items controller)
+                    (application-input-controller-steering-in-flight-items controller)))
+       t))
+
+(-> acp-completion--run-idle-compaction (acp-session) boolean)
+(defun acp-completion--run-idle-compaction (session)
+  "Consume one idle opportunity under the ACP primary lease and input admission lock."
+  (let* ((application (acp-session-application session))
+         (agent (application-agent application))
+         (controller (acp-input-controller session))
+         (episode (application-idle-compaction-episode application))
+         (claimed-p nil))
+    (when (and episode controller)
+      (acp-service--call-with-operation
+       (acp-session-service session) session
+       (lambda ()
+         (unwind-protect
+              (progn
+                (with-lock-held ((acp-session-lock session))
+                  (with-lock-held ((application-input-controller-lock controller))
+                    (when (and (not (acp-session-closing-p session))
+                               (not (acp-session-closed-p session))
+                               (not (acp-session-cancelled-p session))
+                               (null (acp-session-prompt-thread session))
+                               (acp-completion--idle-ready-locked-p controller)
+                               (application-idle-compaction-consume application episode))
+                      (incf (acp-session-epoch session))
+                      (setf (acp-session-prompt-thread session) (current-thread)
+                            (acp-session-prompt-interruptible-p session) t
+                            (slot-value controller 'main-thread) (current-thread)
+                            (application-input-controller-active-p controller) t
+                            (application-input-controller-active-work-kind controller) ':idle-compaction
+                            (application-input-controller-primary-steering-p controller) nil
+                            claimed-p t))))
+                (when claimed-p
+                  (let ((*active-application* application)
+                        (*configuration* (application-configuration application))
+                        (*default-pathname-defaults*
+                          (config :working-directory (application-configuration application))))
+                    (agent-compact-conversation agent (acp-observer-create session)))))
+           (when claimed-p
+             (acp-session--call-with-finalization
+              session
+              (lambda ()
+                (unwind-protect
+                     (application-input-controller-finish-external-work controller)
+                  (with-lock-held ((acp-session-lock session))
+                    (setf (acp-session-prompt-thread session) nil)))))
+             (acp-extension-notify session "state")
+             (acp-completion-wake session))))))
+    claimed-p))
+
 (-> acp-completion--cycle (acp-session) (option real))
 (defun acp-completion--cycle (session)
-  "Run one admitted continuation or maintain receipt-backed capacity; return the next delay."
+  "Run ready user or completion work before idle compaction; return the next bounded delay."
   (when (with-lock-held ((acp-session-lock session))
           (or (acp-session-cancelled-p session)
               (acp-session-completion-report session)
@@ -50,27 +120,26 @@
     (return-from acp-completion--cycle nil))
   (let* ((application (acp-session-application session))
          (agent (application-agent application))
-         (notices (acp-completion--admitted-notices session)))
+         (notices (acp-completion--admitted-notices session))
+         (notice-delay (and notices
+                            (max 0 (- (reduce #'min notices :key (lambda (notice) (getf notice :ready-at)))
+                                      (get-universal-time)))))
+         (idle-delay (acp-completion--idle-delay session)))
     (cond
       ((acp-input--pending-commands-p session)
        (acp-input--run-pending-commands session)
        0)
       ((acp-input--pending-p session)
-       (acp-session-run-turn
-        session "" :queued-p t
-        :prepare (lambda () (acp-input--prepare-queued-turn session)))
+       (acp-session-run-turn session "" :queued-p t
+                             :prepare (lambda () (acp-input--prepare-queued-turn session)))
        0)
-      (notices
-       (let ((delay (- (reduce #'min notices :key (lambda (notice) (getf notice :ready-at)))
-                       (get-universal-time))))
-         (if (plusp delay)
-             delay
-             (progn
-               (acp-session-run-turn
-                session
-                *application-job-completion-continuation-prompt*
-                :automatic-p t :prepare (lambda () (acp-completion--prepare-turn session)))
-               0))))
+      ((and notice-delay (zerop notice-delay))
+       (acp-session-run-turn
+        session *application-job-completion-continuation-prompt*
+        :automatic-p t :prepare (lambda () (acp-completion--prepare-turn session)))
+       0)
+      ((and idle-delay (zerop idle-delay))
+       (if (acp-completion--run-idle-compaction session) 0 1))
       ((task-completion-maintenance-needed-p agent)
        (acp-service--call-with-operation
         (acp-session-service session) session
@@ -81,9 +150,10 @@
                           collect (getf notice :id))))
             (when identifiers
               (task-completion-deliver agent :identifiers identifiers)))))
-       nil)
+       0)
       (t
-       nil))))
+       (let ((delays (remove nil (list notice-delay idle-delay))))
+         (when delays (apply #'min delays)))))))
 
 (-> acp-completion--run (acp-session) null)
 (defun acp-completion--run (session)

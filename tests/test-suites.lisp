@@ -221,6 +221,18 @@
   test-prompt-cache-miss-notices
   test-cache-misses-command)
 
+(define-test-suite idle-compaction
+  test-idle-compaction-policy
+  test-idle-compaction-controller
+  test-idle-compaction-input-races
+  test-idle-compaction-failure
+  test-idle-compaction-deadline-wakeup
+  test-acp-idle-compaction-publishes-and-consumes
+  test-acp-idle-compaction-prioritizes-input-and-close
+  test-acp-idle-compaction-failure-cleans-state
+  test-acp-idle-compaction-schedules-before-future-notice
+  test-acp-idle-compaction-cancellation)
+
 (define-test-suite permissions
     test-command-permission-persistence
     test-command-permission-corruption

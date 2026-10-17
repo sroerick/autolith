@@ -320,6 +320,22 @@ exist yet, and is only put in directory form."
   :documentation "Whether requests that re-read uncached context are reported."
   :scope :durable)
 
+(define-setting :idle-compaction-p (boolean-setting)
+  :label "Idle cache compaction"
+  :group :behavior
+  :documentation "Whether idle sessions compact large histories before estimated prompt-cache expiry."
+  :scope :durable
+  :default t)
+
+(define-setting :prompt-cache-retention-seconds (integer-setting)
+  :label "Estimated cache retention"
+  :group :behavior
+  :documentation "Estimated prompt-cache retention in seconds; zero uses the provider estimate, when available."
+  :scope :durable
+  :minimum 0
+  :maximum 86400
+  :default 0)
+
 (define-setting :simple-technical-english-p (boolean-setting)
   :label "Simple Technical English"
   :group :behavior

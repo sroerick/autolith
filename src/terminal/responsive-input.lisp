@@ -3619,16 +3619,16 @@ External tools cannot receive a local command sandbox grant. ASK owns the UI."
                                   (application-job-completions--take-maintenance controller))))
           (setf (application-input-controller-active-p controller) t)
           (return))
-        (let* ((deadline (application-job-completions--next-time controller))
+        (let* ((cache-wait (application-input-controller--idle-compaction-wait controller))
+               (deadline (application-job-completions--next-time controller))
                (completion-wait (and deadline (max 1/100 (- deadline (get-universal-time)))))
                (handoff-wait (and (application-localgroup-handoff-pending-p application) 1/10))
-               (wait-seconds (cond
-                               ((and completion-wait handoff-wait)
-                                (min completion-wait handoff-wait))
-                               (completion-wait
-                                completion-wait)
-                               (t
-                                handoff-wait))))
+               (waits (remove nil (list completion-wait handoff-wait cache-wait)))
+               (wait-seconds (and waits (apply #'min waits))))
+          (when (and cache-wait (zerop cache-wait))
+            (setf work (list ':idle-compaction (application-idle-compaction-episode application))
+                  (application-input-controller-active-p controller) t)
+            (return))
           (if wait-seconds
               (condition-wait
                (application-input-controller-condition-variable controller)
@@ -4002,6 +4002,8 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
         (progn
           (application-input-controller--begin-prompt-work controller work)
           (case (first work)
+            (:idle-compaction
+             (application-input-controller--run-idle-compaction controller (second work)))
             (:apply-pending
              (application-input-controller--apply-pending-commands controller))
             (:job-completion

@@ -57,6 +57,11 @@
     :accessor application-goal
     :type list
     :documentation "The session goal plist holding objective, status, and continuations.")
+   (idle-compaction-episode
+    :initform nil
+    :accessor application-idle-compaction-episode
+    :type (option prompt-cache-episode)
+    :documentation "The completed local request eligible for one idle compaction.")
    (prompt-cache-baseline
     :initform nil
     :accessor application-prompt-cache-baseline
@@ -3500,6 +3505,7 @@ continuation turns, so the notice names what woke the model."
             (application-render-records application)
             (application-set-activity application activity-label))
            (:compaction-started
+            (setf (application-idle-compaction-episode application) nil)
             (application-set-activity application "compacting the conversation")
             (terminal-ui-set-compacting ui t))
            (:compaction-completed

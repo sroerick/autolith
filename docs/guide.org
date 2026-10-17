@@ -1352,6 +1352,27 @@ count; inspect =job.continuity=, =job.*= and their resources for full details.
 Provider-family changes use the portable handoff and exclude foreign private
 context.
 
+Idle cache compaction is enabled by default. After a completed request with at
+least 32,768 prompt tokens and 131,072 characters of summarizable history, an
+idle session can compact two minutes before its estimated cache expiry. The
+timer starts when the request starts, not when its response finishes. User
+input, drafts, active work and shutdown take priority. Each opportunity is used
+once, including after failure. Resumed sessions need a new completed request
+before scheduling one.
+
+Use =(settings :idle-compaction-p nil)= to disable it. The ChatGPT subscription
+route uses a conservative five-minute inactivity estimate. Other providers need
+an explicit estimate, for example
+=(settings :prompt-cache-retention-seconds 1800)= for thirty minutes. Set it to
+zero to use the provider estimate. Both settings persist across restarts.
+
+Cache retention depends on the provider, model, routing and account policy.
+The [[https://developers.openai.com/api/docs/guides/prompt-caching][OpenAI API cache documentation]] describes a thirty-minute default for
+GPT-5.6 and later; it does not establish a retention contract for the ChatGPT
+subscription route. Idle compaction uses the ordinary paid checkpoint and
+summary path. It can reduce the context sent after a long pause, but neither a
+cache hit nor a net saving is guaranteed.
+
 Providers bill context served from their prompt cache at a fraction of the
 uncached input price, so a request that re-reads context the previous request
 had cached costs noticeably more. =(cache-misses t)=
@@ -1359,9 +1380,9 @@ enables a dim notice after any request whose cache reads fell below half of the
 previous prompt, and after any request whose cache reads stopped growing while
 the prompt grew and at least a sixteenth of the previous prompt, never less
 than 4096 tokens, was re-read. The notice gives the re-read and total prompt
-token counts and the likely cause: a model change, an idle gap past the roughly
-five-minute provider cache lifetime, rewritten earlier context, a resumed
-conversation whose cache had expired, a changed prompt prefix, or a stalled
+token counts and the likely cause: a model change, an idle gap during which
+cached context may have expired, rewritten earlier context, a resumed
+conversation, a changed prompt prefix, or a stalled
 prefix, which means the request reached a provider backend without the newest
 cached context. When the provider attributes cache reads to request fields, the
 notice adds whether the instructions and tools were re-read or still cached, so
