@@ -8,12 +8,13 @@
 
 (defstruct (application-lisp-evaluation
              (:constructor application-lisp-evaluation-create
-                 (&key status output values condition restart-names
+                 (&key status output values value-kinds condition restart-names
                         selected-restart-name loop-action)))
   "Captured outcome of one explicit active-image Common Lisp evaluation."
   (status ':ok :type application-lisp-evaluation-status)
   (output "" :type string)
   (values nil :type list)
+  (value-kinds nil :type list)
   (condition nil :type (option string))
   (restart-names nil :type list)
   (selected-restart-name nil :type (option string))
@@ -202,11 +203,12 @@ journaling or provider conversation projection."
           (*error-output* output-stream)
           (*trace-output* output-stream)
           (*package* (find-package '#:autolith)))
-      (let ((rendered-values (application-lisp--render-values raw-values application)))
+      (multiple-value-bind (rendered-values value-kinds)
+          (application-lisp--render-values raw-values application)
         (application-lisp-evaluation-create
          :status status
          :output (get-output-stream-string output-stream)
-         :values rendered-values
+         :values rendered-values :value-kinds value-kinds
          :condition condition-text
          :restart-names restart-names
          :selected-restart-name selected-restart-name
@@ -246,13 +248,15 @@ journaling or provider conversation projection."
       (let ((values (application-lisp-evaluation-values evaluation)))
         (if values
             (loop for value in values
-                  for first-p = t then nil
+                  for index from 0
                   append
                   (append
-                   (unless first-p
+                   (unless (zerop index)
                      (list (terminal-span ':plain (string #\Newline))))
                    (list (terminal-span ':success "⇒ "))
-                   (application-lisp--value-spans value)))
+                   (if (eq (nth index (application-lisp-evaluation-value-kinds evaluation)) ':text)
+                       (list (terminal-span ':plain value))
+                       (application-lisp--value-spans value))))
             (list (terminal-span ':success "⇒ ")
                   (terminal-span ':dim "no values")))))
       (:aborted
@@ -704,17 +708,24 @@ caller."
         (error () nil))
       (list (terminal-span ':code value))))
 
-(-> application-lisp--render-values (list (option application)) list)
+(-> application-lisp--render-values
+    (list (option application)) (values list list))
 (defun application-lisp--render-values (values application)
-  "Snapshot VALUES as printed Lisp strings.
-
-Use registered native data only for an unambiguous, unchanged tool content value.
-The caller captures printer output and binds the evaluation-local provenance map.
-No raw values or tool objects escape in the returned list."
-  (mapcar (lambda (value)
-            (let ((native (gethash value *application-lisp-tool-results*)))
-              (or (and native (string= value (second native)) (first native))
-                  (application-lisp--render-value
-                   value :columns (application-lisp--value-columns application)
-                         :initial-column 2))))
-          values))
+  "Snapshot VALUES as display text and corresponding Lisp or report kinds.
+Use tool presentation only for unambiguous, unchanged content identities.
+No raw values or tool objects escape in the returned lists."
+  (let ((texts nil)
+        (kinds nil))
+    (dolist (value values)
+      (let ((snapshot (gethash value *application-lisp-tool-results*)))
+        (if (and snapshot (string= value (second snapshot)))
+            (progn
+              (push (first snapshot) texts)
+              (push (third snapshot) kinds))
+            (progn
+              (push (application-lisp--render-value
+                     value :columns (application-lisp--value-columns application)
+                           :initial-column 2)
+                    texts)
+              (push ':lisp kinds)))))
+    (values (nreverse texts) (nreverse kinds))))

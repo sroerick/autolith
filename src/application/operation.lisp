@@ -1,8 +1,8 @@
 (in-package #:autolith)
 
 (defvar *application-lisp-tool-results* nil
-  "Evaluation-local EQ map from tool content to a printed native value wrapper.
-A present NIL entry records unknown or ambiguous provenance.")
+  "Evaluation-local EQ map from tool content to immutable display snapshots.
+A present NIL entry records ambiguous provenance.")
 
 ;;;; -- User-Facing Operation Protocol --
 
@@ -952,7 +952,7 @@ wait for the serialized application boundary."
 Only result types with an explicit native data contract opt in."))
 
 (defmethod application-lisp--native-tool-value ((result tool-result))
-  "Leave unknown tool strings in their original Lisp string notation."
+  "Use report text when RESULT has no explicit native data contract."
   (declare (ignore result))
   (values nil nil))
 
@@ -969,21 +969,22 @@ Only result types with an explicit native data contract opt in."))
 (-> application-lisp--snapshot-tool-value
     (tool-result application) list)
 (defun application-lisp--snapshot-tool-value (result application)
-  "Snapshot known native data as printed text, including a native NIL value.
-Retain a content copy to detect destructive changes to the returned string.
-Projection or printing failures leave the original string available as fallback.
+  "Snapshot a tool report and its content identity guard for local display.
+Use explicit native data when available, otherwise retain the report text.
 No live result, tool, or native data object escapes in the snapshot."
-  (handler-case
-      (multiple-value-bind (value present-p)
-          (application-lisp--native-tool-value result)
-        (when present-p
-          (multiple-value-bind (text printed-p)
-              (application-lisp--render-value
-               value :columns (application-lisp--value-columns application)
-                     :initial-column 2)
-            (when printed-p
-              (list text (copy-seq (tool-result-content result)))))))
-    (error () nil)))
+  (let ((content (copy-seq (tool-result-content result))))
+    (or (handler-case
+            (multiple-value-bind (value present-p)
+                (application-lisp--native-tool-value result)
+              (when present-p
+                (multiple-value-bind (text printed-p)
+                    (application-lisp--render-value
+                     value :columns (application-lisp--value-columns application)
+                           :initial-column 2)
+                  (when printed-p
+                    (list text content ':lisp)))))
+          (error () nil))
+        (list content content ':text))))
 
 (defmethod application-operation-invoke
     ((operation application-tool-operation) application arguments &key context)
@@ -1021,7 +1022,7 @@ No live result, tool, or native data object escapes in the snapshot."
                :tool-name canonical-name))
       (when *application-lisp-tool-results*
         (let ((content (tool-result-content result)))
-          ;; Even an unknown result makes a reused content identity ambiguous.
+          ;; A reused content identity is ambiguous, even for a plain report.
           (setf (gethash content *application-lisp-tool-results*)
                 (unless (nth-value 1 (gethash content *application-lisp-tool-results*))
                   (application-lisp--snapshot-tool-value result application)))))

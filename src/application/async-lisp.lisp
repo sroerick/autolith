@@ -2,6 +2,13 @@
 
 ;;;; -- Asynchronous Active-image Lisp --
 
+(defclass application-async-lisp-result (tool-result)
+  ((entry :initarg :entry
+          :reader application-async-lisp-result-entry
+          :type list
+          :documentation "The captured terminal spans for the completed evaluation."))
+  (:documentation "An asynchronous Lisp outcome with styled local presentation."))
+
 (-> application-async-lisp--present
     (application conversation (or string list)) null)
 (defun application-async-lisp--present (application conversation entry)
@@ -41,12 +48,14 @@
       (declare (ignore restart-names selected-restart))
       (let* ((evaluation
                (application-lisp-evaluation-create
-                :status status :values (first values) :condition condition))
-             (text (terminal--spans-text
-                    (application-lisp--result-entry evaluation))))
-        (if (eq status ':ok)
-            (tool-success text)
-            (tool-failure text))))))
+                :status status :values (first values) :value-kinds (second values)
+                :condition condition))
+             (entry (application-lisp--result-entry evaluation)))
+        (make-instance 'application-async-lisp-result
+                       :content (tool-result-content
+                                 (tool-success (terminal--spans-text entry)))
+                       :entry entry
+                       :success-p (eq status ':ok))))))
 
 (-> application-async-lisp--finish
     (&key (:application application) (:conversation conversation)
@@ -81,10 +90,18 @@
             (application-async-lisp-output-flush output)
             (application-async-lisp--present
              application conversation
-             (list (terminal-span ':notice
-                                  (format nil "? ~A~%" (session-job-identifier job)))
-                   (terminal-span (if (eq final-state ':completed) ':success ':failure)
-                                  (or final-report outcome)))))
+              (append
+               (list (terminal-span ':notice
+                                    (format nil "? ~A~%" (session-job-identifier job))))
+               (if (and (not final-report)
+                        (typep result 'application-async-lisp-result)
+                        (string= outcome
+                                 (terminal--spans-text
+                                  (application-async-lisp-result-entry result))))
+                   (application-async-lisp-result-entry result)
+                   (list (terminal-span
+                          (if (eq final-state ':completed) ':success ':failure)
+                          (or final-report outcome)))))))
         (error (condition)
           (setf final-report
                 (format nil "~@[~A; ~]Async Lisp presentation failed: ~A"

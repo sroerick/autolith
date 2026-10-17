@@ -778,7 +778,7 @@
                   (test-assert
                    (and (eq (application-lisp-evaluation-status evaluation) ':ok)
                         (equal (application-lisp-evaluation-values evaluation)
-                               '("\"sandboxed allow: hello\"")))
+                                '("sandboxed allow: hello")))
                    "a typed tool form executes through the ordinary decoder and method"))))
              (test-assert (= (application-operation-test-tool-calls tool) 1)
                           "a local tool form executes its tool object exactly once")
@@ -1188,8 +1188,8 @@
                         (let ((evaluation (application-lisp-evaluate
                                            "(test-operation.echo :text \"fallback\")" :application application)))
                           (test-assert (and (eq ':ok (application-lisp-evaluation-status evaluation))
-                                            (string= content (read-from-string
-                                                              (first (application-lisp-evaluation-values evaluation)))))
+                                            (string= content
+                                                     (first (application-lisp-evaluation-values evaluation))))
                                        "Projection failures fall back to the returned string.")))))))))
             (let ((result (application-operation-tests--native-result '(:goal :id "MUTABLE"))))
               (test-call-with-function-replacements
@@ -1210,11 +1210,14 @@
                                                (declare (ignore result))
                                                '(:unrelated :metadata))))
              (lambda ()
-               (dolist (source '("(test-operation.echo :text \"plain\")"
-                                 "\"(:looks :like :lisp)\""))
-                 (let ((evaluation (application-lisp-evaluate source :application application)))
-                   (test-assert (stringp (read-from-string (first (application-lisp-evaluation-values evaluation))))
-                                "Unknown tool metadata and ordinary strings do not become native forms.")))))
+                (let ((evaluation (application-lisp-evaluate
+                                   "(test-operation.echo :text \"plain\")"
+                                   :application application)))
+                  (test-assert
+                   (and (string= "sandboxed allow: plain"
+                                 (first (application-lisp-evaluation-values evaluation)))
+                        (equal '(:text) (application-lisp-evaluation-value-kinds evaluation)))
+                   "An untyped report uses its text rather than unrelated details."))))
             ;; A real object printer failure must not hide a successful tool call.
             (let ((result (make-instance 'task-tool-result :content "printer fallback"
                                         :success-p t :category ':success
@@ -1227,7 +1230,7 @@
                                     "(test-operation.echo :text \"printer\")" :application application)))
                    (test-assert (and (eq ':ok (application-lisp-evaluation-status evaluation))
                                      (string= "printer fallback"
-                                              (read-from-string (first (application-lisp-evaluation-values evaluation)))))
+                                               (first (application-lisp-evaluation-values evaluation))))
                                 "Native printer failures fall back without changing evaluation success.")))))))
       (ignore-errors (terminal-ui-stop (application-ui application)))
       (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))
@@ -1295,4 +1298,65 @@
         (ignore-errors (terminal-ui-stop (application-ui application)))
         (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))
         (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
+  nil)
+
+
+(-> test-application-lisp-report-text () null)
+(defun test-application-lisp-report-text ()
+  "Present tool report text separately from ordinary and transformed strings."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal tool))
+    (unwind-protect
+         (dolist (report (list (format nil "first line~%second \"quoted\" line")
+                              "(:looks :like :lisp)"
+                              ""))
+           (test-call-with-function-replacements
+            (list (list 'tool-execute
+                        (lambda (&rest arguments)
+                          (declare (ignore arguments))
+                          (tool-success report))))
+            (lambda ()
+              (let* ((evaluation
+                       (application-lisp-evaluate
+                        "(values (test-operation.echo :text \"report\") \"ordinary string\")"
+                        :application application))
+                     (entry (application-lisp--result-entry evaluation)))
+                (test-assert (eq ':ok (application-lisp-evaluation-status evaluation))
+                             "Tool report rendering preserves successful evaluation.")
+                (test-assert (equal (list report "\"ordinary string\"")
+                                    (application-lisp-evaluation-values evaluation))
+                             "Report text is unwrapped while ordinary strings retain reader syntax.")
+                (test-assert (equal '(:text :lisp)
+                                    (application-lisp-evaluation-value-kinds evaluation))
+                             "Report text and Lisp values retain distinct presentation kinds.")
+                (test-assert (find-if (lambda (span)
+                                       (and (eq ':plain (terminal-span-style span))
+                                            (string= report (terminal-span-text span))))
+                                     entry)
+                             "Report text is displayed without Lisp syntax highlighting."))
+              (dolist (source '("(copy-seq (test-operation.echo :text \"copy\"))"
+                                "(list (test-operation.echo :text \"nested\"))"))
+                (let* ((evaluation (application-lisp-evaluate source :application application))
+                       (value (read-from-string
+                               (first (application-lisp-evaluation-values evaluation)))))
+                  (test-assert (equal (if (listp value) (list report) report) value)
+                               "Copied and nested reports preserve their returned string values.")))
+              (conversation-append-user-message (application-conversation application)
+                                                "Retain report text.")
+              (application-run-lisp-input application
+                                          "(test-operation.echo :text \"retain\")"
+                                          :interactive-p nil)
+              (let* ((conversation (application-conversation application))
+                     (records (conversation-user-operation-snapshot conversation))
+                     (retained (getf (rest (first (last records))) :result)))
+                (test-assert (string= (concatenate 'string "⇒ " report) retained)
+                             "Retained report text matches its displayed content.")
+                (test-assert (equal records
+                                    (conversation-user-operation-snapshot
+                                     (conversation-load (conversation-pathname conversation))))
+                             "Report text survives conversation reload.")))))
+      (ignore-errors (terminal-ui-stop (application-ui application)))
+      (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

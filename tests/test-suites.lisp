@@ -1207,10 +1207,12 @@
 (define-test-suite lisp-result-presentation
   test-application-lisp-result-presentations
   test-application-lisp-shared-report-identity
-  test-application-lisp-terminal-widths)
+  test-application-lisp-terminal-widths
+  test-application-lisp-report-text)
 
 (define-test-suite lisp-value-evaluation
   test-application-lisp-value-evaluation-safety)
 
 (define-test-suite async-lisp-presentation
-  test-application-async-lisp-readable-results)
+  test-application-async-lisp-readable-results
+  test-application-async-lisp-styled-reports)

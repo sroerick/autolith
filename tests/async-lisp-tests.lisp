@@ -236,3 +236,55 @@
                                           (t native)))
                              "Async readback preserves every native field or the returned string contract.")))))))))
   nil)
+
+
+(-> test-application-async-lisp-styled-reports () null)
+(defun test-application-async-lisp-styled-reports ()
+  "Retain Lisp styles and plain report text through asynchronous completion."
+  (async-lisp-tests--call-with-application
+   (lambda (application)
+     (let ((execute (symbol-function 'tool-execute))
+           (present (symbol-function 'application-async-lisp--present))
+           (entries nil)
+           (report (format nil "first \"quoted\" line~%second line"))
+           (plain-p nil))
+       (test-call-with-function-replacements
+        (list
+         (list 'tool-execute
+               (lambda (&rest arguments)
+                 (if plain-p
+                     (tool-success report)
+                     (apply execute arguments))))
+         (list 'application-async-lisp--present
+               (lambda (application conversation entry)
+                 (push entry entries)
+                 (funcall present application conversation entry))))
+        (lambda ()
+          (dolist (plain '(nil t))
+            (setf plain-p plain entries nil)
+            (application-run-async-lisp-input application "? (task.agents :limit 1)")
+            (let* ((job (async-lisp-tests--last-job application))
+                   (record (async-lisp-tests--wait job))
+                   (entry (find-if (lambda (entry)
+                                     (search "⇒ " (terminal--spans-text entry)))
+                                   entries)))
+              (test-assert (eq ':completed (job-state job))
+                           "Styled asynchronous results complete successfully.")
+              (test-assert entry "The completion includes a returned-value entry.")
+              (if plain
+                  (progn
+                    (test-assert (search (concatenate 'string "⇒ " report)
+                                         (getf record :content))
+                                 "Async report text retains quotes and line breaks without wrapping.")
+                    (test-assert (find-if (lambda (span)
+                                           (and (eq ':plain (terminal-span-style span))
+                                                (string= report (terminal-span-text span))))
+                                         entry)
+                                 "Async report text uses plain presentation."))
+                  (test-assert
+                   (some (lambda (span)
+                           (not (member (terminal-span-style span)
+                                        '(:plain :success :notice :dim))))
+                         entry)
+                   "Async Lisp completion retains its code or syntax styles.")))))))))
+  nil)
