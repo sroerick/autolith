@@ -684,7 +684,7 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
         (unless (release-archive--semantic-version-p version)
           (error 'release-archive-error
                  :stage ':source-validation
-                 :cause "autolith.asd does not declare one semantic version."))
+                 :cause "ASDF does not report one semantic release version."))
         (unless (release-archive--commit-p commit)
           (error 'release-archive-error
                  :stage ':source-validation

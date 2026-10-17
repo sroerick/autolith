@@ -74,8 +74,10 @@
     (release-server-tests--write-file
      (merge-pathnames "autolith.asd" deployment)
      (format nil
-             "(asdf:defsystem #:autolith~%  :version \"~A\"~%)~%"
-             version))
+             "(asdf:defsystem #:autolith~%  :version (:read-file-line ~S))~%"
+             "VERSION"))
+    (release-server-tests--write-file
+     (merge-pathnames "VERSION" deployment) (format nil "~A~%" version))
     (when updater-p
       (release-server-tests--write-file
        (merge-pathnames "server/release-updater.lisp" deployment)
@@ -214,10 +216,51 @@
                              "artifact validation verifies the digest and its single named record"))))))))
   nil)
 
+(-> release-server-tests--test-source-version () null)
+(defun release-server-tests--test-source-version ()
+  "Read ASDF versions without changing the host registry."
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (let* ((checkout (merge-pathnames "checkout/" root))
+           (definition (merge-pathnames "autolith.asd" checkout))
+           (version-file (merge-pathnames "VERSION" checkout))
+           (system (asdf:find-system :autolith))
+           (host-version (asdf:component-version system)))
+      (release-server-tests--write-file
+       definition "(asdf:defsystem #:autolith :version \"0.11.2\")")
+      (test-assert (string= (release-builder--source-version checkout) "0.11.2")
+                   "ASDF reads historical release metadata")
+      (release-server-tests--write-file
+       definition "(asdf:defsystem #:autolith :version (:read-file-line \"VERSION\"))")
+      (dolist (version '("0.65.0" "0.65.1"))
+        (release-server-tests--write-file version-file (format nil "~A~%" version))
+        (test-assert (string= (release-builder--source-version checkout) version)
+                     "VERSION-only changes determine the candidate release version"))
+      (dolist (version '("invalid" "" "1.2"))
+        (release-server-tests--write-file version-file version)
+        (test-assert
+         (handler-case
+             (progn (release-builder--source-version checkout) nil)
+           (release-builder-error (condition)
+             (eq (release-builder-error-stage condition) ':source-validation)))
+         "malformed candidate versions fail at the source validation boundary"))
+      (delete-file version-file)
+      (test-assert
+       (handler-case
+           (progn (release-builder--source-version checkout) nil)
+         (release-builder-error (condition)
+           (eq (release-builder-error-stage condition) ':source-validation)))
+       "missing version input fails at the source validation boundary")
+      (test-assert (and (eq system (asdf:find-system :autolith))
+                        (string= host-version (asdf:component-version system)))
+                   "candidate metadata loading does not replace the running host system")))
+  nil)
+
 (-> test-release-server () null)
 (defun test-release-server ()
   "Test semantic release selection and strict HTTP routing."
   (release-server-tests--test-artifact-checksums)
+  (release-server-tests--test-source-version)
   (release-server-tests--test-service-runtime-isolation)
   (test-assert (release-tag-valid-p "v0.11.1")
                "three-component release tags are valid")
@@ -1048,13 +1091,12 @@
              (test-assert setup-called-p
                           "final-path candidate setup is invoked")
              (release-server-tests--write-file
-              (merge-pathnames "autolith.asd"
+              (merge-pathnames "VERSION"
                                (merge-pathnames "v0.18.0/" remote-root))
-              (format nil
-                      "(asdf:defsystem #:autolith~%  :version \"0.18.1\"~%)~%"))
+              (format nil "0.18.1~%"))
              (release-server-tests--git
               (merge-pathnames "v0.18.0/" remote-root)
-              '("add" "autolith.asd"))
+              '("add" "VERSION"))
              (release-server-tests--git
               (merge-pathnames "v0.18.0/" remote-root)
               '("commit" "--quiet" "--no-gpg-sign" "-m" "Advance release fixture"))

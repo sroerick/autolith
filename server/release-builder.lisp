@@ -329,24 +329,37 @@ semantic order so a temporary builder outage cannot skip a version."
 
 (-> release-builder--source-version (pathname) string)
 (defun release-builder--source-version (checkout)
-  "Read the single ASDF version declared by CHECKOUT."
-  (let ((prefix "  :version \"")
-        (versions nil))
-    (with-open-file (stream (merge-pathnames "autolith.asd" checkout)
-                            :direction ':input
-                            :external-format ':utf-8)
-      (loop for line = (read-line stream nil nil)
-            while line
-            when (and (uiop:string-prefix-p prefix line)
-                      (uiop:string-suffix-p line "\""))
-              do (push (subseq line (length prefix) (1- (length line)))
-                       versions)))
-    (unless (and (= (length versions) 1)
-                 (release-tag-valid-p (format nil "v~A" (first versions))))
+  "Read CHECKOUT's version through ASDF in an isolated Lisp process.
+
+The checkout may use ASDF's file-backed version or an older literal. Loading
+its definition outside this image preserves the running server's system registry."
+  (handler-case
+      (let ((version
+              (string-trim
+               '(#\Newline #\Return)
+               (uiop:run-program
+                (list (active-image--sbcl-command)
+                      "--noinform" "--no-sysinit" "--no-userinit"
+                      "--non-interactive"
+                      "--eval" "(require :asdf)"
+                      "--eval"
+                      "(asdf:initialize-source-registry '(:source-registry :ignore-inherited-configuration))"
+                      "--eval"
+                      (format nil
+                              "(progn (asdf:load-asd ~S) (write-line (asdf:component-version (asdf:find-system ~S))))"
+                              (namestring (merge-pathnames "autolith.asd" checkout))
+                              "autolith"))
+                :output ':string
+                :error-output ':string))))
+        (unless (release-tag-valid-p (format nil "v~A" version))
+          (error 'release-builder-error
+                 :stage ':source-validation
+                 :cause "ASDF did not report one semantic release version."))
+        version)
+    (error (condition)
       (error 'release-builder-error
              :stage ':source-validation
-             :cause "The checkout does not declare one semantic ASDF version."))
-    (first versions)))
+             :cause condition))))
 
 
 ;;;; -- Container Build --
