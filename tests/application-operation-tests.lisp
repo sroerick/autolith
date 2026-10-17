@@ -1076,3 +1076,94 @@
                    (null (terminal-ui-status (application-ui application))))
               "failed compaction clears its progress indicators")))))))
   nil)
+
+;;;; -- Local Lisp Result Presentation --
+
+(-> test-application-lisp-result-presentations () null)
+(defun test-application-lisp-result-presentations ()
+  "Keep native report provenance separate from ordinary Lisp string values."
+  (multiple-value-bind (application root terminal tool)
+      (application-operation-tests--application)
+    (declare (ignore terminal))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list (list 'application-authorize-command
+                      (lambda (&rest arguments)
+                        (declare (ignore arguments)) ':sandboxed))
+                (list 'application-authorize-tool
+                      (lambda (&rest arguments)
+                        (declare (ignore arguments)) ':allow)))
+          (lambda ()
+            (let* ((evaluation
+                     (application-lisp-evaluate
+                      "(progn (format t \"captured~%\") (values (test-operation.echo :text \"report\") \"(:looks :like :lisp)\"))"
+                      :application application))
+                   (presentations (application-lisp-evaluation-presentations evaluation)))
+              (test-assert (eq ':ok (application-lisp-evaluation-status evaluation))
+                           "A direct native result completes its evaluation.")
+              (test-assert (= 1 (application-operation-test-tool-calls tool))
+                           "Presentation must not execute a form a second time.")
+              (test-assert (and (first presentations) (null (second presentations)))
+                           "Only the exact native result string gets a report layout.")
+              (test-assert (string= (read-from-string
+                                    (second (application-lisp-evaluation-values evaluation)))
+                                   "(:looks :like :lisp)")
+                           "A Lisp-looking string is an ordinary string value.")
+              (test-assert (search "report" (terminal--spans-text (first presentations)))
+                           "Report spans include the actual native output.")
+              (test-assert (string= (application-lisp-evaluation-output evaluation)
+                                   (format nil "captured~%"))
+                           "Captured output is separate from multiple return values."))
+            (dolist (source '("(list (test-operation.echo :text \"nested\"))"
+                              "(copy-seq (test-operation.echo :text \"copy\"))"
+                              "\"sandboxed allow: ordinary\""))
+              (let ((evaluation (application-lisp-evaluate source :application application)))
+                (test-assert (every #'null (application-lisp-evaluation-presentations evaluation))
+                             "Composed, copied, and ordinary strings keep Lisp syntax.")
+                (test-assert (handler-case
+                                 (let ((*read-eval* nil))
+                                   (read-from-string (first (application-lisp-evaluation-values evaluation)))
+                                   t)
+                               (error () nil))
+                             "Composed results keep readable string/list contracts.")))
+            (let ((source "(test-operation.echo :text \"retained-report\")"))
+              (conversation-append-user-message (application-conversation application)
+                                                "Start retained-output fixture.")
+              (application-run-lisp-input application source :interactive-p nil)
+              (let* ((record (first (last (conversation-user-operation-snapshot
+                                          (application-conversation application)))))
+                     (properties (rest record))
+                     (retained (getf properties :result)))
+                (test-assert (string= source (getf properties :source))
+                             "Retained operations preserve exact submitted source.")
+                (test-assert (and (search "retained-report" retained)
+                                  (not (search "\\\"retained-report" retained)))
+                             "Retention stores the report layout rather than quoted tool text.")
+                (test-assert (equal record
+                                    (first (last (conversation-user-operation-snapshot
+                                                  (conversation-load
+                                                   (conversation-pathname
+                                                    (application-conversation application)))))))
+                             "A reloaded conversation preserves the rendered report text.")
+                (test-assert (equal record
+                                    (let ((*read-eval* nil))
+                                      (read-from-string (write-to-string record))))
+                             "The retained record contains only readable data.")))
+            (test-call-with-function-replacements
+             (list (list 'application-tool-result-entry
+                         (lambda (&rest arguments)
+                           (declare (ignore arguments))
+                           (error "presentation failed"))))
+             (lambda ()
+               (let ((evaluation
+                       (application-lisp-evaluate
+                        "(test-operation.echo :text \"fallback\")"
+                        :application application)))
+                 (test-assert (and (eq ':ok (application-lisp-evaluation-status evaluation))
+                                   (null (first (application-lisp-evaluation-presentations evaluation)))
+                                   (search "fallback" (first (application-lisp-evaluation-values evaluation))))
+                              "A report printer failure falls back without hiding successful execution."))))))
+      (ignore-errors (terminal-ui-stop (application-ui application)))
+      (ignore-errors (tool-registry-close-runtime-state (application-tool-registry application)))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)

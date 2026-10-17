@@ -28,24 +28,21 @@
          (*application-operation-application* application)
          (*application-local-user-evaluation-p* t)
          (*application-command-interactive-p* nil)
-         (*application-user-operation-recording-suppressed-p* t))
+         (*application-user-operation-recording-suppressed-p* t)
+         (*application-lisp-tool-results* (make-hash-table :test #'eq)))
     (multiple-value-bind (values status condition restart-names selected-restart)
         (application-lisp-call-with-debugger
          (lambda ()
            (application-operation-install-bindings application)
            ;; Render while the capture bindings still cover user PRINT-OBJECT methods.
-           (mapcar (lambda (value)
-                     (multiple-value-bind (text truncated-p)
-                         (eval-print-bounded value 4000)
-                       (if truncated-p
-                           (concatenate 'string text " [value truncated]")
-                           text)))
-                   (multiple-value-list (eval (self-read-form source)))))
+           (application-lisp--render-values
+            (multiple-value-list (eval (self-read-form source))) application))
          :source source :operation-kind ':lisp :retry-p nil)
       (declare (ignore restart-names selected-restart))
       (let* ((evaluation
                (application-lisp-evaluation-create
-                :status status :values (first values) :condition condition))
+                :status status :values (first values)
+                :presentations (second values) :condition condition))
              (text (terminal--spans-text
                     (application-lisp--result-entry evaluation))))
         (if (eq status ':ok)

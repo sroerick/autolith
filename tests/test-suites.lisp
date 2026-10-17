@@ -1196,3 +1196,19 @@
   test-acp-launcher-source-stdio-roundtrip
   test-acp-launcher-failure-keeps-stdout-clean
   test-acp-launcher-failure-diagnostics)
+
+(define-test-suite lisp-values
+  test-application-lisp-value-roundtrips
+  test-application-lisp-value-layout
+  test-application-lisp-value-graphs
+  test-application-lisp-value-bounds
+  test-application-lisp-value-printer-failure)
+
+(define-test-suite lisp-result-presentation
+  test-application-lisp-result-presentations)
+
+(define-test-suite lisp-value-evaluation
+  test-application-lisp-value-evaluation-safety)
+
+(define-test-suite async-lisp-presentation
+  test-application-async-lisp-readable-results)

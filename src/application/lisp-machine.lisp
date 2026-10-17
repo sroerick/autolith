@@ -9,11 +9,12 @@
 (defstruct (application-lisp-evaluation
              (:constructor application-lisp-evaluation-create
                  (&key status output values condition restart-names
-                       selected-restart-name loop-action)))
+                       selected-restart-name loop-action presentations)))
   "Captured outcome of one explicit active-image Common Lisp evaluation."
   (status ':ok :type application-lisp-evaluation-status)
   (output "" :type string)
   (values nil :type list)
+  (presentations nil :type list)
   (condition nil :type (option string))
   (restart-names nil :type list)
   (selected-restart-name nil :type (option string))
@@ -156,7 +157,8 @@ journaling or provider conversation projection."
         (condition-text nil)
         (restart-names nil)
         (selected-restart-name nil)
-        (loop-action nil))
+        (loop-action nil)
+        (*application-lisp-tool-results* (make-hash-table :test #'eq)))
     (handler-case
         (let ((*standard-output* output-stream)
               (*error-output* output-stream)
@@ -197,14 +199,21 @@ journaling or provider conversation projection."
         (setf status ':error
               condition-text (princ-to-string condition)
               raw-values nil)))
-    (application-lisp-evaluation-create
-     :status status
-     :output (get-output-stream-string output-stream)
-     :values (mapcar #'sbcl-worker-render-value raw-values)
-     :condition condition-text
-     :restart-names restart-names
-     :selected-restart-name selected-restart-name
-     :loop-action loop-action)))
+    (let ((*standard-output* output-stream)
+          (*error-output* output-stream)
+          (*trace-output* output-stream)
+          (*package* (find-package '#:autolith)))
+      (multiple-value-bind (rendered-values presentations)
+          (application-lisp--render-values raw-values application)
+        (application-lisp-evaluation-create
+         :status status
+         :output (get-output-stream-string output-stream)
+         :values rendered-values
+         :presentations presentations
+         :condition condition-text
+         :restart-names restart-names
+         :selected-restart-name selected-restart-name
+         :loop-action loop-action)))))
 
 
 ;;;; -- Local Evaluation Presentation --
@@ -240,13 +249,17 @@ journaling or provider conversation projection."
       (let ((values (application-lisp-evaluation-values evaluation)))
         (if values
             (loop for value in values
+                  for presentation in (append (application-lisp-evaluation-presentations evaluation)
+                                              (make-list (length values)))
                   for first-p = t then nil
                   append
                   (append
                    (unless first-p
                      (list (terminal-span ':plain (string #\Newline))))
-                   (list (terminal-span ':success "⇒ ")
-                         (terminal-span ':code value))))
+                   (or presentation
+                       (append
+                        (list (terminal-span ':success "⇒ "))
+                        (application-lisp--value-spans value)))))
             (list (terminal-span ':success "⇒ ")
                   (terminal-span ':dim "no values")))))
       (:aborted
@@ -680,3 +693,49 @@ caller."
        (or (application-lisp-evaluation-loop-action evaluation) ':continue))
       (:aborted ':aborted)
       (:error ':failed))))
+
+(-> application-lisp--value-columns ((option application)) (integer 1))
+(defun application-lisp--value-columns (application)
+  "Return the local result width after reserving its prefix and edge column."
+  (if (and application (slot-boundp application 'ui) (application-ui application))
+      (max 1 (- (terminal-columns
+                 (terminal-ui-terminal (application-ui application))) 3))
+      78))
+
+(-> application-lisp--tool-presentation ((option application) t) list)
+(defun application-lisp--tool-presentation (application value)
+  "Snapshot a direct native tool result as spans, without retaining live objects.
+
+Identity, not string content, identifies the tool result. A presentation error
+falls back to the ordinary Lisp value without changing evaluation success."
+  (when application
+    (let ((provenance (gethash value *application-lisp-tool-results*)))
+      (when provenance
+        (handler-case
+            (application-tool-result-entry (first provenance) application
+                                           (second provenance))
+          (error () nil))))))
+
+(-> application-lisp--value-spans (string) list)
+(defun application-lisp--value-spans (value)
+  "Highlight a rendered VALUE, with a plain-code fallback for syntax failures."
+  (or (handler-case
+          (syntax--highlight-spans value
+                                   :language *application-common-lisp-language*)
+        (error () nil))
+      (list (terminal-span ':code value))))
+
+(-> application-lisp--render-values (list (option application)) (values list list))
+(defun application-lisp--render-values (values application)
+  "Snapshot VALUES as printed strings and parallel report spans.
+
+The caller captures printer output and binds the native tool provenance map.
+No raw values or tool objects escape in the returned lists."
+  (values (mapcar (lambda (value)
+                    (application-lisp--render-value
+                     value :columns (application-lisp--value-columns application)
+                           :initial-column 2))
+                  values)
+          (mapcar (lambda (value)
+                    (application-lisp--tool-presentation application value))
+                  values)))

@@ -194,3 +194,24 @@
              "the recalled slot is consumed once without queuing or steering the form"))
           (test-assert (= 6 (length submitted)) "every submission starts exactly once"))))))
   nil)
+
+(-> test-application-async-lisp-readable-results () null)
+(defun test-application-async-lisp-readable-results ()
+  "Share local value formatting and direct report presentation in background jobs."
+  (async-lisp-tests--call-with-application
+   (lambda (application)
+     (dolist (case '(("? (task.agents)" nil)
+                     ("? (list (task.agents))" t)))
+       (destructuring-bind (source composed-p) case
+         (application-run-async-lisp-input application source)
+         (let* ((job (async-lisp-tests--last-job application))
+                (record (async-lisp-tests--wait job))
+                (text (getf record :content)))
+           (test-assert (eq ':completed (job-state job))
+                        "Report presentation must complete its asynchronous job.")
+           (test-assert (if composed-p
+                            (search "⇒ (\"" text)
+                            (and (not (search "⇒ \"" text))
+                                 (not (search "(:TASK-AGENTS" text))))
+                        "Only a direct native result uses the report layout."))))))
+  nil)

@@ -1,5 +1,8 @@
 (in-package #:autolith)
 
+(defvar *application-lisp-tool-results* nil
+  "Evaluation-local identity map from native tool strings to display provenance.")
+
 ;;;; -- User-Facing Operation Protocol --
 
 (defclass application-operation ()
@@ -975,6 +978,12 @@ wait for the serialized application boundary."
         (error 'tool-error
                :message (tool-result-content result)
                :tool-name canonical-name))
+      (when *application-lisp-tool-results*
+        (setf (gethash (tool-result-content result) *application-lisp-tool-results*)
+              (list tool (list :tool-result :tool canonical-name
+                               :status ':ok :output (tool-result-content result)
+                               :details (handler-case (tool-result-details result)
+                                          (error () nil))))))
       (tool-result-content result))))
 
 (defmethod application-operation-invoke
