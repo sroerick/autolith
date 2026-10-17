@@ -123,6 +123,44 @@
                             (asdf:system-source-directory :autolith)))))
   (apply #'uiop:symbol-call '#:cl-user name arguments))
 
+(-> test-check-committed-version () null)
+(defun test-check-committed-version ()
+  "Read recovery expectations from committed VERSION rather than dirty source."
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (let* ((checkout (merge-pathnames "checkout/" root))
+           (version-file (merge-pathnames "VERSION" checkout)))
+      (ensure-directories-exist version-file)
+      (with-test-environment
+          (("GIT_CONFIG_NOSYSTEM" "1")
+           ("GIT_CONFIG_GLOBAL" (namestring (merge-pathnames "no-global-config" root)))
+           ("GIT_CONFIG_COUNT" "0") ("GIT_CONFIG_PARAMETERS" ""))
+        (flet ((git (&rest arguments)
+                 "Run a Git fixture command without signing or hooks."
+                 (uiop:run-program
+                  (append (list "git" "-C" (namestring checkout)
+                                "-c" "user.name=Autolith Test"
+                                "-c" "user.email=test@invalid"
+                                "-c" "core.hooksPath=")
+                          arguments)
+                  :output ':string :error-output ':string))
+               (write-version (version)
+                 "Replace the working version file."
+                 (with-open-file (stream version-file :direction ':output
+                                         :if-exists ':supersede
+                                         :if-does-not-exist ':create)
+                   (write-line version stream))))
+          (git "init" "--quiet")
+          (dolist (version '("0.65.0" "0.65.1"))
+            (write-version version)
+            (git "add" "VERSION")
+            (git "commit" "--quiet" "--no-gpg-sign" "-m" "Set fixture version")
+            (write-version "9.9.9")
+            (test-assert
+             (string= version (test-check--call "CHECK--COMMITTED-VERSION" checkout))
+             "recovery expectations use each committed VERSION despite working edits"))))))
+  nil)
+
 (-> test-check-load-test-system-lock () null)
 (defun test-check-load-test-system-lock ()
   "Test cache-scoped loader serialization, callback failure, and checkout fallback."

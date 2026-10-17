@@ -20,7 +20,36 @@
             "0000000000000000000000000000000000000000")
       (test-assert
        (not (active-image-build-record-compatible-p wrong-source source-root))
-       "active-image compatibility rejects a changed source blob")))
+       "active-image compatibility rejects a changed source blob"))
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let ((checkout (merge-pathnames "source/" root)))
+        (dolist (input (active-image-source-paths source-root))
+          (let ((destination (merge-pathnames input checkout)))
+            (ensure-directories-exist destination)
+            (uiop:copy-file (merge-pathnames input source-root) destination)))
+        (with-test-environment (("GIT_CONFIG_NOSYSTEM" "1")
+                                ("GIT_CONFIG_GLOBAL" nil)
+                                ("GIT_CONFIG_COUNT" "0")
+                                ("GIT_CONFIG_PARAMETERS" ""))
+          (uiop:run-program (list "git" "-C" (namestring checkout) "init" "--quiet"))
+          (uiop:run-program
+           (list "git" "-C" (namestring checkout)
+                 "-c" "user.name=Autolith Test" "-c" "user.email=test@invalid"
+                 "-c" "core.hooksPath=" "commit" "--quiet" "--no-gpg-sign"
+                 "--allow-empty" "-m" "Create source identity fixture")))
+        (let ((record (active-image-build-record-create checkout)))
+          (test-assert (active-image-build-record-compatible-p record checkout)
+                       "the copied source matches its initial image identity")
+          (with-open-file (stream (merge-pathnames "VERSION" checkout)
+                                  :direction ':output :if-exists ':supersede)
+            (write-line "0.0.1" stream))
+          (test-assert (not (active-image-build-record-compatible-p record checkout))
+                       "a VERSION-only change invalidates the saved active image")
+          (test-assert
+           (active-image-build-record-compatible-p
+            (active-image-build-record-create checkout) checkout)
+           "a fresh image identity accepts the changed release version")))))
   nil)
 
 (-> test-active-image-process-command () null)

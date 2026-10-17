@@ -26,6 +26,7 @@
                     "script/build-active.lisp"
                     "script/restart-publisher.lisp"
                     "autolith.asd"
+                    "VERSION"
                     "qlfile"
                     "qlfile.lock"
                     "sbcl.version")

@@ -1135,6 +1135,7 @@
   test-check-worker-temporary-cleanup
   test-runner-catalog
   test-check-load-test-system-lock
+  test-check-committed-version
   test-check-command-selection
   test-check-result-validation
   test-check-process-lifecycle)

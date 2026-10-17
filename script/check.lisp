@@ -357,19 +357,16 @@ configurations read; launchers under test keep their own core selection."
 
 (defun check--committed-version (source-root)
   "Return the version of HEAD, which pristine recovery uses for source fallback."
-  (let ((source (uiop:run-program
-                 (list "git" "-C" (namestring source-root)
-                       "show" "HEAD:autolith.asd")
-                 :output ':string)))
-    (with-input-from-string (stream source)
-      (let* ((*read-eval* nil)
-             (definition (read stream))
-             (version (and (consp definition)
-                           (eq (first definition) 'asdf:defsystem)
-                           (getf (cddr definition) :version))))
-        (unless (and (stringp version) (plusp (length version)))
-          (check--fail "Committed Autolith source has no readable version."))
-        version))))
+  (let ((version
+          (string-right-trim
+           '(#\Newline #\Return)
+           (uiop:run-program
+            (list "git" "-C" (namestring source-root) "show" "HEAD:VERSION")
+            :output ':string))))
+    (unless (uiop:symbol-call :autolith '#:release-tag-valid-p
+                              (format nil "v~A" version))
+      (check--fail "Committed VERSION does not contain one semantic version."))
+    version))
 
 (defun check--run-recovery (&key source-root temporary-root quicklisp-setup jobs timeout)
   "Run the pristine probe, listing, and fallback checks with bounded processes."
