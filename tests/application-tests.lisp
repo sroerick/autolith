@@ -4661,6 +4661,39 @@
               (application-input-controller-reader-live-p controller)
               "the terminal reader restarts after single-threaded work"))
         (application-input-controller-stop controller))))
+  (dolist (start-reader-p '(nil t))
+    (let* ((terminal (make-instance 'waiting-recording-terminal :columns 60))
+           (ui (terminal-ui-create :terminal terminal))
+           (application (make-instance 'application :ui ui)))
+      (with-terminal-ui (active-ui ui)
+        (declare (ignore active-ui))
+        (let ((controller (application-input-controller-create
+                           application :start-reader-p start-reader-p :load-pending-p nil)))
+          (unwind-protect
+               (dolist (exit-kind '(:normal :nonlocal))
+                 (test-assert
+                  (eq exit-kind
+                      (catch 'modal-result
+                        (terminal-ui-call-with-exclusive-input
+                         ui
+                         (lambda ()
+                           (test-assert
+                            (not (application-input-controller-reader-live-p controller))
+                            "modal input has no competing reader")
+                           (terminal-ui-call-with-exclusive-input
+                            ui
+                            (lambda ()
+                              (test-assert
+                               (not (application-input-controller-reader-live-p controller))
+                               "nested modal input has no competing reader")))
+                           (if (eq exit-kind ':nonlocal)
+                               (throw 'modal-result exit-kind)
+                               exit-kind)))))
+                  "exclusive input preserves normal and nonlocal return values")
+                 (test-assert
+                  (eq start-reader-p (application-input-controller-reader-live-p controller))
+                  "exclusive input restores the reader's initial lifecycle"))
+            (application-input-controller-stop controller))))))
   (test-assert
    (equal (application--initial-work-items nil nil t)
           (list (list ':project-adaptation-offer)))

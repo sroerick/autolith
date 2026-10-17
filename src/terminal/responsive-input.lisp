@@ -2893,11 +2893,14 @@ interrupt and ends when its input does."
     (controller function)
   "Call modal FUNCTION as the only reader of CONTROLLER's terminal.
 
-Work already running on the reader thread is that reader, so it proceeds in
-place; every other thread pauses the reader for the call's dynamic extent.
-This is the owner installed as the terminal UI's exclusive-input function."
-  (input-pump-call-with-exclusive-input
-   (application-input-controller-input-pump controller) function))
+Work already running on the reader thread proceeds in place. Other threads
+pause a live reader for the call's dynamic extent. Without a live reader, call
+FUNCTION directly instead of starting one on exit. This is the owner installed
+as the terminal UI's exclusive-input function."
+  (if (application-input-controller-reader-live-p controller)
+      (input-pump-call-with-exclusive-input
+       (application-input-controller-input-pump controller) function)
+      (funcall function)))
 
 (-> application-input-controller-call-with-reader-paused
     (application-input-controller function)
