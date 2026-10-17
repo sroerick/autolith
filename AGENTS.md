@@ -92,6 +92,9 @@ copy their architecture wholesale.
   source, so never copy a ref or hash into Nix. A new git dependency needs only
   its build metadata (systems and `lispLibs`) in `nix/package.nix`, and Nix
   evaluation fails until that entry exists.
+- `VERSION` is the single release-version source. ASDF, runtime reporting, and
+  Nix derive their versions from it. For a release, update that file and add
+  the release notes.
 - Source is authoritative for clean rebuilds. Saved cores preserve exact
   working live states, but never replace tracked source.
 - Dumped images are the normal way to start Autolith. Fresh Autolith

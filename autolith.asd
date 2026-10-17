@@ -2,7 +2,7 @@
   :description "A live, self-modifying Common Lisp agent."
   :author "Lukáš Hozda"
   :license "ISC"
-  :version "0.65.0"
+  :version (:read-file-line "VERSION")
   :serial t
   :depends-on (#:agentcomms
                #:argo
@@ -70,7 +70,8 @@
                #:structlisp
                #:trivial-gray-streams
                #:usocket)
-  :components ((:static-file "docs/onboarding-sources.org")
+  :components ((:static-file "VERSION")
+               (:static-file "docs/onboarding-sources.org")
                (:module "src"
                 :serial t
                 :components ((:file "core/package")

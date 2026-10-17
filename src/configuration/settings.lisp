@@ -2,8 +2,8 @@
 
 ;;;; -- Defaults --
 
-(defparameter *autolith-version* "0.65.0"
-  "The user-visible Autolith version.")
+(defparameter *autolith-version* (asdf:component-version (asdf:find-system "autolith"))
+  "The user-visible version from the Autolith system definition.")
 
 (defparameter *default-model* "gpt-6.1-sol"
   "The default model requested from the subscription provider.")
