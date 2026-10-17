@@ -7,6 +7,10 @@ on:
         description: Run the full source test suite
         type: boolean
         default: true
+      test:
+        description: Optional exact source test case (empty runs the full suite)
+        type: string
+        default: ''
   push:
     branches: [master]
     paths:
@@ -194,11 +198,14 @@ jobs:
         shell: pwsh
         env:
           ASDF_OUTPUT_TRANSLATIONS: ${{ steps.bootstrap.outputs.asdf-output-translations }}
+          AUTOLITH_CHECK_TEST: ${{ inputs.test }}
         run: |
           $log = Join-Path $env:RUNNER_TEMP 'check.log'
           $status = 0
           try {
-            & script\check.ps1 --timeout 1800 2>&1 | Tee-Object -FilePath $log
+            $selection = @()
+            if ($env:AUTOLITH_CHECK_TEST) { $selection = @('--test', $env:AUTOLITH_CHECK_TEST) }
+            & script\check.ps1 --timeout 1800 @selection 2>&1 | Tee-Object -FilePath $log
             if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
           } catch {
             $_ | Out-String | Tee-Object -FilePath $log -Append

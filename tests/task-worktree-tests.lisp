@@ -436,7 +436,8 @@
           "Denied authorization prevents the Git operation.")
          (let* ((result (task-worktree-tests--publish job ':success))
                 (identifier (task-job-execution-identifier job)))
-           (test-assert (getf result :worktree-artifact-path) "Sandboxed extraction retains the commit artifact.")
+           (test-assert (getf result :worktree-artifact-path)
+                        (format nil "Sandboxed extraction retains the commit artifact: ~S" result))
            (task-worktree-tests--call tool parent-context
                                      (json-object "action" "commits" "id" identifier
                                                   "target" (namestring source)))
