@@ -624,7 +624,17 @@ legacy consoles without virtual-terminal input are refused with a message.
 Windows sandboxed commands use the bundled AppContainer helper. They can write
 in the workspace and a private temporary directory, read system applications
 and explicit tool directories, and have no network access. Repository metadata
-is protected. Bootstrap builds the helper with Clang; release archives include it.
+is protected. Bootstrap installs the helper, both compatibility DLLs, and the
+Detours license into a content-addressed generation under the private data
+root's =native/sandbox/= directory. After validating every file, it atomically
+replaces the =selected= record. Older generations are retained. Release archives
+contain exactly the selected generation and its relative selector.
+
+Set =CL_EXEC_SANDBOX_WINDOWS_HELPER= to a nonempty executable path to override
+the launcher default. Otherwise, the launcher validates the selected bundle and
+exports its generation-specific executable path. After source bootstrap, only
+launcher-generated defaults are refreshed. Re-run =script\bootstrap.ps1= to
+install the bundle when upgrading from a single-helper installation.
 
 Windows supports supervised detached sessions, client-first starts, and exact-heap
 restart checkpoints. It withholds fork-based checkpoint saving and the =unix=

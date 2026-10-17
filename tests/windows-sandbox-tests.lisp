@@ -104,6 +104,24 @@
        (search "exit 0" (tool-result-content result))
        t))
 
+(-> test-windows-sandbox-bundle-installation () null)
+(defun test-windows-sandbox-bundle-installation ()
+  "Exercise complete bundle selection and private native generation publication."
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (let ((script (merge-pathnames "script/check-windows-sandbox-bundle.ps1"
+                                    (asdf:system-source-directory :autolith))))
+      (multiple-value-bind (output diagnostics status)
+          (uiop:run-program
+           (list (or (uiop:getenv "POWERSHELL") "powershell.exe")
+                 "-NoProfile" "-NonInteractive" "-ExecutionPolicy" "Bypass"
+                 "-File" (uiop:native-namestring script)
+                 "-Root" (uiop:native-namestring root))
+           :output ':string :error-output ':string :ignore-error-status t)
+        (test-assert (eql status 0)
+                     (format nil "bundle fixture failed: ~A~%~A" output diagnostics)))))
+  nil)
+
 (defun test-windows-sandbox-profile-cleanup-helper ()
   "Exercise the packaged sandbox profile cleanup helper with mocked CIM calls."
   (when (typep *platform* 'win32-platform)

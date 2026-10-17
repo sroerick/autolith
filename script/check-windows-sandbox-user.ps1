@@ -21,7 +21,8 @@ try {
   $env:AUTOLITH_SBCL_SOURCE_ROOT = Join-Path $Release 'libexec\sbcl-source'
   $env:AUTOLITH_FFF_LIBRARY = Join-Path $Release 'native\fff_c.dll'
   $env:COLORLISP_NATIVE_LIBRARY = Join-Path $Release 'native\colorlisp.dll'
-  $env:CL_EXEC_SANDBOX_WINDOWS_HELPER = Join-Path $Release 'native\cl-exec-sandbox-windows.exe'
+  . (Join-Path $Release 'libexec\autolith\bin\autolith-sandbox.ps1')
+  Set-AutolithSandboxDefault (Join-Path $Release 'native\sandbox')
   $env:PATH = "$(Join-Path $Release 'native');$env:PATH"
   $source = Join-Path $Release 'libexec\autolith'
   Set-Location $source

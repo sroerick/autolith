@@ -28,9 +28,18 @@ try {
   if (-not $fff -or -not $colorlisp) { throw 'Built FFF or ColorLisp DLL is missing.' }
   Copy-Item -Force -LiteralPath $fff.FullName -Destination (Join-Path $release 'native\fff_c.dll')
   Copy-Item -Force -LiteralPath $colorlisp.FullName -Destination (Join-Path $release 'native\colorlisp.dll')
-  $helper = Get-ChildItem -Recurse -File -LiteralPath (Join-Path $root '.qlot\dists\cl-exec-sandbox\software') -Filter 'cl-exec-sandbox-windows.exe' | Select-Object -First 1
-  if (-not $helper) { throw 'Built cl-exec-sandbox Windows helper is missing. Run bootstrap.ps1 first.' }
-  Copy-Item -Force -LiteralPath $helper.FullName -Destination (Join-Path $release 'native\cl-exec-sandbox-windows.exe')
+  . (Join-Path $root 'bin\autolith-sandbox.ps1')
+  $helper = Get-AutolithSandboxSelection (Get-AutolithSandboxRoot)
+  $generation = Split-Path -Parent $helper
+  $identity = Split-Path -Leaf $generation
+  $bundleRoot = Join-Path $release 'native\sandbox'
+  $packagedGeneration = Join-Path $bundleRoot $identity
+  New-Item -ItemType Directory -Path $packagedGeneration -Force | Out-Null
+  foreach ($file in $AutolithSandboxFiles) {
+    Copy-Item -LiteralPath (Join-Path $generation $file) -Destination (Join-Path $packagedGeneration $file)
+  }
+  if ((Get-AutolithSandboxIdentity $packagedGeneration) -cne $identity) { throw 'Packaged sandbox bundle is corrupt.' }
+  [IO.File]::WriteAllText((Join-Path $bundleRoot 'selected'), $identity + "`n", [Text.Encoding]::ASCII)
   . (Join-Path $root 'bin\autolith-openssl.ps1')
   $openssl = Find-AutolithOpenSsl -SourceRoot $root
   if (-not $openssl) { throw 'No complete OpenSSL 4 or 3 x64 DLL pair was found.' }

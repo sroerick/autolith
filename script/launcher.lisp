@@ -16,13 +16,35 @@
 (load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
 
 #+win32
-(unless (let ((value (uiop:getenv "CL_EXEC_SANDBOX_WINDOWS_HELPER")))
-          (and value (plusp (length value))))
-  (autolith-script-setenv
-   "CL_EXEC_SANDBOX_WINDOWS_HELPER"
-   (uiop:native-namestring
-    (merge-pathnames "native/sandbox/cl-exec-sandbox-windows.exe"
-                     (autolith-application-root ':data)))))
+(defparameter *launcher-sandbox-default-p*
+  (let ((value (uiop:getenv "CL_EXEC_SANDBOX_WINDOWS_HELPER")))
+    (not (and value (plusp (length value)))))
+  "Whether this launcher owns the sandbox helper default, rather than a user override.")
+
+#+win32
+(defparameter *launcher-sandbox-script*
+  (merge-pathnames "windows-sandbox.ps1"
+                   (uiop:pathname-directory-pathname *load-truename*))
+  "Standalone bundle resolver beside this launcher.")
+
+(defun launcher-refresh-sandbox ()
+  "Resolve one complete Windows bundle, refreshing only a launcher-owned default."
+  #+win32
+  (when *launcher-sandbox-default-p*
+    (let ((root (merge-pathnames "native/sandbox/" (autolith-application-root ':data))))
+      (unless (probe-file (merge-pathnames "selected" root))
+        (error "The Windows sandbox bundle is missing; run script/bootstrap.ps1."))
+      (autolith-script-setenv
+       "CL_EXEC_SANDBOX_WINDOWS_HELPER"
+       (string-trim '(#\Return #\Newline)
+                    (uiop:run-program
+                     (list (or (uiop:getenv "POWERSHELL") "powershell.exe")
+                           "-NoProfile" "-ExecutionPolicy" "Bypass" "-File"
+                           (uiop:native-namestring *launcher-sandbox-script*)
+                           "-Action" "Resolve" "-Root" (uiop:native-namestring root))
+                     :output ':string :error-output ':interactive
+                     :external-format ':utf-8)))))
+  nil)
 
 
 ;;;; -- Launcher Options --
@@ -439,6 +461,7 @@ of deleting them, as the Windows update path also hands off to the user."
        64)
       (t
        (launcher-refresh-runtime context)
+       (launcher-refresh-sandbox)
        (if (launcher-active-image-valid-p context)
            0
            (progn
@@ -468,9 +491,11 @@ of deleting them, as the Windows update path also hands off to the user."
                           (uiop:native-namestring (launcher-context-source-root context)))
   (let ((arguments (launcher-request-arguments request)))
     (flet ((run-core ()
+             (launcher-refresh-sandbox)
              (launcher-run (apply #'launcher-core-command context
                                   (launcher-context-active-core context) arguments)))
            (run-source ()
+             (launcher-refresh-sandbox)
              (launcher-run (apply #'launcher-script-command context "bin/autolith-active"
                                   arguments))))
       (cond
