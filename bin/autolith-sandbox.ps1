@@ -36,7 +36,13 @@ function Get-AutolithSandboxSelection([string]$Root) {
   Assert-AutolithSandboxPath $Root
   $selector = Join-Path $Root 'selected'
   Assert-AutolithSandboxPath $selector
-  $identity = [IO.File]::ReadAllText($selector).Trim()
+  $stream = [IO.File]::Open($selector, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+                           [IO.FileShare]::Read -bor [IO.FileShare]::Delete)
+  try {
+    $reader = [IO.StreamReader]::new($stream)
+    try { $identity = $reader.ReadToEnd().Trim() }
+    finally { $reader.Dispose() }
+  } finally { $stream.Dispose() }
   if ($identity -cnotmatch '^[0-9a-f]{64}$') { throw 'Invalid sandbox bundle selector.' }
   $directory = Join-Path $Root $identity
   if ((Get-AutolithSandboxIdentity $directory) -cne $identity) { throw 'Selected sandbox bundle is incomplete or corrupt.' }
@@ -130,8 +136,13 @@ public static class AutolithSandboxMove {
 '@
     }
     # Same-directory MoveFileEx(REPLACE_EXISTING), as in platform-win32.lisp.
-    if (-not [AutolithSandboxMove]::MoveFileEx($selector, (Join-Path $rootPath 'selected'), 1)) {
-      throw [ComponentModel.Win32Exception]::new([Runtime.InteropServices.Marshal]::GetLastWin32Error())
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while (-not [AutolithSandboxMove]::MoveFileEx($selector, (Join-Path $rootPath 'selected'), 1)) {
+      $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+      if ($errorCode -notin @(32, 33) -or [DateTime]::UtcNow -ge $deadline) {
+        throw [ComponentModel.Win32Exception]::new($errorCode)
+      }
+      Start-Sleep -Milliseconds 25
     }
     return (Join-Path $generation 'cl-exec-sandbox-windows.exe')
   } finally {

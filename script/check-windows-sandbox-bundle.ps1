@@ -111,8 +111,10 @@ foreach ($name in @('cl-exec-sandbox-windows.exe','cl-exec-sandbox-compat64.dll'
         $process.StartInfo.FileName = $powershell
         $process.StartInfo.Arguments = $arguments
         $process.StartInfo.UseShellExecute = $false
+        $process.StartInfo.RedirectStandardError = $true
         $process.StartInfo.CreateNoWindow = $true
         Assert ($process.Start()) 'Concurrent installer did not start.'
+        $process | Add-Member -NotePropertyName ErrorRead -NotePropertyValue ($process.StandardError.ReadToEndAsync())
         $processes += $process
       }
       $deadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -131,7 +133,8 @@ foreach ($name in @('cl-exec-sandbox-windows.exe','cl-exec-sandbox-compat64.dll'
       }
       foreach ($process in $processes) {
         $process.WaitForExit()
-        Assert ($process.ExitCode -eq 0) "Concurrent installer failed with exit code $($process.ExitCode)."
+        $diagnostics = $process.ErrorRead.GetAwaiter().GetResult()
+        Assert ($process.ExitCode -eq 0) "Concurrent installer failed with exit code $($process.ExitCode): $diagnostics"
       }
       $selected = Get-AutolithSandboxSelection $concurrentRoot
       Assert (Test-Path -LiteralPath $selected) 'Concurrent publication selected no helper.'
