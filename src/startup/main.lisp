@@ -134,7 +134,7 @@
   '(((:plain "Telemetry helps us fix recurring bugs and reduce wasted tokens. Turn it off with ")
      (:code "(setf (config :telemetry-enabled-p) nil)")
      (:plain ". Details: ")
-     (:code "https://github.com/lambda-symbolics/seismograph"))
+     (:code "docs/telemetry.org"))
     ((:plain "The prompt is a Lisp REPL, you can use it to evaluate arbitrary Common Lisp."))
     ((:plain "The tools available to the model are callable functions in the prompt, try for instance ")
      (:code "(search.files :query \"README\")")
