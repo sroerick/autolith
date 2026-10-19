@@ -25,7 +25,7 @@ function Get-AutolithSandboxIdentity([string]$Directory) {
     if ($item.PSIsContainer -or $item.Length -eq 0 -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
       throw "Invalid sandbox bundle member: $path"
     }
-    "$name=$((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant())`n"
+    "$name=$((Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant())`n"
   }
   $sha = [Security.Cryptography.SHA256]::Create()
   try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(($records -join ''))))).Replace('-', '').ToLowerInvariant() }
@@ -95,6 +95,45 @@ public static class AutolithSandboxAcl {
   } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($dacl) }
 }
 
+function Get-AutolithSandboxErrorCode([Exception]$Exception) {
+  # PowerShell wraps static .NET calls in MethodInvocationException.
+  while ($null -ne $Exception) {
+    if ($Exception -is [ComponentModel.Win32Exception]) { return $Exception.NativeErrorCode }
+    if (($Exception.HResult -band 0xffff0000L) -eq 0x80070000L) { return ($Exception.HResult -band 0xffff) }
+    $Exception = $Exception.InnerException
+  }
+  return -1
+}
+
+function Invoke-AutolithSandboxSharingRetry([scriptblock]$Action, [int]$TimeoutMilliseconds = 5000) {
+  # A monotonic budget also bounds repeated failures while validating a winner.
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  while ($true) {
+    try { return (& $Action) }
+    catch {
+      $errorCode = Get-AutolithSandboxErrorCode $_.Exception
+      if ($errorCode -notin @(5, 32, 33) -or $clock.ElapsedMilliseconds -ge $TimeoutMilliseconds) { throw }
+      Start-Sleep -Milliseconds 25
+    }
+  }
+}
+
+function Publish-AutolithSandboxGeneration([string]$Stage, [string]$Generation, [string]$Identity) {
+  Invoke-AutolithSandboxSharingRetry {
+    if (-not [IO.Directory]::Exists($Generation)) {
+      try { [IO.Directory]::Move($Stage, $Generation) }
+      catch {
+        $errorCode = Get-AutolithSandboxErrorCode $_.Exception
+        # Reuse only an actual publication winner, never an unrelated move error.
+        if ($errorCode -notin @(5, 32, 33, 80, 183) -or
+            -not [IO.Directory]::Exists($Generation)) { throw }
+      }
+    }
+    # A complete generation is renamed atomically. Never repair or overwrite it.
+    if ((Get-AutolithSandboxIdentity $Generation) -cne $Identity) { throw 'Existing sandbox generation is corrupt.' }
+  }
+}
+
 function Install-AutolithSandboxBundle([string]$Source, [string]$Root, [string]$Workspace) {
   if ($Root -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)') {
     throw 'Sandbox install root must be absolute.'
@@ -116,14 +155,13 @@ function Install-AutolithSandboxBundle([string]$Source, [string]$Root, [string]$
   $stage = Join-Path $rootPath ('.stage-' + [Guid]::NewGuid().ToString('N'))
   $selector = Join-Path $rootPath ('.select-' + [Guid]::NewGuid().ToString('N'))
   $generation = Join-Path $rootPath $identity
+  $installationFailed = $false
   try {
     New-Item -ItemType Directory -Path $stage | Out-Null
     foreach ($name in $AutolithSandboxFiles) { Copy-Item -LiteralPath (Join-Path $Source $name) -Destination (Join-Path $stage $name) }
-    if ((Get-AutolithSandboxIdentity $stage) -cne $identity) { throw 'Sandbox bundle changed while copying.' }
-    try { [IO.Directory]::Move($stage, $generation) }
-    catch { if (-not (Test-Path -LiteralPath $generation)) { throw } }
-    # A concurrent installer may have published the identical content first.
-    if ((Get-AutolithSandboxIdentity $generation) -cne $identity) { throw 'Existing sandbox generation is corrupt.' }
+    $stagedIdentity = Invoke-AutolithSandboxSharingRetry { Get-AutolithSandboxIdentity $stage }
+    if ($stagedIdentity -cne $identity) { throw 'Sandbox bundle changed while copying.' }
+    Publish-AutolithSandboxGeneration $stage $generation $identity
     [IO.File]::WriteAllText($selector, $identity + "`n", [Text.Encoding]::ASCII)
     if (-not ('AutolithSandboxMove' -as [type])) {
       Add-Type -TypeDefinition @'
@@ -146,9 +184,23 @@ public static class AutolithSandboxMove {
       Start-Sleep -Milliseconds 25
     }
     return (Join-Path $generation 'cl-exec-sandbox-windows.exe')
+  } catch {
+    $installationFailed = $true
+    throw
   } finally {
-    if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
-    if (Test-Path -LiteralPath $selector) { Remove-Item -LiteralPath $selector -Force }
+    # Delete only this invocation's private staging paths, never a generation.
+    $cleanupError = $null
+    foreach ($temporary in @($stage, $selector)) {
+      try {
+        Invoke-AutolithSandboxSharingRetry {
+          if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction Stop }
+        }
+      } catch {
+        if ($null -eq $cleanupError) { $cleanupError = $_ }
+        if ($installationFailed) { Write-Warning "Sandbox staging cleanup failed for ${temporary}: $($_.Exception.Message)" }
+      }
+    }
+    if (-not $installationFailed -and $null -ne $cleanupError) { throw $cleanupError }
   }
 }
 

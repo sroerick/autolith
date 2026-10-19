@@ -41,6 +41,47 @@ try {
   Set-AutolithSandboxDefault $private
   Assert ($env:CL_EXEC_SANDBOX_WINDOWS_HELPER -eq $helper) 'Empty override must resolve the selected bundle.'
 } finally { $env:CL_EXEC_SANDBOX_WINDOWS_HELPER = $saved }
+# Faults retain their native codes through PowerShell's exception wrappers.
+foreach ($code in @(5, 32, 33)) {
+  $state = @{ Attempts = 0 }
+  $result = Invoke-AutolithSandboxSharingRetry {
+    $state.Attempts++
+    if ($state.Attempts -lt 3) { throw [ComponentModel.Win32Exception]::new($code) }
+    'released'
+  }
+  Assert ($result -eq 'released' -and $state.Attempts -eq 3) 'Transient publication failure was not retried.'
+}
+$wrappedSharing = [Management.Automation.MethodInvocationException]::new(
+  'Directory move failed.', [IO.IOException]::new('Injected sharing violation.', -2147024864))
+Assert ((Get-AutolithSandboxErrorCode $wrappedSharing) -eq 32) 'Wrapped HRESULT lost its native sharing code.'
+$state = @{ Attempts = 0 }
+Assert-Failure {
+  Invoke-AutolithSandboxSharingRetry {
+    $state.Attempts++
+    throw [ComponentModel.Win32Exception]::new(2)
+  }
+}
+Assert ($state.Attempts -eq 1) 'A permanent publication failure was retried.'
+$clock = [Diagnostics.Stopwatch]::StartNew()
+Assert-Failure {
+  Invoke-AutolithSandboxSharingRetry { throw [ComponentModel.Win32Exception]::new(32) } -TimeoutMilliseconds 100
+}
+Assert ($clock.ElapsedMilliseconds -ge 100 -and $clock.ElapsedMilliseconds -lt 2000) 'Sharing retry did not respect its bounded budget.'
+$firstStage = Join-Path $private '.stage-first'
+$firstGeneration = Join-Path $Root 'first-generation'
+New-Item -ItemType Directory -Path $firstStage | Out-Null
+foreach ($name in $AutolithSandboxFiles) { Copy-Item -LiteralPath (Join-Path $generation $name) -Destination $firstStage }
+Publish-AutolithSandboxGeneration $firstStage $firstGeneration $identity
+Assert (-not (Test-Path -LiteralPath $firstStage)) 'First publication did not rename its stage.'
+Assert ((Get-AutolithSandboxIdentity $firstGeneration) -eq $identity) 'First publication changed bundle bytes.'
+# A concurrent winner must have exactly the expected complete content.
+$loser = Join-Path $private '.stage-loser'
+New-Item -ItemType Directory -Path $loser | Out-Null
+Publish-AutolithSandboxGeneration $loser $generation $identity
+Assert (Test-Path -LiteralPath $loser) 'Winner reuse consumed an unpublished stage.'
+Assert-Failure { Publish-AutolithSandboxGeneration $loser $generation ('0' * 64) }
+Assert ((Get-AutolithSandboxIdentity $generation) -eq $identity) 'Mismatch handling modified the winning generation.'
+Remove-Item -LiteralPath $loser -Force
 if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
   $workspace = Join-Path $Root 'workspace'
   $installed = Install-AutolithSandboxBundle $source $private $workspace
@@ -57,6 +98,54 @@ if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
   try { Assert-Failure { Install-AutolithSandboxBundle $generation (Join-Path $junction 'sandbox') $workspace } }
   finally { [IO.Directory]::Delete($junction) }
   Assert-Failure { Install-AutolithSandboxBundle $generation 'C:relative' $workspace }
+  # Hold real native handles without FILE_SHARE_DELETE to block directory rename.
+  Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Threading;
+using Microsoft.Win32.SafeHandles;
+public static class AutolithSandboxSharingFixture {
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern SafeFileHandle CreateFile(string path, uint access, uint share,
+      IntPtr security, uint disposition, uint flags, IntPtr template);
+  public static SafeFileHandle HoldDirectory(string path) {
+    var handle = CreateFile(path, 0, 3, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+    if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+    return handle;
+  }
+  public static void ReleaseAfter(IDisposable handle, int milliseconds) {
+    var thread = new Thread(() => { Thread.Sleep(milliseconds); handle.Dispose(); });
+    thread.IsBackground = true;
+    thread.Start();
+  }
+}
+'@
+  $sharingStage = Join-Path $private '.stage-sharing'
+  $sharingGeneration = Join-Path $Root 'sharing-generation'
+  New-Item -ItemType Directory -Path $sharingStage | Out-Null
+  foreach ($name in $AutolithSandboxFiles) { Copy-Item -LiteralPath (Join-Path $generation $name) -Destination $sharingStage }
+  $handle = [AutolithSandboxSharingFixture]::HoldDirectory($sharingStage)
+  try {
+    $blocked = $false
+    try { [IO.Directory]::Move($sharingStage, $sharingGeneration) }
+    catch {
+      Assert ((Get-AutolithSandboxErrorCode $_.Exception) -in @(5, 32, 33)) 'Native rename failed for an unexpected reason.'
+      $blocked = $true
+    }
+    Assert $blocked 'The native directory handle did not block rename.'
+    [AutolithSandboxSharingFixture]::ReleaseAfter($handle, 250)
+    Publish-AutolithSandboxGeneration $sharingStage $sharingGeneration $identity
+    Assert ((Get-AutolithSandboxIdentity $sharingGeneration) -eq $identity) 'Retried rename published different bytes.'
+  } finally { $handle.Dispose() }
+  # A sharing violation while hashing an already-published winner is retried too.
+  $handle = [IO.File]::Open((Join-Path $sharingGeneration $AutolithSandboxFiles[0]), 'Open', 'Read', 'None')
+  try {
+    Assert-Failure { Get-AutolithSandboxIdentity $sharingGeneration }
+    [AutolithSandboxSharingFixture]::ReleaseAfter($handle, 250)
+    Publish-AutolithSandboxGeneration $sharingStage $sharingGeneration $identity
+  } finally { $handle.Dispose() }
+  Assert (-not (Test-Path -LiteralPath $sharingStage)) 'Retry recreated staging after a successful rename.'
   # Drive the actual build/install entry point with a tiny independent builder.
   $builder = Join-Path $Root 'fixture-builder.ps1'
   $buildLog = Join-Path $Root 'build-directory.txt'
