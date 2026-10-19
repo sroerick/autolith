@@ -563,8 +563,10 @@ exit 64
                       :output ':string :error-output ':string)
     (recovery-tests--write-form marker :committed)
     (recovery-tests--write-form executable :executable)
-    (sb-posix:chmod executable #o755)
-    (sb-posix:symlink "fixture.txt" link)
+    (with-test-fixture (':file-modes "jj checkout executable modes")
+      (test-fixture-set-file-mode *platform* executable #o755))
+    (with-test-fixture (':symbolic-links "jj checkout symbolic links")
+      (test-fixture-make-symbolic-link *platform* "fixture.txt" (namestring link)))
     (recovery-jj-output source '("new" "-m" "dirty recovery fixture"))
     (let* ((commit (recovery-source-commit context))
            (operation (recovery-jj-output source '("--ignore-working-copy" "op" "log"
@@ -579,12 +581,18 @@ exit 64
                      "unexported parent yields a validated isolated checkout")
         (test-assert (eq :committed (uiop:read-file-form private-marker))
                      "source fallback excludes uncommitted workspace edits")
-        (test-assert (logtest #o111 (sb-posix:stat-mode
-                                   (sb-posix:stat (merge-pathnames "fixture.sh" checkout))))
-                     "isolated checkout preserves executable modes")
-        (test-assert (string= "fixture.txt"
-                             (sb-posix:readlink (merge-pathnames "fixture-link" checkout)))
-                     "isolated checkout preserves symbolic links")
+        (with-test-fixture (':file-modes "jj checkout executable modes")
+          (test-assert (logtest #o111 (test-fixture-file-mode
+                                     *platform* (merge-pathnames "fixture.sh" checkout)))
+                       "isolated checkout preserves executable modes"))
+        (with-test-fixture (':symbolic-links "jj checkout symbolic links")
+          (let ((private-link (merge-pathnames "fixture-link" checkout)))
+            (test-assert
+             (and (eq (platform-file-status-kind (platform-path-status *platform* private-link))
+                      ':symbolic-link)
+                  (equal (platform-truename *platform* private-link)
+                         (platform-truename *platform* private-marker)))
+             "isolated checkout preserves relative symbolic links")))
         (test-assert (equal checkout (recovery-source-checkout context commit "fixture"))
                      "validated checkout can be reused")
         (recovery-tests--write-form private-marker :tampered)
