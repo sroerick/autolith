@@ -70,35 +70,32 @@
 (-> test-model-environment-validation () null)
 (defun test-model-environment-validation ()
   "Test that configured models are validated after provider registration."
-  (let ((variable "AUTOLITH_MODEL")
-        (saved    (uiop:getenv "AUTOLITH_MODEL"))
-        (root     (asdf:system-source-directory :autolith)))
-    (unwind-protect
-         (progn
-           (platform-setenv variable "gpt-5.6-typo")
-           (test-assert
-            (handler-case
-                (progn
-                  (configuration-create :source-root root
-                                        :working-directory root)
-                  nil)
-              (setting-error ()
-                t))
-            "AUTOLITH_MODEL rejects unsupported models")
-           (let ((configuration
-                   (configuration-create
-                    :source-root root
-                    :working-directory root
-                    :defer-provider-validation-p t)))
-             (test-assert
-              (handler-case
-                  (progn
-                    (provider-bootstrap-configuration configuration)
-                    nil)
-                (setting-error ()
-                  t))
-              "deferred model validation rejects unsupported models after bootstrap")))
-      (tests--restore-environment variable saved)))
+  (with-test-configuration (fixture)
+    (let ((snapshot (provider--registry-snapshot)))
+      (unwind-protect
+           (with-test-environment (("AUTOLITH_MODEL" "gpt-5.6-typo"))
+             (flet ((configuration (&key defer-provider-validation-p)
+                      "Create a configuration without reading user preferences or model caches."
+                      (configuration-create
+                       :source-root (config :source-root fixture)
+                       :working-directory (config :working-directory fixture)
+                       :cache-root (config :cache-root fixture)
+                       :durable-p nil
+                       :defer-provider-validation-p defer-provider-validation-p)))
+               (test-assert
+                (handler-case
+                    (progn (configuration) nil)
+                  (setting-error () t))
+                "AUTOLITH_MODEL rejects unsupported models")
+               (test-assert
+                (handler-case
+                    (progn
+                      (provider-bootstrap-configuration
+                       (configuration :defer-provider-validation-p t))
+                      nil)
+                  (setting-error () t))
+                "deferred model validation rejects unsupported models after bootstrap")))
+        (provider--registry-restore snapshot))))
   nil)
 
 
