@@ -110,7 +110,8 @@ public static class AutolithSandboxSharingFixture {
   static extern SafeFileHandle CreateFile(string path, uint access, uint share,
       IntPtr security, uint disposition, uint flags, IntPtr template);
   public static SafeFileHandle HoldDirectory(string path) {
-    var handle = CreateFile(path, 0, 3, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+    // GENERIC_READ participates in sharing checks; a metadata-only handle does not.
+    var handle = CreateFile(path, 0x80000000, 3, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
     if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
     return handle;
   }
