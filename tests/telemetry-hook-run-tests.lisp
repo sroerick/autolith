@@ -405,34 +405,40 @@
 (defun test-telemetry-launch-context-validation ()
   "Strictly validate external context and bounded decimal attempts without crashing."
   (let ((valid "00-11111111111111111111111111111111-2222222222222222-01"))
-    (dolist (context (list valid nil "" "00-bad" (concatenate 'string valid "-extra")
-                           "01-11111111111111111111111111111111-2222222222222222-01"
-                           "00-00000000000000000000000000000000-2222222222222222-01"
-                           "00-11111111111111111111111111111111-0000000000000000-01"
-                           "00-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-2222222222222222-01"
-                           "00-11111111111111111111111111111111-2222222222222222-0g"))
-      (test-telemetry--call
-       (lambda (configuration)
-         (with-test-environment (("AUTOLITH_TRACEPARENT" context))
-           (let* ((diagnostics (make-string-output-stream))
-                  (*error-output* diagnostics)
-                  (*telemetry-launch-context* (telemetry--consume-launch-context))
-                  (*telemetry-launch-claimed-p* nil)
-                  (bodies (test-telemetry-hooks--capture
-                           configuration
-                           (lambda ()
-                             (multiple-value-bind (run token) (telemetry--begin-run configuration :launcher-p t)
-                               (telemetry-finish-run run token '(:state :completed))))))
-                  (root (first (test-telemetry-hooks--kind (first bodies) "run")))
-                  (trace (json-get root "traceId")))
-             (test-assert (if (equal context valid) (equal trace (subseq valid 3 35))
-                              (not (equal trace (subseq valid 3 35))))
-                          "Only strict version 00 context is adopted.")
-             (test-assert (eq (not (null (search "WARNING" (get-output-stream-string diagnostics))))
-                              (and context (not (equal context valid)) t))
-                          "Malformed supplied context warns without its contents."))))))
+    (flet ((check-context (context)
+             "Check one trace context the host environment can represent."
+             (test-telemetry--call
+              (lambda (configuration)
+                (with-test-environment (("AUTOLITH_TRACEPARENT" context))
+                  (let* ((diagnostics (make-string-output-stream))
+                         (*error-output* diagnostics)
+                         (*telemetry-launch-context* (telemetry--consume-launch-context))
+                         (*telemetry-launch-claimed-p* nil)
+                         (bodies (test-telemetry-hooks--capture
+                                  configuration
+                                  (lambda ()
+                                    (multiple-value-bind (run token) (telemetry--begin-run configuration :launcher-p t)
+                                      (telemetry-finish-run run token '(:state :completed))))))
+                         (root (first (test-telemetry-hooks--kind (first bodies) "run")))
+                         (trace (json-get root "traceId")))
+                    (test-assert (if (equal context valid) (equal trace (subseq valid 3 35))
+                                     (not (equal trace (subseq valid 3 35))))
+                                 "Only strict version 00 context is adopted.")
+                    (test-assert (eq (not (null (search "WARNING" (get-output-stream-string diagnostics))))
+                                     (and context (not (equal context valid)) t))
+                                 "Malformed supplied context warns without its contents.")))))))
+      (dolist (context (list valid nil "" "00-bad" (concatenate 'string valid "-extra")
+                            "01-11111111111111111111111111111111-2222222222222222-01"
+                            "00-00000000000000000000000000000000-2222222222222222-01"
+                            "00-11111111111111111111111111111111-0000000000000000-01"
+                            "00-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-2222222222222222-01"
+                            "00-11111111111111111111111111111111-2222222222222222-0g"))
+        (if (equal context "")
+            (with-test-fixture (':empty-environment-values "empty supplied trace context")
+              (check-context context))
+            (check-context context))))
     (dolist (case '((nil 1) ("1" 1) ("2" 2) ("65535" 65535) ("0" 1) ("65536" 1)
-                    ("-1" 1) ("+2" 1) ("2x" 1) (" 2" 1) ("" 1) ("999999999999999999999999" 1)))
+                   ("-1" 1) ("+2" 1) ("2x" 1) (" 2" 1) ("" 1) ("999999999999999999999999" 1)))
       (let ((*error-output* (make-string-output-stream)))
         (test-assert (= (telemetry--run-attempt (first case)) (second case)) "Attempts are bounded decimal integers.")
         (when (and (first case) (= (second case) 1) (not (equal (first case) "1")))
