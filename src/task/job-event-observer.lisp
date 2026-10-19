@@ -33,11 +33,13 @@
 
 (-> run-job-event--tool-name (tool-registry t) string)
 (defun run-job-event--tool-name (registry name)
-  "Return a bounded canonical registry name, or a fixed unknown-tool label."
+  "Return a bounded registry or built-in child-yield name, otherwise unknown.
+The parent registry does not contain the child's mandatory yield tools."
   (let ((dot (and (stringp name) (<= 1 (length name) 256)
                   (position #\. name))))
     (if (and dot
-             (tool-registry-find registry (subseq name 0 dot) (subseq name (1+ dot))))
+             (or (member name '("yield.submit" "yield.note") :test #'string=)
+                 (tool-registry-find registry (subseq name 0 dot) (subseq name (1+ dot)))))
         name
         "unknown")))
 

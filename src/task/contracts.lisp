@@ -69,6 +69,10 @@
   (:documentation
    "A child agent supplied an invalid or duplicate terminal yield."))
 
+(defmethod tool-failure-code ((condition task-yield-error))
+  "Expose terminal-yield validation without exporting its submitted fields."
+  (or (tool-error-code condition) ':invalid-yield))
+
 
 ;;;; -- Native Definition Bounds --
 

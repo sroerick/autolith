@@ -18,10 +18,10 @@
   ()
   (:documentation "Explicit parent inspection, integration and owned cleanup."))
 
-(-> task-worktree--error (string) nil)
-(defun task-worktree--error (message)
+(-> task-worktree--error (string &key (:code (option keyword))) nil)
+(defun task-worktree--error (message &key code)
   "Signal a product-specific worktree failure with tool attribution."
-  (error 'task-worktree-error :message message :tool-name "task.worktree"))
+  (error 'task-worktree-error :message message :code code :tool-name "task.worktree"))
 
 (-> task-worktree-normalize-options (t) list)
 (defun task-worktree-normalize-options (object)
@@ -77,7 +77,7 @@ Sandbox temporary paths take precedence without changing the host environment."
            (command (format nil "task.worktree Git argv ~S" argv))
            (decision (funcall authorize command directory)))
       (unless (member decision '(:sandboxed :full-access))
-        (task-worktree--error "Worktree Git command was denied."))
+        (task-worktree--error "Worktree Git command was denied." :code ':authority))
       (labels ((run (policy environment)
                  (let ((result
                          (run-sandboxed
@@ -328,7 +328,7 @@ a successful child is downgraded rather than claiming an absent artifact."
 (defmethod tool-execute ((tool task-worktree-tool) (context tool-context) arguments)
   "Inspect or deliberately integrate an isolated child's artifact, or clean its owned checkout."
   (when (typep (tool-context-agent context) 'task-child-agent)
-    (task-worktree--error "Worktree integration and cleanup belong to the primary parent."))
+    (task-worktree--error "Worktree integration and cleanup belong to the primary parent." :code ':authority))
   (task--validate-tool-arguments arguments '("action" "id" "source" "target" "discardDirty")
                                  "task.worktree")
   (let* ((action (tool-argument arguments "action" :required t))

@@ -6,6 +6,7 @@
   # build is reproducible; bump it in lockstep whenever sbcl.version changes.
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/d482ef84049d9b7276b83a06e4e4d76983830097";
+    crane.url = "github:ipetkov/crane";
 
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
@@ -23,6 +24,7 @@
         let
           autolith = import ./nix/package.nix {
             inherit pkgs;
+            inherit (inputs) crane;
             src = inputs.self;
           };
           upgradeSource = pkgs.runCommand "autolith-upgrade-regression-source" {} ''
@@ -33,6 +35,7 @@
           '';
           upgradeAutolith = import ./nix/package.nix {
             inherit pkgs;
+            inherit (inputs) crane;
             src = upgradeSource;
           };
           imageIdentity = builtins.baseNameOf (toString autolith.imageIdentity);

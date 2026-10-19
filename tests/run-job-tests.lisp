@@ -2,9 +2,140 @@
 
 ;;;; -- Non-interactive Job Boundary Tests --
 
+(defun test-run-job-relative-paths ()
+  "Resolve both artifact paths against the caller's cwd, including event URIs."
+  (with-test-configuration (configuration root)
+    (task-tests--write-text (merge-pathnames "input.sexp" root)
+                            (run-job--write-data-sexp (run-job-tests--request-form) :pretty-p t))
+    (uiop:with-current-directory (root)
+      (dolist (events '(nil :sexp))
+        (let ((stream (make-string-output-stream)))
+          (test-assert
+           (zerop (run-job-run "input.sexp" "nested/output.sexp" ':full-access
+                              :configuration configuration :events events :event-output stream
+                              :executor (lambda (configuration request permissions)
+                                          (declare (ignore configuration request permissions))
+                                          (values ':succeeded '(:object ("answer" "yes")) "relative-job" nil nil nil))))
+           "Relative input and output publish successfully.")
+          (test-assert (eq (getf (rest (run-job-read-file (merge-pathnames "nested/output.sexp" root))) :status)
+                           ':succeeded)
+                       "The output is published beneath cwd.")
+          (when events
+            (let* ((records (run-job-event-tests--records (get-output-stream-string stream)))
+                   (terminal (find ':run-finished records :key (lambda (record) (getf (rest record) :kind))))
+                   (data (getf (rest terminal) :data))
+                   (job (find ':job-finished records :key (lambda (record) (getf (rest record) :kind))))
+                   (uri (getf (getf (rest job) :data) :result-uri)))
+              (test-assert (getf data :published-p) "The event confirms result publication.")
+              (test-assert (equal (workspace-file--decode-identifier "workspace" (subseq uri 10))
+                                  (uiop:native-namestring (merge-pathnames "nested/output.sexp" root)))
+                           "The result URI contains the resolved absolute path.")))))))
+  nil)
+
 (define-condition run-job-test-interruption (serious-condition)
   ()
   (:documentation "A synthetic non-error serious condition escaping a test executor."))
+
+(defclass run-job-test-provider (scripted-provider)
+  ((block-on-empty-p :initarg :block-on-empty-p :initform nil
+                     :reader run-job-test-provider-block-on-empty-p
+                     :documentation "Whether the next request waits for job timeout after scripted output."))
+  (:documentation "Share scripted responses with one real headless child execution."))
+
+(defmethod provider-stream-turn :before
+    ((provider run-job-test-provider) (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Leave one billed request followed by a stalled request for deadline coverage."
+  (declare (ignore conversation tool-namespaces event-callback goal-context compaction-p))
+  (when (and (run-job-test-provider-block-on-empty-p provider)
+             (null (scripted-provider-results provider)))
+    (sleep 3)))
+
+(defmethod provider-with-configuration
+    ((provider run-job-test-provider) (configuration configuration))
+  "Retain the deterministic provider across headless child configuration."
+  (declare (ignore configuration))
+  provider)
+
+(-> test-run-job-runtime-usage () null)
+(defun test-run-job-runtime-usage ()
+  "Read usage through the real child, publication, compaction and headless boundary."
+  (dolist (case '((nil nil nil) (t nil nil) (nil t nil) (t t nil) (t nil t)))
+    (with-test-configuration (configuration)
+      (let* ((omit-usage-p (first case))
+             (invalid-calls-p (second case))
+             (timeout-p (third case))
+             (application (mission-test--application configuration))
+             (compact-result-function (symbol-function 'task-job--compact-result))
+             (usage-omitted-p nil)
+             (request (run-job-validate-envelope
+                       (let ((form (run-job-tests--request-form)))
+                         (when timeout-p (setf (getf (rest form) :timeout-seconds) 1))
+                         form)))
+             (definition (task-agent-definition-create
+                          :name "custom-runner" :description "Return a structured result."
+                          :instructions "Yield the answer." :tools nil :source ':test
+                          :output (run-job-request-output-contract request)))
+             (provider (make-instance
+                        'run-job-test-provider :configuration configuration :block-on-empty-p timeout-p
+                        :results (list (agent-test-result
+                                        "usage-response"
+                                        (loop repeat (if invalid-calls-p 2 1)
+                                              collect (agent-test-call
+                                                       :call-id "yield-usage" :namespace "yield"
+                                                       :name (if timeout-p "note" "submit")
+                                                       :arguments (if timeout-p
+                                                                      "{\"note\":\"Continue working.\"}"
+                                                                      "{\"status\":\"success\",\"data\":{\"answer\":\"yes\"}}")))
+                                        :usage (json-object "input_tokens" 13 "output_tokens" 7)))))
+             (stream (make-string-output-stream))
+             (*run-job-event-emitter* (run-job-event-emitter-create "run-usage" stream))
+             (*run-job-event-root-name* "usage-root"))
+        (setf (application-provider application) provider
+              (agent-provider (application-agent application)) provider)
+        (task-augment-tool-registry (application-tool-registry application))
+        (run-job-event-emit *run-job-event-emitter* ':run-started nil)
+        (unwind-protect
+             (test-call-with-function-replacements
+              (list (list 'application-create
+                          (lambda (&rest arguments) (declare (ignore arguments)) application))
+                    (list 'run-job--resolve-definition
+                          (lambda (&rest arguments) (declare (ignore arguments)) definition))
+                    (list 'task-job--compact-result
+                          (lambda (result &key artifact-available-p)
+                            (let ((compact (funcall compact-result-function result
+                                                    :artifact-available-p artifact-available-p)))
+                              ;; Exercise missing retained usage independently of
+                              ;; the bounded summary normally kept by compaction.
+                              (when omit-usage-p
+                                (remf compact :usage))
+                              (setf usage-omitted-p (null (getf compact :usage)))
+                              compact))))
+              (lambda ()
+                (multiple-value-bind (status result trace usage category message)
+                    (run-job-execute-with-application configuration request ':full-access)
+                  (declare (ignore result trace category message))
+                  (test-assert (eq status (cond (timeout-p ':timed-out)
+                                               (invalid-calls-p ':failed)
+                                               (t ':succeeded)))
+                               "Headless execution distinguishes valid, rejected and timed-out responses.")
+                  (test-assert (equal usage (list :input-tokens 13 :output-tokens 7
+                                                  :provider-requests (if timeout-p 2 1)))
+                               "Final usage survives both retained and omitted compact metadata.")
+                  (test-assert (eq usage-omitted-p omit-usage-p)
+                               "The fixture covers both retained summaries and missing usage."))))
+          (run-job-event-emitter-finish *run-job-event-emitter* (run-job-event-tests--terminal)))
+        (let* ((records (run-job-event-tests--records (get-output-stream-string stream)))
+               (finished (find ':tool-finished records :key (lambda (record) (getf (rest record) :kind)))))
+          (test-assert
+           (if invalid-calls-p
+               (null finished)
+               (and finished
+                    (equal (getf (getf (rest finished) :data) :tool-name)
+                           (if timeout-p "yield.note" "yield.submit"))
+                    (eq (getf (getf (rest finished) :data) :status) ':succeeded)))
+           "Only validated child calls emit tool completion, with their canonical identity.")))))
+  nil)
 
 (-> run-job-tests--request-form
     (&key (:role string) (:contract list) (:prompt string) (:input t))

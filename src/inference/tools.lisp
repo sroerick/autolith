@@ -518,7 +518,8 @@ filesystem paths are only a programmatic Lisp designator."
          resource-scheme-unknown resource-access-denied
          resource-operation-unsupported)
       (condition)
-      (tool-failure (format nil "~A" condition)))))
+      (tool-failure (format nil "~A" condition)
+                    :denied-p (typep condition 'resource-access-denied)))))
 
 (-> rlm--tool-invoke
     (tool-context hash-table

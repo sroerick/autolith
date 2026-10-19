@@ -133,6 +133,9 @@
 (defparameter *win32-open-existing* 3
   "The CreateFileW disposition that fails when the file is absent.")
 
+(defparameter *win32-create-new* 1
+  "The CreateFileW disposition that exclusively creates an absent file.")
+
 (defparameter *win32-file-attribute-readonly* #x1
   "FILE_ATTRIBUTE_READONLY.")
 
@@ -219,6 +222,34 @@
                          collect (code-char (sb-sys:sap-ref-16 (sb-alien:alien-sap buffer)
                                                                (* 2 index))))
                    'string))))))
+
+(defmethod platform-permission-error-code-p ((platform win32-platform) (code integer))
+  "Recognize ERROR_ACCESS_DENIED without exposing native Win32 error values."
+  (= code 5))
+
+(defmethod platform-ensure-directories-exist ((platform win32-platform) pathname)
+  "Create absent parent directories through Win32 so failures retain their native code."
+  (platform--ensure-directories-exist
+   platform pathname
+   (lambda (directory)
+     (when (zerop (win32--create-directory (win32--namestring directory) nil))
+       (win32--fail ':create directory)))))
+
+(defmethod platform-open-new-file ((platform win32-platform) pathname)
+  "Create a staging file through Win32 so creation errors retain their native code."
+  (let ((handle (win32--create-file (win32--namestring pathname)
+                                   *win32-generic-write* *win32-share-all* nil
+                                   *win32-create-new* *win32-file-attribute-normal* 0)))
+    (when (= handle *win32-invalid-handle*)
+      (win32--fail ':open pathname))
+    (unwind-protect
+         (prog1 (sb-sys:make-fd-stream handle :output t
+                                     :element-type '(unsigned-byte 8)
+                                     :file (win32--namestring pathname)
+                                     :pathname pathname :auto-close t)
+           (setf handle nil))
+      (when handle
+        (win32--close-handle handle)))))
 
 (-> win32--failure-reason (integer) platform-failure-reason)
 (defun win32--failure-reason (code)

@@ -119,9 +119,10 @@ process-global fixture parent on exit; parallel runs need separate processes."
       (setf (sb-ext:symbol-global-value '*test-temporary-root*) previous)
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
 
-(-> test-configuration (&key (:site-config-root (option pathname))) configuration)
-(defun test-configuration (&key site-config-root)
-  "Return an isolated configuration rooted in a fresh temporary directory."
+(-> test-configuration (&key (:site-config-root (option pathname))
+                           (:telemetry-defaults-p boolean)) configuration)
+(defun test-configuration (&key site-config-root telemetry-defaults-p)
+  "Return an isolated configuration, disabling telemetry unless testing its defaults."
   (let* ((parent (sb-ext:symbol-global-value '*test-temporary-root*))
          (root (uiop:ensure-directory-pathname
                 (merge-pathnames
@@ -148,9 +149,10 @@ process-global fixture parent on exit; parallel runs need separate processes."
      :grok-bootstrap-auth-path (merge-pathnames "missing-grok-auth.json" root)
      ;; The check runner builds one active core per run, so fresh Autolith
      ;; processes boot it instead of loading the system from source.
-     (let ((active-core (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")))
-       (when (non-empty-string-p active-core)
-         (list :active-image-core (uiop:parse-native-namestring active-core)))))))
+     (append (unless telemetry-defaults-p (list :telemetry-enabled-p nil))
+             (let ((active-core (uiop:getenv "AUTOLITH_TEST_ACTIVE_CORE")))
+               (when (non-empty-string-p active-core)
+                 (list :active-image-core (uiop:parse-native-namestring active-core))))))))
 
 (-> test-active-core-environment () list)
 (defun test-active-core-environment ()

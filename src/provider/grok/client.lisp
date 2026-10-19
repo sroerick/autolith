@@ -225,7 +225,7 @@ user's to judge."
                         (json-string= (json-get item "type") "message")))
                  (provider-result-output-items result))))))
 
-(defmethod provider-attempt-turn :around
+(defmethod provider-attempt-turn
     ((provider grok-subscription-provider)
      (conversation conversation)
      &key compaction-p &allow-other-keys)
@@ -233,11 +233,12 @@ user's to judge."
 
 Grok Build treats a reasoning-only or truncated empty completion as a
 transient failure, so an empty result becomes a bounded retryable error
-instead of an empty assistant turn."
+instead of an empty assistant turn. Validation runs inside attempt outcome wrappers."
   (let ((result (call-next-method)))
     (when (and (not compaction-p)
                (grok--empty-response-p result))
-      (error 'provider-retryable-error
+      (error 'provider-result-rejected
+             :result result
              :message "Grok completed a response with no message or tool call."
              :status nil
              :request-id nil

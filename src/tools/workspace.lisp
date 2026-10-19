@@ -65,6 +65,7 @@ resources may extend or replace that boundary dynamically.")
       (error 'tool-error
              :message (format nil "Could not resolve workspace path ~A: ~A"
                               path condition)
+             :code (tool-failure-code condition)
              :tool-name "resource"))))
 
 (-> workspace-tool--canonical-path (pathname) pathname)
@@ -140,7 +141,7 @@ already authorized the path, use this instead of WORKSPACE-TOOL-PATH."
   (let* ((roots (workspace-tool-readable-roots context))
          (canonical (workspace-tool-resolve-path context path)))
     (unless (workspace-tool--read-path-allowed-p canonical roots)
-      (error 'tool-error
+      (error 'tool-authority-denied
              :message
              (format nil "Path ~A is outside the allowed workspace roots."
                      canonical)
@@ -154,16 +155,18 @@ already authorized the path, use this instead of WORKSPACE-TOOL-PATH."
 The request is the command \"TOOL-NAME -- PATH\", so a full-access session
 passes without a prompt, saved permissions apply, and ask mode asks once. A
 sandboxed decision is not enough, because the tool itself runs unsandboxed."
-  (handler-case
-      (eq (tool-context-authorize-command
-           context
-           (format nil "~A -- ~A"
-                   tool-name
-                   (uiop:escape-shell-token (uiop:native-namestring path)))
-           (config :working-directory (tool-context-configuration context)))
-          ':full-access)
-    (command-authorization-unavailable ()
-      nil)))
+  (let ((approved-p
+          (handler-case
+              (eq (tool-context-authorize-command
+                   context
+                   (format nil "~A -- ~A"
+                           tool-name
+                           (uiop:escape-shell-token (uiop:native-namestring path)))
+                   (config :working-directory (tool-context-configuration context)))
+                  ':full-access)
+            (command-authorization-unavailable ()
+              nil))))
+    approved-p))
 
 (-> workspace-tool-path
     (tool-context (option string) &key (:tool-name non-empty-string))
@@ -178,7 +181,7 @@ with full permissions never refuses one."
     (unless (or (workspace-tool--read-path-allowed-p
                  canonical (workspace-tool-readable-roots context))
                 (workspace-tool-authorize-outside-path context canonical tool-name))
-      (error 'tool-error
+      (error 'tool-authority-denied
              :message
              (format nil "~A requires full-access approval for path ~A outside the workspace and source roots."
                      tool-name canonical)
@@ -262,9 +265,9 @@ with full permissions never refuses one."
                 (tool-context-authorize-command context command directory)
               (command-authorization-unavailable (condition)
                 (return-from tool-execute
-                  (tool-failure (princ-to-string condition)))))))
+                  (tool-failure (princ-to-string condition) :denied-p t))))))
       (if (eq authorization ':deny)
-          (tool-failure "The user denied this command.")
+          (tool-failure "The user denied this command." :denied-p t)
           (let ((configuration (tool-context-configuration context))
                 (output-limit *shell-maximum-output-characters*))
             (when (eq authorization ':sandboxed)

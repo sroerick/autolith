@@ -35,6 +35,13 @@
            :documentation "Machine-readable reason for a rejected mission operation."))
   (:documentation "A mission cannot admit work or validate its acceptance policy."))
 
+(defmethod tool-failure-code ((condition mission-error))
+  "Classify only primary authority refusals as permission denials."
+  (if (member (mission-error-reason condition)
+              '(:authority :review-authority :schedule-authority))
+      ':authority
+      (call-next-method)))
+
 (-> mission--reject (keyword string) null)
 (defun mission--reject (reason message)
   "Signal a typed mission policy failure with REASON and MESSAGE."

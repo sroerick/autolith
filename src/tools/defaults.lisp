@@ -2,13 +2,17 @@
 
 ;;;; -- Default Tool Set --
 
-(-> default-tools--register (tool-registry list) tool)
-(defun default-tools--register (registry specification)
-  "Create and register one default tool from SPECIFICATION."
+(-> default-tools--register
+    (tool-registry list &key (:correction-metadata-p boolean)) tool)
+(defun default-tools--register (registry specification &key (correction-metadata-p t))
+  "Create and register one default tool with optional correction metadata."
   (destructuring-bind
       (class namespace name description parameters
        &rest initialization-arguments)
       specification
+    (when correction-metadata-p
+      (setf (gethash "corrects_previous" (json-get parameters "properties"))
+            (tool-boolean-property "Optional: true only when this call explicitly corrects the immediately preceding tool call.")))
     (tool-registry-register
      registry
      (apply #'make-instance
@@ -17,6 +21,7 @@
             :name name
             :description description
             :parameters parameters
+             :correction-metadata-p correction-metadata-p
             initialization-arguments))))
 
 (-> default-tools--worker-host-tools-property () json-object)
@@ -225,6 +230,10 @@
       (operation-schema
        "papercut-report"
        (json-object
+        "issue-kind" (cl-llm-provider-api:provider-enum-schema
+                      '("broken_tool" "misleading_success" "authorization" "performance" "other")
+                      "Explicit issue category; omit when unknown.")
+        "tool" (tool-string-property "Affected builtin tool name; omit when unknown.")
         "title" (tool-string-property "Complete bounded papercut title.")
         "content" (tool-string-property "Complete bounded papercut report."))
        '("title" "content"))
@@ -292,7 +301,7 @@
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "The resource URI, SCHEME:IDENTIFIER with a scheme this description lists; a bare path without a scheme is rejected.")
+                    "A resource URI, SCHEME:IDENTIFIER with a listed scheme, or an absolute native workspace file path. Relative paths require workspace:.")
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1. Only line-windowed resources accept start-line and line-count; the others reject them.")
              "line-count" (tool-integer-property
@@ -380,7 +389,9 @@
     'web-run-tool
     "web" "run"
     *web-run-description*
-    (web-run-parameters)))
+     (web-run-parameters))
+    ;; The subscription backend validates this provider-reserved schema exactly.
+    :correction-metadata-p nil)
   (default-tools--register
    registry
    (list
@@ -483,7 +494,11 @@
       "title" (tool-string-property
                 "A concise description of the problem, at most 200 characters.")
       "content" (tool-string-property
-                  "The complete concrete report for the user, at most 8000 characters."))
+                  "The complete concrete report for the user, at most 8000 characters.")
+      "issue-kind" (cl-llm-provider-api:provider-enum-schema
+                    '("broken_tool" "misleading_success" "authorization" "performance" "other")
+                    "Explicit issue category; omit when unknown.")
+      "tool" (tool-string-property "Affected builtin tool name; omit when unknown."))
      '("title" "content"))))
   registry)
 
@@ -720,6 +735,25 @@
       (default-tools--register registry specification)))
   registry)
 
+(-> default-tools--self-repair-schema (list) list)
+(defun default-tools--self-repair-schema (specification)
+  "Add optional explicit repair metadata to self mutation and exercise schemas."
+  (let* ((class (first specification))
+         (properties (json-get (fifth specification) "properties")))
+    (when (member class '(self-eval-tool self-redefine-tool self-set-tool
+                         self-persist-definition-tool self-exercise-tool))
+      (setf (gethash "incident" properties)
+            (tool-string-property "The exact active papercut identifier for this repair; omit for a standalone mutation.")
+            (gethash "repair-kind" properties)
+            (json-object "type" "string"
+                         "enum" #("redefine_function" "change_setting" "change_tool_strategy" "other")
+                         "description" "The public repair category; checks inherit their mutation's category.")))
+    (when (eq class 'self-exercise-tool)
+      (setf (gethash "verification-scope" properties)
+            (json-object "type" "string" "enum" #("focused" "full")
+                         "description" "The explicit scope of this check; defaults to focused.")))
+    specification))
+
 (-> default-tools--register-self (tool-registry) tool-registry)
 (defun default-tools--register-self (registry)
   "Register active-image inspection and mutation tools in REGISTRY."
@@ -875,7 +909,7 @@
              "generation" (tool-string-property
                            "The retained generation identifier."))
             '("generation")))))
-      (default-tools--register registry specification)))
+      (default-tools--register registry (default-tools--self-repair-schema specification))))
   registry)
 
 (-> default-tools--remove-mutable-self-tools (tool-registry) tool-registry)

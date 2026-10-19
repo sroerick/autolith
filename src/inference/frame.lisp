@@ -467,7 +467,9 @@ with bounded public outputs and a durable trace, never an unvalidated answer."
            (conversation (rlm--frame-conversation configuration))
            (request (rlm--frame-request
                      task views (rlm--contract-instructions contract)))
-           (*system-prompt-override* (rlm--frame-prompt capabilities)))
+           (*system-prompt-override* (rlm--frame-prompt capabilities))
+           (*telemetry-request-role* (if (eq *telemetry-request-role* ':permission-classifier)
+                                         ':permission-classifier ':inference)))
       (handler-case
           (if (eq capabilities ':read)
               (rlm--run-framed-inference

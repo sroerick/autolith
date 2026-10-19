@@ -78,8 +78,10 @@
                (expected (if separate-p payload
                              (concatenate '(vector (unsigned-byte 8)) payload
                                           (utf8-string-to-octets (format nil "FINAL-DIAGNOSTIC~%"))))))
-          (test-assert (and (tool-result-success-p result) (= 7 (getf details :exit-code)))
-                       "Nonzero exit status is preserved independently of execution success")
+          (test-assert (and (not (tool-result-success-p result))
+                            (eq (tool-result-error-code result) ':nonzero-exit)
+                            (= 7 (getf details :exit-code)))
+                       "Nonzero exit is a failure with its machine code and exit status")
           (test-assert (equalp expected actual) "Retained raw capture is byte-exact, including invalid UTF-8")
           (test-assert (and (getf capture :complete-p)
                             (= (length actual) (getf capture :byte-count)))

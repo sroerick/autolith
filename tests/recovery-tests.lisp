@@ -8,6 +8,47 @@
 
 ;;;; -- Recovery Runtime Tests --
 
+(defun test-recovery-launcher-trace-context ()
+  "The Bash launcher creates one context, and recovery forwards it with attempt two."
+  (with-test-fixture (':posix-shell "Bash launcher trace continuity")
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let* ((source (asdf:system-source-directory :autolith))
+             (fake (merge-pathnames "fake-sbcl" root))
+             (log (merge-pathnames "trace.log" root))
+             (context (recovery-tests--context root))
+             (command (list "env" (format nil "AUTOLITH_SBCL=~A" fake)
+                            (format nil "AUTOLITH_TEST_LOG=~A" log)
+                            (format nil "XDG_DATA_HOME=~Adata" root)
+                            (format nil "XDG_STATE_HOME=~Astate" root)
+                            (namestring (merge-pathnames "bin/autolith" source)) "--from-source")))
+        (recovery-tests--write-executable
+         fake "#!/bin/sh
+printf '%s %s\\n' \"$AUTOLITH_TRACEPARENT\" \"$AUTOLITH_RUN_ATTEMPT\" >> \"$AUTOLITH_TEST_LOG\"
+exit 64
+")
+        (with-test-environment (("AUTOLITH_TRACEPARENT" nil) ("AUTOLITH_RUN_ATTEMPT" nil)
+                                ("AUTOLITH_SOURCE_ROOT" (uiop:getenv "AUTOLITH_SOURCE_ROOT"))
+                                ("AUTOLITH_RECOVERED" (uiop:getenv "AUTOLITH_RECOVERED"))
+                                ("AUTOLITH_PROJECT_SETUP" (uiop:getenv "AUTOLITH_PROJECT_SETUP")))
+          (uiop:run-program command :ignore-error-status t :output nil :error-output nil)
+          (let* ((first (uiop:read-file-line log))
+                 (parts (uiop:split-string first :separator " "))
+                 (traceparent (first parts)))
+            (test-assert (and (telemetry--traceparent-id traceparent) (equal (second parts) "1"))
+                         "The first process inherits a valid context and attempt one.")
+            (platform-setenv "AUTOLITH_TRACEPARENT" traceparent)
+            (platform-setenv "AUTOLITH_RUN_ATTEMPT" "1")
+            (autolith-script-ensure-trace-context)
+            (test-assert (equal traceparent (uiop:getenv "AUTOLITH_TRACEPARENT")) "Standalone launchers preserve inherited context.")
+            (recovery-prepare-source-environment context source)
+            (test-assert (equal "2" (uiop:getenv "AUTOLITH_RUN_ATTEMPT")) "Recovery increments exactly once before child launch.")
+            (uiop:run-program command :ignore-error-status t :output nil :error-output nil)
+            (test-assert (equal (uiop:read-file-lines log)
+                                (list first (format nil "~A 2" traceparent)))
+                         "The second launcher preserves the original trace and recovered attempt."))))))
+  nil)
+
 (-> recovery-tests--write-form (pathname t) pathname)
 (defun recovery-tests--write-form (pathname form)
   "Write one readable FORM to PATHNAME and return PATHNAME."
@@ -505,6 +546,62 @@ exit 64
                                       :if-does-not-exist ':ignore)))
   nil)
 
+(-> recovery-tests--jj-source-checkout (pathname) null)
+(defun recovery-tests--jj-source-checkout (root)
+  "Exercise an unexported committed parent from a dirty non-colocated workspace."
+  (let* ((source (merge-pathnames "jj-source/" root))
+         (worktrees (merge-pathnames "jj-checkouts/" root))
+         (state (merge-pathnames "jj-state/" root))
+         (marker (merge-pathnames "fixture.txt" source))
+         (executable (merge-pathnames "fixture.sh" source))
+         (link (merge-pathnames "fixture-link" source))
+         (context (make-instance 'recovery-context
+                                :source-root source :worktree-root worktrees
+                                :generation-root worktrees :state-root state
+                                :current-pathname (merge-pathnames "current.sexp" state))))
+    (uiop:run-program (list "jj" "git" "init" "--no-colocate" (namestring source))
+                      :output ':string :error-output ':string)
+    (recovery-tests--write-form marker :committed)
+    (recovery-tests--write-form executable :executable)
+    (sb-posix:chmod executable #o755)
+    (sb-posix:symlink "fixture.txt" link)
+    (recovery-jj-output source '("new" "-m" "dirty recovery fixture"))
+    (let* ((commit (recovery-source-commit context))
+           (operation (recovery-jj-output source '("--ignore-working-copy" "op" "log"
+                                                   "--no-graph" "--limit" "1" "-T" "id"))))
+      ;; Leave this edit unsnapshotted: recovery must not update the source repo.
+      (recovery-tests--write-form marker :dirty)
+      (test-assert (not (probe-file (merge-pathnames ".git/" source)))
+                   "fixture has jj metadata without a Git worktree")
+      (let* ((checkout (recovery-source-checkout context commit "fixture"))
+             (private-marker (merge-pathnames "fixture.txt" checkout)))
+        (test-assert (recovery-source-checkout-valid-p checkout commit)
+                     "unexported parent yields a validated isolated checkout")
+        (test-assert (eq :committed (uiop:read-file-form private-marker))
+                     "source fallback excludes uncommitted workspace edits")
+        (test-assert (logtest #o111 (sb-posix:stat-mode
+                                   (sb-posix:stat (merge-pathnames "fixture.sh" checkout))))
+                     "isolated checkout preserves executable modes")
+        (test-assert (string= "fixture.txt"
+                             (sb-posix:readlink (merge-pathnames "fixture-link" checkout)))
+                     "isolated checkout preserves symbolic links")
+        (test-assert (equal checkout (recovery-source-checkout context commit "fixture"))
+                     "validated checkout can be reused")
+        (recovery-tests--write-form private-marker :tampered)
+        (test-assert (not (recovery-source-checkout-valid-p checkout commit))
+                     "checkout validation rejects edited committed files")
+        (recovery-source-checkout context commit "fixture")
+        (test-assert (eq :committed (uiop:read-file-form private-marker))
+                     "recovery replaces a tampered private checkout"))
+      (test-assert (and (eq :dirty (uiop:read-file-form marker))
+                        (string= commit (recovery-source-commit context))
+                        (string= operation
+                                 (recovery-jj-output
+                                  source '("--ignore-working-copy" "op" "log"
+                                           "--no-graph" "--limit" "1" "-T" "id"))))
+                   "recovery leaves source edits, committed parent and operation untouched")))
+  nil)
+
 (-> test-recovery-generation-revision-boundary () null)
 (defun test-recovery-generation-revision-boundary ()
   "Test automatic recovery revision matching and explicit rollback exceptions."
@@ -523,6 +620,8 @@ exit 64
          (generations (list stale current-a current-b)))
     (unwind-protect
          (let ((*error-output* (make-broadcast-stream)))
+           (when (recovery-jj-p (asdf:system-source-directory :autolith))
+             (recovery-tests--jj-source-checkout root))
            (test-call-with-function-replacements
             (list
              (list 'recovery-generation-compatible-p

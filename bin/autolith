@@ -35,6 +35,16 @@ xdg_base_directory()
 launcher_path=$(resolve_path "${BASH_SOURCE[0]}")
 source_root=$(CDPATH= cd -P "$(dirname "$launcher_path")/.." && pwd)
 
+# Keep one launcher trace across the active process and pristine recovery.
+if [[ ! ${AUTOLITH_TRACEPARENT+x} ]]; then
+  trace_id=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+  parent_id=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
+  export AUTOLITH_TRACEPARENT="00-$trace_id-$parent_id-01"
+fi
+if [[ ! ${AUTOLITH_RUN_ATTEMPT+x} ]]; then
+  export AUTOLITH_RUN_ATTEMPT=1
+fi
+
 # shellcheck source=../script/launcher-cli.sh
 source "$source_root/script/launcher-cli.sh" || exit 1
 case $source_root in
@@ -52,18 +62,38 @@ data_home=$(xdg_base_directory "${XDG_DATA_HOME:-}" "$HOME/.local/share")
 runtime_command_path=$data_home/autolith/runtimes/command
 inherited_runtime_source_root=${AUTOLITH_SBCL_SOURCE_ROOT:-}
 configured_sbcl=${AUTOLITH_SBCL:-}
-recorded_runtime=
-if [[ -r "$runtime_command_path" ]]; then
-  IFS= read -r recorded_runtime < "$runtime_command_path" || recorded_runtime=
-fi
-if [[ -n ${AUTOLITH_SBCL:-} ]]; then
-  sbcl_command=$AUTOLITH_SBCL
-elif [[ "$recorded_runtime" == /* && -x "$recorded_runtime" ]]; then
-  sbcl_command=$recorded_runtime
-else
-  sbcl_command=sbcl
-fi
-export AUTOLITH_SBCL=$sbcl_command
+select_runtime_command()
+{
+  local candidate=
+  local recorded_runtime=
+
+  if [[ -n "$configured_sbcl" ]]; then
+    candidate=$(command -v -- "$configured_sbcl" 2>/dev/null) || candidate=
+    if [[ -f "$candidate" && -x "$candidate" ]]; then
+      sbcl_command=$candidate
+      export AUTOLITH_SBCL=$sbcl_command
+      return 0
+    fi
+    printf 'Configured SBCL runtime is unavailable: %s; selecting another runtime.\n' \
+      "$configured_sbcl" >&2
+    configured_sbcl=
+  fi
+  if [[ -r "$runtime_command_path" ]]; then
+    IFS= read -r recorded_runtime < "$runtime_command_path" || recorded_runtime=
+  fi
+  if [[ "$recorded_runtime" == /* && -f "$recorded_runtime" && -x "$recorded_runtime" ]]; then
+    sbcl_command=$recorded_runtime
+  else
+    sbcl_command=$(command -v sbcl 2>/dev/null) || sbcl_command=
+  fi
+  if [[ ! -f "$sbcl_command" || ! -x "$sbcl_command" ]]; then
+    printf 'No executable SBCL runtime is available. Set AUTOLITH_SBCL to an installed runtime.\n' >&2
+    return 64
+  fi
+  export AUTOLITH_SBCL=$sbcl_command
+}
+
+select_runtime_command || exit $?
 selected_runtime_version=
 if [[ -d "$data_home/autolith/runtimes" ]] &&
    selected_runtime_probe=$("$sbcl_command" --version 2>/dev/null); then
@@ -151,6 +181,11 @@ finish_launcher()
 
 run_recovery()
 {
+  # The active process can outlive a removed development runtime.
+  if [[ ! -f "$sbcl_command" || ! -x "$sbcl_command" ]]; then
+    select_runtime_command || return $?
+    unset AUTOLITH_SBCL_SOURCE_ROOT
+  fi
   if [[ -f "$recovery_core" && -f "$recovery_manifest" ]] &&
      grep -Eq '^\(:RECOVERY-IMAGE :VERSION 2([[:space:]]|$)' "$recovery_manifest" &&
      "$sbcl_command" --noinform --core "$recovery_core" \

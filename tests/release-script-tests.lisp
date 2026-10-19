@@ -728,6 +728,7 @@ for argument in \"$@\"; do
     --autolith-internal-active-image-probe) probe=true ;;
     */bin/autolith-active) mode=SOURCE ;;
     */autolith-active.core) mode=ACTIVE ;;
+    */recovery/launcher.lisp) mode=RECOVERY ;;
   esac
 done
 if [ \"$probe\" = true ]; then
@@ -738,6 +739,12 @@ case \" $* \" in
   *\" fixture-update \"*) exit 76 ;;
   *\" fixture-data-failure \"*) exit 1 ;;
 esac
+if [ \"$mode\" = SOURCE ]; then
+  case \" $* \" in
+    *\" fixture-active-failure \"*) exit 1 ;;
+    *\" fixture-runtime-loss \"*) rm -- \"$0\"; exit 1 ;;
+  esac
+fi
 ")
     (release-script-tests--write-file
      bootstrap
@@ -767,6 +774,36 @@ printf '(:SBCL-GENERATIONS-IMAGE-MANIFEST :VERSION 1\\n)\\n' > \"$active/manifes
             (not (search "fast startup image" source-output))
             (not (search "--from-source" (uiop:read-file-string log))))
        "--from-source quietly bypasses images and is not forwarded")
+      (let* ((recorded-command
+               (merge-pathnames "autolith/runtimes/command" data-home))
+             (missing-runtime (merge-pathnames "missing-sbcl" fixture-root))
+             (nonexecutable-runtime (merge-pathnames "nonexecutable-sbcl" fixture-root))
+             (disappearing-runtime (merge-pathnames "disappearing-sbcl" fixture-root)))
+        (release-script-tests--write-file
+         recorded-command (format nil "~A~%" (namestring fake-sbcl)))
+        (release-script-tests--write-file nonexecutable-runtime "")
+        (release-script-tests--chmod "644" nonexecutable-runtime)
+        (flet ((run-with-runtime (runtime &rest arguments)
+                 (release-script-tests--run
+                  (append (list (namestring launcher) "--from-source") arguments)
+                  :environment
+                  (substitute
+                   (format nil "AUTOLITH_SBCL=~A" (namestring runtime))
+                   (format nil "AUTOLITH_SBCL=~A" (namestring fake-sbcl))
+                   environment :test #'equal))))
+          (dolist (runtime (list missing-runtime nonexecutable-runtime fixture-root))
+            (test-assert
+             (search "SOURCE" (run-with-runtime runtime))
+             "unavailable configured runtimes fall back to the executable registry runtime")
+            (test-assert
+             (search "RECOVERY" (run-with-runtime runtime "fixture-active-failure"))
+             "a stale runtime override cannot prevent fatal-error recovery"))
+          (uiop:copy-file fake-sbcl disappearing-runtime)
+          (release-script-tests--chmod "755" disappearing-runtime)
+          (test-assert
+           (search "RECOVERY" (run-with-runtime disappearing-runtime "fixture-runtime-loss"))
+           "recovery reselects the registry runtime when the active runtime disappears"))
+        (delete-file recorded-command))
       (let* ((fallback-environment
                (list (format nil "HOME=~A" (namestring home))
                      "XDG_DATA_HOME=relative/data"

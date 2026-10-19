@@ -1,0 +1,466 @@
+(in-package #:autolith)
+
+(defun test-model-catalog--refresh (controller epoch fetch)
+  "Exercise catalog publication with a specific telemetry consent epoch."
+  (model-catalog--refresh controller
+                          (telemetry--make-run :controller controller :epoch epoch :active t)
+                          fetch))
+
+(defun test-model-catalog--await (controller)
+  "Wait for a bounded fixture refresh, without holding the controller lock."
+  (let ((thread (bt:with-lock-held ((telemetry-controller-lock controller))
+                  (model-catalog-thread controller))))
+    (when thread (bt:join-thread thread))))
+
+(defun test-model-catalog-idle-refresh ()
+  "Refresh an expired cache without new runs and synchronously stop the idle timer."
+  (test-telemetry--call
+   (lambda (configuration)
+     (let ((*model-catalog-poll-seconds* 0.01)
+           (refreshed (sb-thread:make-semaphore))
+           (calls 0))
+       (let ((*model-catalog-fetch-function*
+               (lambda (run)
+                 (declare (ignore run))
+                 (incf calls)
+                 (when (> calls 1) (sb-thread:signal-semaphore refreshed))
+                 (test-model-catalog--fixture '("idle-public-model")))))
+         (setf (config :telemetry-enabled-p configuration) t)
+         (telemetry-attach configuration)
+         (test-model-catalog--await *telemetry-controller*)
+         (let* ((controller *telemetry-controller*)
+                (timer (model-catalog-timer controller)))
+           (bt:with-lock-held ((telemetry-controller-lock controller))
+             (setf (model-catalog-fetched-at controller) (- (get-universal-time) 86401)
+                   (model-catalog-attempt-at controller) (- (get-universal-time) 301)))
+           (test-assert (sb-thread:wait-on-semaphore refreshed :timeout 5)
+                        "The timer refreshes even when no new turn starts.")
+           (setf (config :telemetry-enabled-p configuration) nil)
+           (test-assert (not (bt:thread-alive-p timer)) "Revocation joins the idle timer immediately.")
+           (test-assert (null (model-catalog-timer controller))
+                        "No timer remains reachable after revocation."))))))
+  nil)
+
+(defun test-model-catalog-checkpoint-refresh ()
+  "Resume idle refresh in the surviving parent on normal and abnormal checkpoint exits."
+  (dolist (fail-p '(nil t))
+    (test-telemetry--call
+     (lambda (configuration)
+       (let* ((*model-catalog-poll-seconds* 0.01)
+              (refreshed (sb-thread:make-semaphore))
+              (calls 0)
+              (*model-catalog-fetch-function*
+                (lambda (run)
+                  (declare (ignore run))
+                  (when (> (incf calls) 1) (sb-thread:signal-semaphore refreshed))
+                  (test-model-catalog--fixture '("checkpoint-model")))))
+         (setf (config :telemetry-enabled-p configuration) t)
+         (telemetry-attach configuration)
+         (test-model-catalog--await *telemetry-controller*)
+         (let* ((controller *telemetry-controller*)
+                (old-timer (model-catalog-timer controller)))
+           (catch 'checkpoint-exit
+             (telemetry-call-with-quiescence
+              (lambda ()
+                (test-assert (not (bt:thread-alive-p old-timer)) "Checkpoint joins maintenance.")
+                (test-assert (null (model-catalog-timer controller))
+                             "No timer is inherited by the checkpoint.")
+                (when fail-p (throw 'checkpoint-exit nil)))))
+           (bt:with-lock-held ((telemetry-controller-lock controller))
+             (setf (model-catalog-fetched-at controller) (- (get-universal-time) 86401)
+                   (model-catalog-attempt-at controller) (- (get-universal-time) 301)))
+           (test-assert (sb-thread:wait-on-semaphore refreshed :timeout 5)
+                        "Expiry after checkpoint refreshes without another run or settings change.")
+           (test-model-catalog--await controller)
+           (test-assert (= calls 2) "One refresh replaces the expired catalog."))))))
+  nil)
+
+(defun test-model-catalog-cache ()
+  "Exercise cold offline, refresh, backoff, stale preservation and cache reload."
+  (test-telemetry--call
+   (lambda (configuration)
+     (let ((calls 0) (response nil))
+       (let ((*model-catalog-fetch-function*
+               (lambda (run) (declare (ignore run)) (incf calls) response)))
+         (setf (config :telemetry-enabled-p configuration) t)
+         (telemetry-attach configuration)
+         (test-model-catalog--await *telemetry-controller*)
+         (let* ((controller *telemetry-controller*)
+                (path (model-catalog--path controller)))
+           (test-assert (= calls 1) "Cold startup attempts one background refresh.")
+           (test-assert (equal (telemetry--model controller "new-public-model") "new-public-model")
+                        "Cold offline retains the sanitized identity without claiming membership.")
+           (test-assert (null (telemetry--model controller nil)) "Missing stays absent.")
+           (test-assert (null (probe-file path)) "Failure does not create a cache.")
+           (dotimes (index 5) (telemetry--ensure-model-catalog controller))
+           (test-assert (= calls 1) "Failures use five-minute backoff.")
+           (setf response (test-model-catalog--fixture '("new-public-model"))
+                 (model-catalog-attempt-at controller) (- (get-universal-time) 301))
+           (telemetry--ensure-model-catalog controller)
+           (test-model-catalog--await controller)
+           (test-assert (= calls 2) "An expired backoff permits refresh.")
+           (test-assert (equal (telemetry--model controller "new-public-model") "new-public-model")
+                        "A new public ID becomes reportable without an AL release.")
+           (test-assert (probe-file path) "Successful refresh publishes a cache.")
+           (telemetry--ensure-model-catalog controller)
+           (test-assert (= calls 2) "A fresh catalog needs no network request.")
+           (let ((saved (uiop:read-file-string path)))
+             (setf response "{broken"
+                   (model-catalog-fetched-at controller) (- (get-universal-time) 86401)
+                   (model-catalog-attempt-at controller) (- (get-universal-time) 301))
+             (telemetry--ensure-model-catalog controller)
+             (test-model-catalog--await controller)
+             (test-assert (= calls 3) "A stale catalog starts a refresh.")
+             (test-assert (equal (telemetry--model controller "new-public-model") "new-public-model")
+                          "Invalid refresh keeps last-good membership.")
+             (test-assert (equal saved (uiop:read-file-string path)) "Invalid refresh keeps disk data."))
+           (telemetry-shutdown)
+           (telemetry-attach configuration)
+           (test-assert (equal (telemetry--model *telemetry-controller* "new-public-model")
+                               "new-public-model") "A new controller loads the validated cache.")
+           (test-assert (= calls 3) "A fresh disk cache skips fetching.")
+           (setf controller *telemetry-controller*
+                 response (test-model-catalog--fixture '("next-public-model"))
+                 (model-catalog-fetched-at controller) (- (get-universal-time) 86401))
+           (telemetry--ensure-model-catalog controller)
+           (test-model-catalog--await controller)
+           (test-assert (equal (telemetry--model controller "next-public-model") "next-public-model")
+                        "A later catalog update replaces membership.")
+           (test-assert (not (nth-value 1 (telemetry--model controller "new-public-model")))
+                        "Removed IDs are no longer public.")))))))
+
+(defun test-model-catalog-cache-rejection ()
+  "Reject wrong cache metadata and invalid bodies, without adopting partial IDs."
+  (test-telemetry--call
+   (lambda (configuration)
+     (setf (config :telemetry-enabled-p configuration) t)
+     (telemetry-attach configuration)
+     (test-model-catalog--await *telemetry-controller*)
+     (let ((path (model-catalog--path *telemetry-controller*))
+           (body (test-model-catalog--fixture '("public-model"))))
+       (dolist (cache (list "{"
+                           (json-encode (json-object "version" 2 "source" *model-catalog-source*
+                                                     "fetched_at" 0 "body" body))
+                           (json-encode (json-object "version" 1 "source" "https://private.invalid/"
+                                                     "fetched_at" 0 "body" body))
+                           (json-encode (json-object "version" 1 "source" *model-catalog-source*
+                                                     "fetched_at" (1+ (get-universal-time)) "body" body))
+                           (json-encode (json-object "version" 1 "source" *model-catalog-source*
+                                                     "fetched_at" 0 "body" "{}"))))
+         (telemetry-shutdown)
+         (ensure-directories-exist path)
+         (with-open-file (stream path :direction ':output :if-exists ':supersede)
+           (write-string cache stream))
+         (telemetry-attach configuration)
+         (test-model-catalog--await *telemetry-controller*)
+         (test-assert (null (model-catalog-identifiers *telemetry-controller*))
+                      "Malformed cache metadata and bodies are rejected."))))))
+
+(defun test-model-catalog-consent ()
+  "Default-off reads no cache; revoked in-flight work cannot publish or survive saving."
+  (test-telemetry--call
+   (lambda (configuration)
+     (let ((calls 0))
+       (let ((*model-catalog-fetch-function*
+               (lambda (run) (declare (ignore run)) (incf calls) nil)))
+         (telemetry-attach configuration)
+         (telemetry--ensure-model-catalog *telemetry-controller*)
+         (test-assert (zerop calls) "Default-off performs no fetch.")
+         (test-assert (null (model-catalog-loaded *telemetry-controller*))
+                      "Default-off does not read a cache.")
+         (test-assert (null (model-catalog-thread *telemetry-controller*))
+                      "Default-off starts no thread or subprocess.")))))
+  (dolist (action '(disable shutdown checkpoint))
+    (test-telemetry--call
+     (lambda (configuration)
+       (let ((entered (sb-thread:make-semaphore))
+             (release (sb-thread:make-semaphore))
+             (joining (sb-thread:make-semaphore))
+             (finished (sb-thread:make-semaphore))
+             (calls 0) (revoker nil) (controller nil))
+         (let ((*model-catalog-fetch-function*
+                 (lambda (run)
+                   (declare (ignore run))
+                   (incf calls)
+                   (sb-thread:signal-semaphore entered)
+                   (sb-thread:wait-on-semaphore release :timeout 10)
+                   (test-model-catalog--fixture '("late-public-model")))))
+           (setf (config :telemetry-enabled-p configuration) t)
+           (telemetry-attach configuration)
+           (setf controller *telemetry-controller*)
+           (unwind-protect
+                (progn
+                  (test-assert (sb-thread:wait-on-semaphore entered :timeout 5) "Refresh entered its barrier.")
+                  (dotimes (index 10) (telemetry--ensure-model-catalog controller))
+                  (test-assert (= calls 1) "Concurrent refresh triggers use one flight.")
+                  (let ((original (symbol-function 'model-catalog-join)))
+                    (test-call-with-function-replacements
+                     (list (list 'model-catalog-join
+                                 (lambda (target)
+                                   (sb-thread:signal-semaphore joining)
+                                   (funcall original target))))
+                     (lambda ()
+                       (setf revoker
+                             (bt:make-thread
+                              (lambda ()
+                                (unwind-protect
+                                     (ecase action
+                                       (disable (setf (config :telemetry-enabled-p configuration) nil))
+                                       (shutdown (telemetry-shutdown))
+                                       (checkpoint
+                                        (telemetry-call-with-quiescence
+                                         (lambda ()
+                                           (test-assert (null (model-catalog-thread controller))
+                                                        "No fetch thread is reachable at the save boundary.")
+                                           (test-assert (null (telemetry-controller-processes controller))
+                                                        "No fetch process is reachable at the save boundary.")))))
+                                  (sb-thread:signal-semaphore finished)))
+                              :name "catalog revocation fixture"))
+                       (test-assert (sb-thread:wait-on-semaphore joining :timeout 5)
+                                    "Revocation reached the join boundary.")
+                       (test-assert
+                        (task-tests--wait-until
+                         (lambda ()
+                           (let ((available (bt:acquire-lock (telemetry-controller-lock controller) nil)))
+                             (when available (bt:release-lock (telemetry-controller-lock controller)))
+                             available))
+                         5)
+                        "Join runs outside the consent lock, allowing a timer to finish its critical section.")
+                       (sb-thread:signal-semaphore release)
+                       (test-assert (sb-thread:wait-on-semaphore finished :timeout 5)
+                                    "Revocation and quiescence complete without a deadlock.")
+                       (bt:join-thread revoker))))
+                  (test-assert (null (model-catalog-identifiers controller))
+                               "Old consent epochs cannot adopt a late result.")
+                  (test-assert (null (probe-file (model-catalog--path controller)))
+                               "Old consent epochs cannot publish a cache.")
+                  (test-assert (null (model-catalog-retired-threads controller))
+                               "Revoked threads are joined and removed."))
+             (sb-thread:signal-semaphore release)
+             (when revoker (ignore-errors (bt:join-thread revoker))))))))))
+
+(defun test-model-catalog-cache-failures ()
+  "Round-trip an escaped maximum body and retain last-good disk data on write failure."
+  (test-telemetry--call
+   (lambda (configuration)
+     (setf (config :telemetry-enabled-p configuration) t)
+     (telemetry-attach configuration)
+     (test-model-catalog--await *telemetry-controller*)
+     (let* ((*model-catalog-maximum-bytes* 1024)
+            (controller *telemetry-controller*)
+            (path (model-catalog--path controller))
+            (fixture (test-model-catalog--fixture '("padded-model")))
+            (body (concatenate 'string fixture
+                               (make-string (- 1024 (length fixture)) :initial-element #\Newline))))
+       (test-model-catalog--refresh controller (telemetry-controller-epoch controller)
+                                    (lambda (run) (declare (ignore run)) body))
+       (test-assert (probe-file path) "A maximum body with escape expansion can be cached.")
+       (telemetry-shutdown)
+       (telemetry-attach configuration)
+       (setf controller *telemetry-controller*)
+       (test-assert (gethash "padded-model" (model-catalog-identifiers controller))
+                    "The expanded cache round-trips within the envelope bound.")
+       (let ((saved (uiop:read-file-string path)))
+         (test-call-with-function-replacements
+          (list (list 'uiop:rename-file-overwriting-target
+                      (lambda (from to)
+                        (declare (ignore from))
+                        (error 'file-error :pathname to))))
+          (lambda ()
+            (test-model-catalog--refresh
+             controller (telemetry-controller-epoch controller)
+             (lambda (run)
+               (declare (ignore run))
+               (test-model-catalog--fixture '("memory-model"))))))
+         (test-assert (gethash "memory-model" (model-catalog-identifiers controller))
+                      "A disk error does not discard validated in-memory membership.")
+         (test-assert (equal saved (uiop:read-file-string path))
+                      "Failed atomic publication retains the old disk cache.")
+         (test-assert (null (directory (merge-pathnames "models-dev-*.tmp" path)))
+                      "Failed publication removes its temporary file."))))))
+
+(defun test-model-catalog-failure-completion ()
+  "Measure backoff from completion, including failures after a long fetch."
+  (test-telemetry--call
+   (lambda (configuration)
+     (setf (config :telemetry-enabled-p configuration) t)
+     (telemetry-attach configuration)
+     (test-model-catalog--await *telemetry-controller*)
+     (let ((controller *telemetry-controller*) (calls 0) (completed (get-universal-time)))
+       (setf (model-catalog-attempt-at controller) nil)
+       (let ((*model-catalog-fetch-function*
+               (lambda (run)
+                 (declare (ignore run))
+                 (incf calls)
+                 ;; Represent an attempt started more than five minutes ago.
+                 (setf (model-catalog-attempt-at controller)
+                       (- (get-universal-time) 600))
+                 nil)))
+         (telemetry--ensure-model-catalog controller)
+         (test-model-catalog--await controller)
+         (test-assert (>= (model-catalog-attempt-at controller) completed)
+                      "Failure records its completion time.")
+         (telemetry--ensure-model-catalog controller)
+         (test-model-catalog--await controller)
+         (test-assert (= calls 1) "A slow failed attempt receives the full retry backoff."))))))
+
+(defun test-model-catalog-shutdown-settings-race ()
+  "A settings callback cannot restart a controller while shutdown joins its workers."
+  (test-telemetry--call
+   (lambda (configuration)
+     (setf (config :telemetry-enabled-p configuration) t)
+     (telemetry-attach configuration)
+     (test-model-catalog--await *telemetry-controller*)
+     (let ((controller *telemetry-controller*)
+           (entered (sb-thread:make-semaphore))
+           (release (sb-thread:make-semaphore))
+           (original (symbol-function 'model-catalog-join))
+           (paused nil) (stopper nil))
+       (setf (model-catalog-attempt-at controller) nil)
+       (unwind-protect
+            (test-call-with-function-replacements
+             (list (list 'model-catalog-join
+                         (lambda (target)
+                           (unless paused
+                             (setf paused t)
+                             (sb-thread:signal-semaphore entered)
+                             (sb-thread:wait-on-semaphore release :timeout 10))
+                           (funcall original target))))
+             (lambda ()
+               (setf stopper (bt:make-thread #'telemetry-shutdown :name "catalog shutdown fixture"))
+               (test-assert (sb-thread:wait-on-semaphore entered :timeout 5)
+                            "Shutdown reached the join boundary.")
+               (setf (config :telemetry-enabled-p configuration) nil
+                     (config :telemetry-enabled-p configuration) t)
+               (test-assert (not (telemetry-controller-enabled controller))
+                            "Settings cannot enable the stopped controller.")
+               (test-assert (null (model-catalog-thread controller))
+                            "Settings cannot start another refresh during shutdown.")
+               (sb-thread:signal-semaphore release)
+               (bt:join-thread stopper)
+               (test-assert (null *telemetry-controller*) "Shutdown detaches the stopped controller.")))
+         (sb-thread:signal-semaphore release)
+         (when stopper (ignore-errors (bt:join-thread stopper))))))))
+
+(defun test-model-catalog-process-deadline ()
+  "Kill an actual catalog child after ten seconds, independent of upload settings."
+  (test-telemetry--call
+   (lambda (configuration)
+     (setf (config :telemetry-enabled-p configuration) t
+           (config :telemetry-timeout-ms configuration) 100)
+     (telemetry-attach configuration)
+     (test-model-catalog--await *telemetry-controller*)
+     (let ((original (symbol-function 'uiop:launch-program))
+           (process nil)
+           (*telemetry-process-function* nil))
+       (test-call-with-function-replacements
+        (list (list 'uiop:launch-program
+                    (lambda (command &rest options)
+                      (declare (ignore command))
+                      (setf process
+                            (apply original
+                                   (list (namestring sb-ext:*runtime-pathname*) "--noinform" "--non-interactive"
+                                         "--eval" "(sleep 30)") options)))))
+        (lambda ()
+          (let* ((run (telemetry--begin-run configuration))
+                 (start (get-internal-real-time)))
+            (test-assert (null (telemetry--process run '(:catalog))) "A stalled catalog yields no response.")
+            (let ((elapsed (/ (- (get-internal-real-time) start) internal-time-units-per-second)))
+              (test-assert (<= 9 elapsed 13) "Catalog work has its own ten-second deadline."))
+            (test-assert (not (uiop:process-alive-p process)) "The deadline kills and reaps catalog work."))))))))
+
+(defun test-model-catalog-transport ()
+  "Check anonymous bounded full-catalog requests and unknown-length body rejection."
+  (with-test-configuration (configuration)
+    (let* ((path (merge-pathnames "catalog-body.bin" (config :cache-root configuration)))
+           (body (test-model-catalog--fixture '("public-model")))
+           (status 200) (opened nil))
+      (ensure-directories-exist path)
+      (with-open-file (stream path :direction ':output :element-type '(unsigned-byte 8))
+        (write-sequence (babel:string-to-octets body :encoding :utf-8) stream))
+      (test-call-with-function-replacements
+       (list (list 'dex:request
+                   (lambda (url &rest arguments)
+                     (test-assert (equal url "https://models.dev/api.json") "Request uses only the fixed public URL.")
+                     (test-assert (eql (getf arguments :max-redirects) 0) "Redirects are disabled.")
+                     (test-assert (null (getf arguments :proxy)) "No proxy authentication.")
+                     (test-assert (equal (getf arguments :headers) '(("Accept" . "application/json")))
+                                  "No authorization or model lookup is sent.")
+                     (setf opened (open path :element-type '(unsigned-byte 8)))
+                     (values opened status))))
+       (lambda ()
+         (test-assert (equal (model-catalog--worker-fetch) body) "Complete public body is returned.")
+         (test-assert (not (open-stream-p opened)) "Successful request closes the response.")
+         (setf status 302)
+         (test-assert (null (model-catalog--worker-fetch)) "Redirect status has no body result.")
+         (test-assert (not (open-stream-p opened)) "Rejected status closes the response.")
+         (setf status 200)
+         (let ((*model-catalog-maximum-bytes* (1- (length body))))
+           (test-assert (handler-case (progn (model-catalog--worker-fetch) nil)
+                          (model-catalog-invalid () t))
+                        "Unknown-length responses have a hard streaming byte bound."))
+         (test-assert (not (open-stream-p opened)) "Oversized response closes the stream."))))))
+
+
+(defun test-model-catalog-network-fallback ()
+  "A trickling or unreachable HTTP source leaves last-good cache and membership intact."
+  (test-telemetry--call
+   (lambda (configuration)
+     (setf (config :telemetry-enabled-p configuration) t)
+     (telemetry-attach configuration)
+     (test-model-catalog--await *telemetry-controller*)
+     (let* ((controller *telemetry-controller*)
+            (epoch (telemetry-controller-epoch controller))
+            (body (test-model-catalog--fixture '("cached-model")))
+            (path (model-catalog--path controller)))
+       (test-model-catalog--refresh controller epoch (lambda (run) (declare (ignore run)) body))
+       (let ((saved (uiop:read-file-string path))
+             (fetched-at (model-catalog-fetched-at controller)))
+         (dolist (trickle-p '(nil t))
+           (let* ((listener (usocket:socket-listen "127.0.0.1" 0 :reuse-address t
+                                                   :element-type '(unsigned-byte 8)))
+                  (port (usocket:get-local-port listener))
+                  (server nil))
+             (unwind-protect
+                  (progn
+                    (if trickle-p
+                        (setf server
+                              (bt:make-thread
+                               (lambda ()
+                                 (ignore-errors
+                                   (when (usocket:wait-for-input listener :timeout 2 :ready-only t)
+                                     (let* ((connection (usocket:socket-accept listener))
+                                            (stream (usocket:socket-stream connection))
+                                            (text (flexi-streams:make-flexi-stream stream :external-format :utf-8))
+                                            (crlf (format nil "~C~C" #\Return #\Newline)))
+                                       (unwind-protect
+                                            (progn
+                                              (loop for line = (read-line text nil nil)
+                                                    while (and line (plusp (length (string-trim '(#\Return) line)))))
+                                              (write-sequence (babel:string-to-octets
+                                                               (format nil "HTTP/1.1 200 OK~AContent-Length: 100000~AConnection: close~A~A"
+                                                                       crlf crlf crlf crlf) :encoding :utf-8) stream)
+                                              (dotimes (index 100)
+                                                (write-byte 32 stream) (finish-output stream) (sleep 0.01)))
+                                         (usocket:socket-close connection))))))
+                               :name "trickling catalog fixture"))
+                        (usocket:socket-close listener))
+                    (let ((*model-catalog-source* (format nil "http://127.0.0.1:~D/api.json" port))
+                          (*model-catalog-request-seconds* 0.15)
+                          (start (get-internal-real-time)))
+                      (test-model-catalog--refresh controller epoch
+                                                  (lambda (run) (declare (ignore run))
+                                                    (model-catalog--worker-fetch)))
+                      (let ((elapsed (/ (- (get-internal-real-time) start) internal-time-units-per-second)))
+                        (test-assert (< elapsed 2) "Continuous bytes cannot extend the whole-request deadline.")
+                        (when trickle-p
+                          (test-assert (>= elapsed 0.1) "The trickling body is interrupted by its deadline."))))
+                    (test-assert (gethash "cached-model" (model-catalog-identifiers controller))
+                                 "Network failure retains cached membership.")
+                    (test-assert (= fetched-at (model-catalog-fetched-at controller))
+                                 "Failure does not renew the success timestamp.")
+                    (test-assert (equal saved (uiop:read-file-string path)) "Failure preserves last-good disk data."))
+               (when server (bt:join-thread server))
+               (ignore-errors (usocket:socket-close listener)))))))))
+  nil)
+

@@ -261,6 +261,7 @@ evaluates without interleaving the person's commands.")
                         :tool-name "resource.read"))
     (unless (emacs-buffer--authorized-p context name :file file :tool-name "resource.read")
       (error 'tool-error :message "Reading this Emacs buffer requires full-access approval."
+                        :code ':permission-denied
                         :tool-name "resource.read"))
     (emacs-buffer--observation
      resource
@@ -472,7 +473,7 @@ Return the new observation and the normalized operations."
            :file (let ((file (emacs-buffer-observation-file observation)))
                    (and file (uiop:native-namestring file)))
            :tool-name tool-name)
-    (error 'tool-error :message "Access to this Emacs buffer requires full-access approval."
+    (error 'tool-authority-denied :message "Access to this Emacs buffer requires full-access approval."
                       :tool-name tool-name))
   nil)
 

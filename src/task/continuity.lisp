@@ -9,10 +9,10 @@
 (defparameter *task-continuity-maximum-octets* (* 1024 1024)
   "The maximum portable continuity record size.")
 
-(-> task-continuity--fail (string) nil)
-(defun task-continuity--fail (message)
+(-> task-continuity--fail (string &key (:code (option keyword))) nil)
+(defun task-continuity--fail (message &key code)
   "Signal a typed continuity refusal with MESSAGE."
-  (error 'task-continuity-error :message message :tool-name "job.continuity"))
+  (error 'task-continuity-error :message message :code code :tool-name "job.continuity"))
 
 (-> task-continuity--read (pathname) list)
 (defun task-continuity--read (path)
@@ -317,7 +317,7 @@ explicit safety declaration; admission alone grants no replay authority."
 A primary conversation owner must make this declaration. SAFETY documents why
 repeating the task's external effects is safe; it is an assertion, not a test."
   (when (typep viewer 'task-child-agent)
-    (task-continuity--fail "Only the primary owner may grant recovery authority."))
+    (task-continuity--fail "Only the primary owner may grant recovery authority." :code ':authority))
   (unless (or (non-empty-string-p safety)
               (and (non-empty-string-p image) (non-empty-string-p repl)))
     (task-continuity--fail "Supply a safety rationale or both image and REPL."))
@@ -357,7 +357,7 @@ repeating the task's external effects is safe; it is an assertion, not a test."
       (when (and (getf policy :restricted-p)
                  (not (member (tool-canonical-name tool) (getf policy :allowlist)
                               :test #'equal)))
-        (task-continuity--fail "The originating capability scope withholds this action.")))
+        (task-continuity--fail "The originating capability scope withholds this action." :code ':authority)))
     (conversation-append-record
      conversation (list :task-inspector-call :call-id call-id
                         :parent-call-id (tool-context-call-id context)
@@ -400,7 +400,7 @@ require a new human decision rather than an automatic second attempt."
          (classification (getf (task-continuity-classify entry viewer orchestrator)
                                :classification)))
     (unless (and authorized-p (not (typep viewer 'task-child-agent)))
-      (task-continuity--fail "Recovery requires explicit primary-owner authority."))
+      (task-continuity--fail "Recovery requires explicit primary-owner authority." :code ':authority))
     (when (eq classification :live-owned-detached)
       (task-continuity--write
        (merge-pathnames "reattach.sexp" directory)
@@ -455,7 +455,7 @@ require a new human decision rather than an automatic second attempt."
 (defun task-continuity-abandon (viewer orchestrator identifier)
   "Record an explicit abandon decision for dead owned work."
   (when (typep viewer 'task-child-agent)
-    (task-continuity--fail "Only the primary owner may abandon durable work."))
+    (task-continuity--fail "Only the primary owner may abandon durable work." :code ':authority))
   (let* ((entry (task-continuity--find viewer identifier))
          (classification (task-continuity-classify entry viewer orchestrator)))
     (when (eq (getf classification :classification) :live-owned-detached)

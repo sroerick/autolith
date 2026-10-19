@@ -32,6 +32,18 @@ so it is opt-in rather than the default commit gate."))
     :documentation "The injected active-image check callback."))
   (:documentation "A mutation checker backed by explicit boundary callbacks."))
 
+(-> mutation-checker-verification-scope (mutation-checker) string)
+(defgeneric mutation-checker-verification-scope (checker)
+  (:documentation "Return the public scope of CHECKER's actual active-state checks."))
+
+(defmethod mutation-checker-verification-scope ((checker mutation-checker))
+  "Classify structural and injected checks as focused unless explicitly specialized."
+  "focused")
+
+(defmethod mutation-checker-verification-scope ((checker full-suite-mutation-checker))
+  "Classify the complete in-image test suite as a full check."
+  "full")
+
 (-> mutation-checker-check-active
     (mutation-checker configuration string)
     string)
@@ -61,6 +73,26 @@ so it is opt-in rather than the default commit gate."))
                configuration
                definition-source)
       ""))
+
+(-> self-repair-check-mutations
+    (configuration mutation-checker string &key (:mutations list)) string)
+(defun self-repair-check-mutations (configuration checker source &key mutations)
+  "Run the configured active-state checker and journal its result for MUTATIONS."
+  (let ((identifier (make-identifier))
+        (scope (mutation-checker-verification-scope checker)))
+    (handler-case
+        (multiple-value-prog1
+            (mutation-checker-check-active checker configuration source)
+          (mutation-journal-append
+           configuration
+           (list :mutation :kind ':verification :id identifier
+                 :mutations mutations :verification-scope scope :result ':passed)))
+      (error (condition)
+        (mutation-journal-append
+         configuration
+         (list :mutation :kind ':verification :id identifier
+               :mutations mutations :verification-scope scope :result ':failed))
+        (error condition)))))
 
 (-> tool-context-effective-mutation-checker (tool-context) mutation-checker)
 (defun tool-context-effective-mutation-checker (context)
@@ -436,9 +468,9 @@ records resolves once."
                :restart-name (tool-argument arguments "restart")
                :restart-value-source (tool-argument arguments "restart-value"))
               (durable-mutation-transition configuration mutation :installed)
-              (mutation-checker-check-active checker
-                                             configuration
-                                             definition-source)
+              (self-repair-check-mutations
+               configuration checker definition-source
+               :mutations (list (durable-mutation-identifier mutation)))
               (durable-mutation-transition configuration mutation :checked)
               (let ((commit
                       (image-commit-publish
@@ -497,13 +529,14 @@ records resolves once."
 
 (-> self-git-command (configuration list &key (:ignore-error-status boolean)) string)
 (defun self-git-command (configuration arguments &key ignore-error-status)
-  "Run Git ARGUMENTS in CONFIGURATION's source root and return combined output."
-  (uiop:run-program
-   (append (list "git" "-C"
-                 (namestring (config :source-root configuration)))
-           arguments)
-   :output ':string
-   :error-output ':output
+  "Return source provenance, adapting read-only Git queries for jj workspaces."
+  (cl-user::autolith-source-command
+   (config :source-root configuration) arguments
+   (lambda (source-root arguments)
+     (uiop:run-program
+      (append (list "git" "-C" (namestring source-root)) arguments)
+      :output ':string :error-output ':output
+      :ignore-error-status ignore-error-status))
    :ignore-error-status ignore-error-status))
 
 (-> self-validate-commit-title (string) string)

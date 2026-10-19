@@ -7,6 +7,17 @@
            :documentation "Non-disclosing peer policy refusal reason."))
   (:documentation "A peer operation lacks an active grant or current endpoint identity."))
 
+(define-condition peer-message-authority-denied (peer-message-error tool-authority-denied)
+  ()
+  (:documentation "A peer refusal with internal authority classification and an unchanged public reason."))
+
+(defmethod tool-failure-code ((condition peer-message-error))
+  "Separate peer authority refusals from identity, storage and lifecycle failures."
+  (if (member (peer-message-error-reason condition)
+              '(:primary-authority :peer-scope))
+      ':authority
+      (call-next-method)))
+
 (defclass peer-message-service ()
   ((session :initarg :session :reader peer-message-session
             :documentation "Root primary conversation identity.")
@@ -33,11 +44,12 @@
 (defvar *peer-message-services-lock* (make-lock "Peer services")
   "Protects registration and lookup by root conversation identity.")
 
-(-> peer-message--reject (keyword) null)
-(defun peer-message--reject (reason)
+(-> peer-message--reject (keyword &key (:denied-p boolean)) null)
+(defun peer-message--reject (reason &key denied-p)
   "Refuse a peer operation without revealing unrelated job or message data."
-  (error 'peer-message-error :reason reason :message (format nil "Peer operation refused: ~S." reason)
-                             :tool-name "peer"))
+  (error (if denied-p 'peer-message-authority-denied 'peer-message-error)
+         :reason reason :message (format nil "Peer operation refused: ~S." reason)
+         :tool-name "peer"))
 
 (-> peer-message--identifier (t) string)
 (defun peer-message--identifier (value)
@@ -358,9 +370,14 @@
 (-> peer-message-ack (peer-message-service agent &key (:id string) (:token integer)) list)
 (defun peer-message-ack (service actor &key id token)
   "Acknowledge the exact actual receiver and its durable delivery token."
+  (peer-message--identifier id)
   (with-recursive-lock-held ((peer-message-lock service))
     (let ((message (peer-message--incoming service actor :id id)))
-      (unless message (peer-message--reject ':message-scope))
+      (unless message
+        (peer-message--reject
+         ':message-scope
+         :denied-p (not (null (find id (getf (cl-jobpond:mailbox-snapshot (peer-message-mailbox service)) :messages)
+                                   :key (lambda (entry) (getf entry :id)) :test #'equal)))))
       (cl-jobpond:mailbox-ack (peer-message-mailbox service)
                             :id id :receiver (getf message :receiver) :token token :result ':acknowledged))))
 
@@ -371,7 +388,7 @@
          (message (cl-jobpond:mailbox-find (peer-message-mailbox service) id)))
     (unless (and (equal (peer-message--actor-session actor) (peer-message-session service))
                  (or (equal identity (getf message :sender)) (equal identity (getf message :receiver))))
-      (peer-message--reject ':message-scope))
+      (peer-message--reject ':message-scope :denied-p t))
     (peer-message--grant service (getf message :sender) (getf message :receiver) :live-p nil)
     message))
 
@@ -393,8 +410,12 @@
                            (handler-case (progn (peer-message--visible-message service actor (getf message :id)) t)
                              (peer-message-error () nil))) messages))))
       (when id
+        (peer-message--identifier id)
         (let ((message (find id visible :key (lambda (entry) (getf entry :id)) :test #'equal)))
-          (unless message (peer-message--reject ':message-scope))
+          (unless message
+            (peer-message--reject
+             ':message-scope
+             :denied-p (not (null (find id messages :key (lambda (entry) (getf entry :id)) :test #'equal)))))
           (return-from peer-message-inspect (list :message message))))
       (let ((end (min (length visible) (+ offset limit))))
         (list :total (length visible) :offset offset :next (when (< end (length visible)) end)
@@ -530,7 +551,7 @@
          (setf message (cl-jobpond:mailbox-find (peer-message-mailbox service) (getf envelope :id)))
          (unless (and (equal (getf message :sender) (getf envelope :sender))
                       (equal (getf message :receiver) (getf envelope :receiver)))
-           (peer-message--reject ':message-scope)))
+           (peer-message--reject ':message-scope :denied-p t)))
         (otherwise (peer-message--reject ':remote-action))))
     (when (eq action ':wait)
       (unless (and (realp (getf envelope :payload)) (<= 0 (getf envelope :payload) 1))

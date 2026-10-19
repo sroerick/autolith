@@ -92,7 +92,8 @@ Return :SANDBOXED, :FULL-ACCESS, or :DENY plus the model's reason.
 USER-INSTRUCTIONS supplies the current user's authorization-relevant request.
 Every unavailable grant, failure, malformed answer, or exhausted budget denies."
   (handler-case
-      (let* ((value
+      (let* ((*telemetry-request-role* ':permission-classifier)
+             (value
                (infer *permissions-model-decision-guidance*
                       :context
                       (list (list ':label "current user instructions"

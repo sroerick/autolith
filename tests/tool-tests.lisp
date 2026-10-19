@@ -429,6 +429,10 @@
             "existing-file access is exposed only through the resource protocol")
            (test-assert (not (tool-result-success-p result))
                         "unknown provider calls produce a correlated tool failure")
+           (test-assert (eq (tool-result-error-code result) ':invalid-arguments)
+                        "Invalid tool calls carry a stable failure category.")
+           (test-assert (eq (tool-result-error-code (tool-failure "private report")) ':tool-failure)
+                        "Every directly returned failure receives a content-independent fallback code.")
            (let* ((commands
                     (json-object
                      "search_query"
@@ -691,8 +695,9 @@
                                "command" (test-fixture-shell-command
                                           *platform* "echo autolith-shell-works && exit 3"
                                           "Write-Output autolith-shell-works; exit 3"))))
-               (test-assert (tool-result-success-p result)
-                            "shell.run reports command completion")
+               (test-assert (and (not (tool-result-success-p result))
+                                 (eq (tool-result-error-code result) ':nonzero-exit))
+                            "shell.run reports a nonzero command completion as failure")
                (test-assert (search "exit 3" (tool-result-content result))
                             "shell.run reports nonzero exit codes")
                (test-assert (search "autolith-shell-works"
@@ -771,10 +776,6 @@
                                   (lambda (command directory)
                                     (declare (ignore command directory))
                                     ':sandboxed)))))
-                           (test-assert
-                            (tool-result-success-p result)
-                            (format nil "an authorized shell command runs inside the sandbox: ~A"
-                                    (tool-result-content result)))
                           (test-assert (probe-file inside)
                                        "the command sandbox permits workspace writes")
                           (let* ((home (platform-truename *platform* (user-homedir-pathname)))
@@ -786,7 +787,10 @@
                                              (platform-truename *platform* (uiop:temporary-directory)))))))
                             (test-assert
                              (eq (not (null (probe-file outside))) (not (null temporary-home-p)))
-                             "the sandbox permits temporary roots and rejects other host writes")))
+                             "the sandbox permits temporary roots and rejects other host writes")
+                            (test-assert
+                             (eq (tool-result-success-p result) (not (null temporary-home-p)))
+                             "Rejected host writes produce a failed shell result")))
                         (test-withheld ':command-sandbox
                                        "sandboxed shell commands"))
                  (when (probe-file outside)

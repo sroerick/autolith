@@ -18,6 +18,10 @@
 
 ;;;; -- Failure Translation --
 
+(defmethod platform-permission-error-code-p ((platform posix-platform) (code integer))
+  "Recognize POSIX permission failures without exposing host errno values."
+  (not (null (member code (list sb-posix:eacces sb-posix:eperm)))))
+
 (-> posix--failure-reason (integer) platform-failure-reason)
 (defun posix--failure-reason (errno)
   "Return the portable failure reason for ERRNO."
@@ -58,6 +62,31 @@
 (defun posix--namestring (pathname)
   "Return PATHNAME as the native namestring SB-POSIX expects."
   (uiop:native-namestring pathname))
+
+(defmethod platform-ensure-directories-exist ((platform posix-platform) pathname)
+  "Create absent parent directories through POSIX so failures retain their errno."
+  (platform--ensure-directories-exist
+   platform pathname
+   (lambda (directory)
+     (posix--call ':create directory
+                  (lambda () (sb-posix:mkdir (posix--namestring directory) #o777))))))
+
+(defmethod platform-open-new-file ((platform posix-platform) pathname)
+  "Create a staging file through POSIX so creation errors retain their errno."
+  (posix--call
+   ':open pathname
+   (lambda ()
+     (let ((descriptor (sb-posix:open (posix--namestring pathname)
+                                     (logior sb-posix:o-wronly sb-posix:o-creat sb-posix:o-excl)
+                                     #o666)))
+       (unwind-protect
+            (prog1 (sb-sys:make-fd-stream descriptor :output t
+                                        :element-type '(unsigned-byte 8)
+                                        :file (posix--namestring pathname)
+                                        :pathname pathname :auto-close t)
+              (setf descriptor nil))
+         (when descriptor
+           (sb-posix:close descriptor)))))))
 
 
 ;;;; -- Capabilities and Processes --

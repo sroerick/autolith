@@ -36,11 +36,12 @@
            (funcall function parent orchestrator context job path)
         (task-orchestrator-close orchestrator)))))
 
-(-> task-continuity-tests--refused-p (function) boolean)
-(defun task-continuity-tests--refused-p (function)
-  "Return true when FUNCTION signals a typed continuity refusal."
+(-> task-continuity-tests--refused-p (function &key (:code (option keyword))) boolean)
+(defun task-continuity-tests--refused-p (function &key code)
+  "Return true when FUNCTION signals a typed continuity refusal with optional CODE."
   (handler-case (progn (funcall function) nil)
-    (task-continuity-error () t)))
+    (task-continuity-error (condition)
+      (or (null code) (eq code (tool-failure-code condition))))))
 
 (-> test-task-continuity-classification () null)
 (defun test-task-continuity-classification ()
@@ -92,7 +93,7 @@
                                 :safety "Deterministic read-only provider fixture.")
        (test-assert
         (task-continuity-tests--refused-p
-         (lambda () (task-continuity-revive context orchestrator execution)))
+         (lambda () (task-continuity-revive context orchestrator execution)) :code ':authority)
         "Replay requires a fresh explicit authorization")
        (test-assert
         (not (probe-file (merge-pathnames "revive.sexp"
@@ -154,8 +155,18 @@
        (test-assert (null (task-continuity-records child)) "A child cannot inspect its parent or siblings")
        (test-assert
         (task-continuity-tests--refused-p
-         (lambda () (task-continuity-declare child orchestrator execution :safety "read-only")))
+         (lambda () (task-continuity-declare child orchestrator execution :safety "read-only")) :code ':authority)
         "Children cannot grant replay authority")
+       (test-assert
+        (task-continuity-tests--refused-p
+         (lambda () (task-continuity-abandon child orchestrator execution)) :code ':authority)
+        "Child abandonment is an authority refusal")
+       (let ((*worker-host-tool-policy* (list :restricted-p t :allowlist nil)))
+         (test-assert
+          (task-continuity-tests--refused-p
+           (lambda () (task-continuity-dispatch context "resource" "read"
+                                                (json-object "uri" "workspace:file"))) :code ':authority)
+          "A withheld recovery capability is an authority refusal"))
        (with-lock-held ((cl-jobpond::job-pool--lock (task-orchestrator-pool orchestrator)))
          (setf (gethash (job-identifier job)
                         (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator))) job))

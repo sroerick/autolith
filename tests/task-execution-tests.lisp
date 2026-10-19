@@ -586,6 +586,10 @@
         (task-job-cancel-execution-descendants job ':test-cleanup))
       (when (and execution (not (job-terminal-p execution)))
         (job-cancel execution :reason ':test-cleanup))
+      ;; Terminal publication precedes the pool worker's lifecycle callbacks.
+      ;; Join those writers before removing their configuration directory.
+      (test-assert (task-orchestrator-close orchestrator)
+                   "The fixture joins execution-pool writers before deleting their state")
       (ignore-errors (lisp-worker-pool-stop-all worker-pool))
       ;; Pool listeners publish the durable completion record after the
       ;; execution turns terminal; joining the pools ends that write.

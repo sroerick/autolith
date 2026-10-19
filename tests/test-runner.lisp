@@ -26,10 +26,15 @@ Reloading a suite replaces its registration without duplicating cases."
        (fiveam:def-suite ,suite)
        ,@(loop for name in cases
                collect `(fiveam:test (,name :suite ,suite :compile-at :definition-time)
-                          (let ((*tests-running-p* t))
-                            (unwind-protect
-                                 (,name)
-                              (task-tests--close-orchestrators)))))
+                          (let ((*tests-running-p* t)
+                                (*telemetry-process-function*
+                                  (lambda (run request) (declare (ignore run request)) nil))
+                                (*model-catalog-fetch-function*
+                                  (lambda (context) (declare (ignore context)) nil)))
+                            (with-test-environment (("AUTOLITH_TELEMETRY" "off"))
+                              (unwind-protect
+                                   (,name)
+                                (task-tests--close-orchestrators))))))
        (setf *test-suites*
              (append (remove ,label *test-suites* :key #'first :test #'string=)
                      (list (cons ,label ',cases)))))))

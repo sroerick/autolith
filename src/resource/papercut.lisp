@@ -395,8 +395,10 @@
       ((string= name "papercut-report")
        (resource-item-validate-operation-fields
         "Papercut"
-        operation '("op" "title" "content") '("op" "title" "content"))
+        operation '("op" "title" "content" "issue-kind" "tool") '("op" "title" "content"))
        (list :kind ':report
+             :issue-kind (papercut--issue-kind (or (tool-argument operation "issue-kind") "other"))
+             :tool (telemetry--tool (tool-argument operation "tool"))
              :title (papercut-resource--required-text
                      operation "title" "title" *papercut-title-limit*)
              :content (papercut-resource--required-text
@@ -514,6 +516,8 @@
                          (papercut--report-unlocked
                           configuration :title (getf operation :title)
                                         :content (getf operation :content)
+                                        :issue-kind (getf operation :issue-kind)
+                                        :tool (getf operation :tool)
                                         :source-conversation
                                         (conversation-identifier conversation)
                                         :active active))
@@ -529,6 +533,7 @@
             (ecase (getf operation :kind)
               (:report
                (destructuring-bind (papercut duplicate-p) result
+                 (papercut--note-report papercut duplicate-p)
                  (let ((item-resource
                          (papercut-resource--make-item
                           (papercut-identifier papercut) (papercut-workspace papercut))))
@@ -540,12 +545,17 @@
                         (format nil "Reported papercut ~A." (papercut-identifier papercut)))
                     (resource-uri item-resource)))))
               (:assess
+               (papercut--note-repair result
+                                     (case (getf operation :verdict)
+                                       (:improved "applied") (:worse "failed") (otherwise "proposed"))
+                                     (getf operation :note))
                (values
                 (papercut-resource--item-observation-from-report resource result)
                 (format nil "Assessed papercut ~A as ~(~A~)."
                         (papercut-resource-identifier resource) (getf operation :verdict))
                 nil))
               (:close
+               (papercut--note-repair result "applied" (getf operation :resolution))
                (values
                 (papercut-resource--closed-observation
                  resource result (getf operation :resolution))

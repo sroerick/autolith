@@ -4,6 +4,108 @@
 
 (setf *test-suites* nil)
 
+(define-test-suite telemetry-hooks
+  ;; telemetry-hook-model-tests.lisp
+  test-telemetry-context-window-streams
+  test-telemetry-returned-model-hook
+  test-telemetry-cache-write-usage
+  test-telemetry-unlisted-provider-model
+  test-telemetry-chatgpt-cache-write-usage
+  test-telemetry-compaction-roles
+  test-telemetry-request-roles
+  ;; telemetry-hook-provider-tests.lisp
+  test-telemetry-provider-retry-hooks
+  test-telemetry-grok-empty-response-hooks
+  test-telemetry-provider-transport-hooks
+  test-telemetry-provider-failure-hooks
+  test-telemetry-provider-fallback-hooks
+  ;; telemetry-hook-run-tests.lisp
+  test-telemetry-terminal-outcomes
+  test-telemetry-run-owner-token
+  test-telemetry-borrower-outcomes
+  test-telemetry-finish-freezes-counters
+  test-telemetry-detached-run-lifetime
+  test-telemetry-run-unwind
+  test-telemetry-scheduler-run-ownership
+  test-telemetry-headless-run-unwind
+  test-telemetry-recovered-process-trace
+  test-telemetry-shell-context-isolation
+  test-telemetry-launch-context-validation
+  test-telemetry-launch-context-lifetime
+  test-telemetry-launch-context-atomic-claim
+  test-telemetry-scheduler-cancellation-publication
+  test-telemetry-run-job-publication-outcomes
+  test-telemetry-run-job-zero-request-failure
+  test-telemetry-run-job-provider-failure
+  test-telemetry-run-job-unregistered-model
+  test-telemetry-run-job-terminal-yields
+  test-telemetry-run-job-terminal-failures
+  test-telemetry-run-protocol-failure
+  test-telemetry-job-cancellation-hooks
+  test-telemetry-configuration-owner-hook
+  test-telemetry-secondary-root-settings
+  ;; telemetry-hook-report-tests.lisp
+  test-telemetry-duplicate-flushed-tool-report-link
+  test-telemetry-duplicate-consent-transition
+  test-telemetry-tool-report-link
+  test-telemetry-flushed-tool-report-link
+  test-telemetry-role-papercut-report
+  test-telemetry-papercut-metadata-hooks
+  test-telemetry-issue-correlation
+  ;; telemetry-hook-repair-tests.lisp
+  test-telemetry-incident-repair-lifecycle
+  test-telemetry-invalid-incident-link
+  test-telemetry-repair-hook-projections
+  ;; telemetry-hook-tool-outcome-tests.lisp
+  test-telemetry-explicit-correction-hook
+  test-telemetry-shell-exit-hook
+  test-telemetry-tool-failure-categories
+  test-telemetry-outside-resource-failures
+  test-telemetry-tool-error-code-boundary
+  test-telemetry-parallel-tool-hooks
+  ;; telemetry-hook-tool-denial-tests.lisp
+  test-telemetry-tool-denial-hooks
+  test-telemetry-recovered-denial-hook
+  test-telemetry-mcp-policy-denial-hook
+  test-telemetry-emacs-buffer-denial-hook
+  test-telemetry-managed-denial-hook
+  test-telemetry-outside-path-denial-hooks
+  test-telemetry-resource-policy-denial-hooks
+  ;; telemetry-hook-authority-tests.lisp
+  test-telemetry-mission-authority-hooks
+  test-telemetry-continuity-authority-hooks
+  test-telemetry-peer-authority-hooks
+  test-telemetry-worker-host-admission-hooks
+  test-telemetry-worktree-authority-hook
+  test-telemetry-child-authority-hooks
+  ;; telemetry-hook-os-permission-tests.lisp
+  test-telemetry-os-permission-failure-hooks)
+
+(define-test-suite telemetry
+  test-telemetry-background-completion
+  test-telemetry-background-progress
+  test-telemetry-background-retirement
+  test-telemetry-background-shutdown
+  test-telemetry-background-handoff
+  test-telemetry-default-on
+  test-telemetry-disabled
+  test-telemetry-schema-and-runs
+  test-telemetry-span-applicability
+  test-telemetry-category-projection
+  test-telemetry-verification-scope
+  test-telemetry-catalog-reload
+  test-telemetry-run-finalization-once
+  test-telemetry-run-model-identity
+  test-telemetry-model-attributes-golden
+  test-telemetry-public-models
+  test-telemetry-model-collector-contract
+  test-telemetry-revocation
+  test-telemetry-redaction-failures
+  test-telemetry-worker-redactor-contract
+  test-telemetry-subprocess-deadlines
+  test-telemetry-anonymous-upload
+  test-telemetry-real-redactor)
+
 (define-test-suite model-catalog
   test-provider-catalog-picker
   test-provider-catalog-failures
@@ -11,6 +113,19 @@
   test-model-catalog-standalone-http
   test-model-catalog-parser
   test-model-catalog-http-stream)
+
+(define-test-suite telemetry-catalog
+  test-model-catalog-idle-refresh
+  test-model-catalog-checkpoint-refresh
+  test-model-catalog-cache
+  test-model-catalog-cache-rejection
+  test-model-catalog-cache-failures
+  test-model-catalog-failure-completion
+  test-model-catalog-consent
+  test-model-catalog-shutdown-settings-race
+  test-model-catalog-transport
+  test-model-catalog-network-fallback
+  test-model-catalog-process-deadline)
 
 (define-test-suite shell-output
   test-shell-retained-preview-and-ranges
@@ -440,6 +555,7 @@
   test-provider-deferred-tool-loading
   test-provider-request
   test-provider-request-tool-filtering
+  test-provider-reserved-web-schema
   test-provider-native-compaction
   test-provider-rate-limits
   test-provider-context-presentation
@@ -648,6 +764,7 @@
   test-image-commit-replay-probe)
 
 (define-test-suite recovery
+  test-recovery-launcher-trace-context
   test-recovery-xdg-directories
   test-recovery-conversation-identifiers
   test-recovery-session-handoff
@@ -760,6 +877,8 @@
   test-rlm-permission-classifier)
 
 (define-test-suite run-job
+  test-run-job-relative-paths
+  test-run-job-runtime-usage
   run-run-job-tests)
 
 (define-test-suite run-job-events

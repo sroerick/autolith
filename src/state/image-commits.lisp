@@ -1180,10 +1180,10 @@ definitions the replay skipped are kept in *IMAGE-REPLAY-SKIPS* instead."
                  :result ':pending))
           (handler-case
               (progn
-                (mutation-checker-check-active
-                 checker
-                 configuration
-                 (image-commit-render-pending configuration))
+                (self-repair-check-mutations
+                 configuration checker
+                 (image-commit-render-pending configuration)
+                 :mutations mutation-identifiers)
                 (let ((commit
                         (image-commit-publish
                          configuration
@@ -1352,10 +1352,10 @@ commit with nothing pending still drops them."
              :result ':pending))
       (handler-case
           (progn
-            (mutation-checker-check-active
-             (tool-context-effective-mutation-checker context)
-             configuration
-             (image-commit-render-pending configuration))
+            (self-repair-check-mutations
+             configuration (tool-context-effective-mutation-checker context)
+             (image-commit-render-pending configuration)
+             :mutations mutation-identifiers)
             (let ((commit (image-commit-publish
                            configuration
                            :title title

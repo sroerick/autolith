@@ -200,7 +200,7 @@
 (defmethod resource-resolver-read-documentation ((resolver workspace-file-resolver))
   "Document workspace: reads."
   (declare (ignore resolver))
-  "workspace: URIs return bounded, line-windowed file or directory observations. Identifiers are workspace-relative or absolute paths inside the workspace roots, for example workspace:src/main.lisp, workspace:src/ for a directory listing, and workspace:. for the workspace root; spaces may stay literal or be percent-encoded.")
+  "workspace: URIs return bounded, line-windowed file or directory observations. Identifiers are workspace-relative or absolute paths, for example workspace:src/main.lisp, workspace:src/ for a directory listing, and workspace:. for the workspace root; spaces may stay literal or be percent-encoded. Absolute native paths are also accepted and use the same full-access authorization outside the workspace and source roots.")
 
 (defmethod resource-resolver-edit-documentation ((resolver workspace-file-resolver))
   "Document workspace: edits."
@@ -252,6 +252,7 @@
       (error 'tool-error
              :message (format nil "Could not inspect workspace resource ~A: ~A"
                               path condition)
+             :code (tool-failure-code condition)
              :tool-name "resource.read"))))
 
 (-> workspace-file--read-content
@@ -296,6 +297,7 @@ Return NIL when NAME disappears during enumeration."
       (error 'tool-error
              :message (format nil "Could not inspect directory entry ~A beneath ~A: ~A"
                               name directory condition)
+             :code (tool-failure-code condition)
              :tool-name "resource.read"))))
 
 (-> workspace-file--directory-content (pathname) string)
@@ -312,6 +314,7 @@ Return NIL when NAME disappears during enumeration."
             (error 'tool-error
                    :message (format nil "Could not list workspace directory ~A: ~A"
                                     path condition)
+                   :code (tool-failure-code condition)
                    :tool-name "resource.read")))
       (setf truncated-p more-p)
       (dolist (name names)
@@ -550,11 +553,7 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
         (complete-p nil))
     (unwind-protect
          (progn
-           (with-open-file (stream temporary
-                                   :direction ':output
-                                   :if-exists ':error
-                                   :if-does-not-exist ':create
-                                   :element-type '(unsigned-byte 8))
+           (with-open-stream (stream (platform-open-new-file *platform* temporary))
              (setf created-p t)
              (write-sequence octets stream)
              (finish-output stream))
@@ -597,7 +596,7 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
   "Stage and publish CONTENT after an immediate exact BASE-OBSERVATION check."
   (let ((path (workspace-file-resource-pathname resource))
         (octets (workspace-file--replacement-octets content)))
-    (ensure-directories-exist path)
+    (platform-ensure-directories-exist *platform* path)
     (handler-case
         (cl-hashline:publish-edit
          :base base-observation
@@ -738,6 +737,7 @@ would print as a drive prefix, and NTFS reads NAME:REST as a named stream."
                    :message
                    (format nil "~A requires full-access approval for path ~A outside the workspace and source roots."
                            tool-name path)
+                   :code ':permission-denied
                    :tool-name tool-name))
           (let ((*workspace-tool-readable-roots* (cons path roots)))
             (funcall function))))))
@@ -809,8 +809,10 @@ already admits the path to the readable roots, so it is not asked again."
                    (resource-observation-state-ensure
                     (tool-context-conversation context) observation
                     :visible-ranges visible-ranges)))
-            (tool-success
-             (workspace-file--read-result state body total-lines truncated-p))))))))
+            (let ((content (workspace-file--read-result state body total-lines truncated-p)))
+              (if (eq (workspace-file-observation-kind observation) ':missing)
+                  (tool-failure content :code ':not-found)
+                  (tool-success content)))))))))
 
 (defmethod resource-tool-edit
     ((resource workspace-file-resource) (tool resource-edit-tool)

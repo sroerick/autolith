@@ -1,0 +1,436 @@
+#+title: Consent-gated Seismograph telemetry
+
+* Telemetry settings
+
+Telemetry is enabled by default. Diagnostic text requires separate opt-in and
+defaults to =nil=. Both settings persist, and a saved telemetry opt-out remains
+disabled. The default destination is
+=https://seismograph.autolith.rocks/v1/traces=. To disable telemetry:
+
+#+begin_src lisp
+(setf (autolith::config :telemetry-enabled-p configuration) nil)
+#+end_src
+
+Set =AUTOLITH_TELEMETRY=off= to disable it for a process and its children.
+
+Configure another destination and any public model aliases with:
+
+#+begin_src lisp
+(setf (autolith::config :telemetry-endpoint configuration)
+      "https://seismograph.autolith.rocks/v1/traces"
+      (autolith::config :telemetry-model-aliases configuration)
+      '(("local-private-model" . "public-model-alias"))
+      (autolith::config :telemetry-enabled-p configuration) t)
+#+end_src
+
+Use HTTPS, or HTTP to exactly =localhost=, =127.0.0.1= or =::1=. The path must
+be =/v1/traces=, without URL credentials, query or fragment. Uploads refuse
+redirects and verify HTTPS certificates. Uploads are anonymous and require no
+credentials or token file.
+
+Enable =:telemetry-diagnostics-p= separately to export short report and repair
+summaries after local redaction. The trusted absolute shared-library path comes
+from =AUTOLITH_DEFINGERPRINTER_LIBRARY=. At process attach, capture that trusted
+path; pass it explicitly to each redaction child, which resolves and verifies
+an absolute regular library file before loading it. Nix provides immutable model
+and ONNX Runtime defaults. For explicit artifacts, configure both
+=:telemetry-model-directory= and =:telemetry-runtime-library=. Model weights are
+external artifacts, never repository contents.
+
+Application consent guards every native operation. Each one-shot worker uses the
+published 0.1.0 create/redact/close interface (C ABI version 2); model
+initialization is lazy.
+
+Set either consent setting to =nil= to synchronously invalidate all active run
+snapshots, terminate their subprocesses and discard queued spans. Re-enabling
+consent admits fresh runs; old contexts are invalid. Copied child and inference
+configurations cannot override the process owner's consent or destination.
+
+* Exported metadata
+
+The exporter sends OTLP/HTTP JSON schema 1, instrumentation revision 6, with
+fresh random span IDs and a launcher trace shared across recovery attempts.
+Exact event timestamps are retained. Each
+logical root carries its outcome and actual model/tool attempt
+counts and the primary agent's provider, requested model and returned model.
+Helper requests supply identity only in runs without agent requests. Different
+primary identities produce =mixed= (or =other= for providers).
+Requests without role metadata retain their historical primary grouping while
+omitting the request-role attribute.
+Model spans contain a fixed provider category, model identifiers, duration and bounded normalized
+input/output/cache token counts. Explicit =:telemetry-model-aliases= pairs take
+precedence over the allowlist, including for known public names. The returned
+model comes from the provider's actual streaming response envelope for Responses,
+Chat Completions, Anthropic and Gemini protocols. It is never filled from the
+requested model. Unlisted identifiers retain their sanitized spelling with
+=autolith.model.known=false= and an independent =autolith.model.response_known=
+flag for the returned model. Missing identities are omitted. Common email,
+address, host, path, credential and opaque-ID patterns are redacted; whitespace
+causes the whole unlisted identifier to become =redacted-text=. The result is
+printable ASCII bounded to 256 characters. This deterministic filter is best
+effort, not a guarantee against personal or proprietary deployment names.
+Configure explicit public aliases when those names must remain private.
+Catalog matching is exact and case-sensitive, with no prefix matching or
+runtime model discovery.
+
+Model attempts record =autolith.model.outcome=, =gen_ai.response.finish_reason=,
+=error.type= and =autolith.request.role=. Request roles distinguish =agent=,
+=permission_classifier=, =title_generation=, =compaction= and =inference=.
+Unavailable terminal reasons are omitted. Error categories contain no
+condition reports. Cache-write tokens use the provider's reported counter,
+including OpenAI =input_tokens_details.cache_write_tokens= when present;
+missing counters are omitted and stored as null, never fabricated as zero.
+Chat Completions also accepts top-level =cache_write_tokens= and nested
+=prompt_tokens_details.cache_write_tokens=. Anthropic uses the raw
+=message_start.message.usage.cache_creation_input_tokens= counter, preserving
+omission even when its portable usage object supplies a default zero. A
+provider-reported zero remains zero, except ChatGPT Responses' structural zero
+for unsupported cache writes, which is omitted and stored as null. Positive
+cache-write counters from that service are preserved. Ordinary OpenAI responses
+that report only cache reads have unknown cache writes.
+
+Run rows retain their terminal =error.type= when a failure occurred. Successful
+run and model spans omit =error.type=. A run's =tool=
+and =request_role= columns are null because it can contain several tools and
+request purposes. Older run spans without an error category store null.
+
+The code creating a run receives its opaque owner token. Only that token can
+finish the run. Scheduler jobs borrow an ambient or explicitly passed run and
+only report terminal metadata; a job creating its own run retains the token
+through terminal artifact publication. Headless =run-job= owns its root through
+contract validation and publication of its final result envelope. Agent turns
+and provider retries reuse that root.
+The published job state sets the outcome, including failed yields, invalid
+structured output (=protocol=), and publication failures (=internal=) after a
+normal agent return. =PROVIDER-FAILURE= maps to the public =provider= error
+category even when the provider rejects a model before any request is counted;
+model attempts retain their own more specific categories. Finalization claims
+the root before upload, so competing cleanup paths cannot export it twice.
+Every owner uses =unwind-protect= to finish on errors and non-local exits.
+An exit without terminal metadata exports =error= / =internal= with
+=autolith.run.error_code= =unfinished-run=. Finish is idempotent. Terminal
+reports after finish are ignored with a local debug log.
+
+The owner's own terminal result is authoritative, including successful recovery
+from a child's failure. Only an owner without a terminal result uses borrower
+reports: error wins over cancelled, which wins over success. Equal outcomes use
+lexical error type and code order so completion order cannot change the result.
+Detached tasks own independent runs with fresh traces and attempt 1; their
+children and terminal root remain valid after the caller's turn finishes.
+
+The Bash and Lisp launchers create =AUTOLITH_TRACEPARENT= once when absent and
+default =AUTOLITH_RUN_ATTEMPT= to 1. Recovery forwards the trace context and
+increments the attempt before starting clean source or a retained generation.
+The active process consumes both variables once at startup into process-local
+state and unsets them before agent work. Ordinary shells, workers, worktrees and
+nested Autolith launches receive no recovery context. Only the launcher and
+recovery parent retain the environment needed to forward a recovered attempt.
+The first failed attempt flushes before returning its nonzero status. Each
+attempt has a fresh, parentless root with =autolith.run.attempt= (1 through
+65535) and =autolith.run.recovered= (true for attempts above 1). At the UInt16
+limit recovery warns and retains 65535; final-attempt selection then uses time.
+Only the first top-level CLI/headless scope adopts the launcher context;
+the claim is atomic and process-wide, surviving configuration replacement and
+telemetry shutdown. Interactive/TUI turns and independent scheduler runs always
+start fresh traces at attempt 1. W3C version 00 contexts require
+32 lowercase hexadecimal trace digits and 16 lowercase parent digits, both
+nonzero, plus two lowercase hexadecimal flag digits. Malformed context starts
+a fresh trace with a warning. Invalid, nonpositive or oversized decimal attempts
+warn and become 1. Diagnostics never print the supplied context value.
+
+Seismograph groups attempts only within the same UTC root start day, then uses
+the highest attempt for that logical run and joins only its children. Recovery
+starting on another UTC day counts independently. This fixed horizon is under
+24 hours, well inside daily snapshot finalization, and stays stable when raw
+events expire. Earlier failed roots contribute =failed_attempts=;
+=retried_runs= counts traces with more than one observed root. A missing first
+root after a hard crash does not prevent a later attempt from counting. Legacy
+clients omit attempts; multi-root traces containing any missing attempt are
+counted as =ambiguous_runs= and excluded from run totals.
+Successful tool spans omit =error.type=. Tool spans omit model and request-role
+attributes, and model spans omit tool attributes; non-applicable columns remain
+null in the collector.
+
+Categorical metadata uses keywords internally and =nil= for unavailable values.
+Each field's vocabulary is defined once in =src/telemetry/runtime.lisp=; the
+exporter maps keywords to the collector's catalog strings. No absent outcome,
+provider, model, request role, finish reason, tool, issue kind, repair kind,
+repair outcome, or error type is replaced with =unknown=, =none=, =other=,
+=agent=, or =proposed=. Unavailable verification scopes and scopes on non-check
+events are omitted as well. Checks retain an explicit =none= scope when the
+caller records that no verification occurred.
+
+The remaining broad categories describe actual observations: =mixed= means
+different primary model identities; provider =other= means an uncatalogued
+provider family or multiple families; issue and repair =other= mean a classified
+incident or operation outside the named kinds. Model =custom= remains an
+explicit category, while ordinary unlisted model identifiers keep their
+sanitized spelling. Error =internal= means an observed local failure that fits
+no narrower category. Finish-reason =OTHER= is a provider-reported terminal
+reason. Finish reasons normalize case once: =STOP= and =MAX_TOKENS= export as
+=stop= and =max_tokens=, and =MODEL_CONTEXT_WINDOW_EXCEEDED= exports as
+=model_context_window_exceeded=. The catalog's uppercase-only Gemini reasons
+=SAFETY=, =RECITATION=, =OTHER= and =MALFORMED_FUNCTION_CALL= retain that wire
+casing. These values are categories, never substitutes for missing metadata.
+
+Tool authority denials export =autolith.tool.outcome= as =permission_denied=
+and =error.type= as =permission=. This includes refused outside-path approval
+(including sandbox-only approval where full access is required), unavailable
+authorization, resource scheme/child/ownership policy, and tool capability
+restrictions. Existing policy codes such as =permission-denied= and
+=access-denied= are retained. OS permission refusals such as EACCES and EPERM
+instead export outcome =error=, code =os-permission-denied=, and error type
+=permission=. The error type groups permission failures; the outcome and code
+distinguish authority decisions from filesystem failures. Tool reply text is
+unchanged. Codes are separate from ordinary model-visible tool output, but
+worker Lisp host-call results expose them as =:code= and now receive
+=:os-permission-denied= for OS refusals. Persisted worker host-call and
+execution-job records retain codes; ordinary conversation tool-result records
+omit them. No retry or authorization decisions depend on the former OS code.
+
+Public model membership comes from https://models.dev/api.json through the neutral
+=src/models/catalog.lisp= module. Telemetry supplies its consent context and supervised
+transport to the module's refresh protocol. With telemetry
+consent, AL loads a validated last-good cache under
+=:cache-root=/models/models-dev.json and starts a background refresh when
+needed. A consent-owned timer checks expiry every minute, including idle sessions.
+Each successful refresh is valid for 24 hours; failed attempts use a
+five-minute backoff from completion. A stale catalog is usable during a failed
+refresh. If cache publication fails, AL uses the validated catalog in memory.
+Cold offline starts retain sanitized unlisted names with false known flags.
+Disabled telemetry loads no cache and starts no fetch thread or subprocess.
+An explicit provider/model-picker refresh may independently use this public cache.
+
+The fixed public URL receives an anonymous request for the whole catalog. AL
+never sends a model name for lookup or reads private provider discovery results.
+Native model keys must equal each record's =id=. Optional =canonical_model_id=
+values also enter the exact membership set. IDs are printable ASCII, 1 through
+256 characters. AL rejects malformed or empty catalogs, schema mismatches, more
+than 100,000 model entries or unique IDs, and bodies larger than 16 MiB.
+Requests refuse redirects and have a ten-second process deadline. AL publishes
+validated caches atomically. Revocation, shutdown and checkpoint quiescence
+stop and join fetch work and the idle timer; results from an old consent epoch cannot publish.
+
+Research reference: https://github.com/anomalyco/models.dev.git, inspected fresh
+commit =3f0ea8c37467b7d037b1e1db1fcd5e17bdd88b2c= on 2026-10-14. The README
+and =packages/core/src/generate.ts= describe native =id= and inherited
+=canonical_model_id= generation. This reference is not a runtime catalog pin.
+
+Tool spans
+contain the exact Seismograph catalog name when available, omitting external names,
+completion sequence, outcome, duration, correction flag and a consecutive
+argument-equality boolean. The local argument digest is discarded at run end
+and during checkpoint quiescence. Builtin tool schemas with client-controlled
+parameters accept an optional =corrects_previous= boolean: true explicitly marks
+a correction of the immediately preceding tool call. Provider-reserved =web.run=
+parameters use the provider's exact schema. The registry consumes the correction
+control field before executing the tool and excludes it from argument equality.
+No correction is inferred from private text. External tool arguments are not
+changed by this convention.
+
+Reports and repairs carry fixed issue/repair enums and public tool categories.
+=papercut.report= and the =papercut-report= operation of =resource.edit= accept
+optional =issue-kind= and =tool= fields. Categories are =broken_tool=,
+=misleading_success=, =authorization=, =performance= and =other=. Missing categories
+default to =other=; missing or external tool names become =unknown=.
+When a report names a catalog tool, its telemetry ID is attached to the latest
+failed or denied attempt of that tool in the same run, as both
+=autolith.report.id= and =autolith.incident.id=. This selection uses only the
+explicit tool field and recorded outcome, never report text. Existing links are
+not replaced. The report also carries =autolith.tool.span_id=, which joins to
+the tool's span ID within the same trace even when that tool was already
+flushed. Only still-queued tool spans receive the report and incident attributes.
+Duplicate reports export a report reference when they newly link an already
+flushed failed span; queued spans receive the link directly without another report.
+Successful attempts, unknown tool names, other tools and earlier runs are not
+linked. File the report during the turn that observed the failure.
+
+Each papercut receives an independent random telemetry incident ID during a
+consented run. The ID is stored alongside the local report for reuse across later
+runs and process restarts. It is distinct from the local papercut ID. Issues
+created without consent receive an export ID at their first consented link,
+assessment or closure.
+
+Supply the exact active local papercut ID in =incident= when you call
+=self.eval=, =self.redefine=, =self.set= or =self.persist-definition= for a repair.
+Supply =repair-kind= to declare =redefine_function=, =change_setting=,
+=change_tool_strategy= or =other=. Unknown incidents and conflicting mutation
+links fail before a mutation. Omit =incident= for a standalone attempt.
+
+Each consented attempt has a separate random ID stored in the mutation journal.
+Checks, discard and commit reuse that ID. =self.exercise= inherits the selected
+mutation's incident and repair category; =verification-scope= defaults to
+=focused= and accepts =full=. Commit and persistence checks use the configured
+checker's scope: =focused= for structural or callback checks, =full= for the
+complete in-image test suite.
+
+Revision 3 exports distinct =repair=, =check=, =assessment= and =closure= events.
+Only successful checks set =autolith.repair.verified=. Assessments retain their
+=improved=, =worse=, =unchanged= or =too-early= verdict; closure uses =closed=.
+Each event includes the affected tool and issue category, the public operation
+name, and verification scope. =autolith.incident.id= links an issue and
+=autolith.repair.attempt.id= links an attempt. =autolith.report.id= carries the
+incident ID when linked, otherwise the attempt ID. These IDs permit cross-run
+correlation for one issue or attempt.
+
+Diagnostic consent gates the summary thunk before reading it. Deterministic
+credential/path/host masking surrounds Defingerprinter's full pinned Rampart
+model. Only successful native output of at most 1024 characters enters the
+queue, with the =rampart= engine and pinned upstream revision marker. Unsupported
+languages/scripts, missing artifacts, redaction failures and deadlines discard
+text while numerical telemetry remains available. Supported languages are
+English, Spanish, French, German, Italian, Portuguese and Dutch.
+
+Prompts, tool arguments/results, credentials, raw conditions, stacks, source,
+workspace paths and local identifiers are outside the wire projection. Backend
+response bodies and error diagnostics are discarded.
+
+* Runtime bounds
+
+=:telemetry-queue-limit= bounds the in-memory FIFO to 1 through 512 spans
+(default 128); overflow discards the oldest span. One background uploader batches
+completed model, tool, report and repair events every five seconds while their
+owning goal or turn remains active. Individual streamed tokens are not uploaded.
+The final root outcome and totals are queued only when the owning run finishes;
+completion wakes the uploader immediately and never waits for the server.
+At most one upload snapshot is in flight in addition to the bounded pending FIFO.
+Failed snapshots are discarded without retries.
+
+=:telemetry-timeout-ms= bounds each native redaction
+operation and the complete upload (default 3000, maximum 10000 milliseconds).
+Each operation uses a supervised one-shot SBCL subprocess, booted from the
+configured matching =:active-image-core=. The deadline supervisor terminates
+and reaps the process. Revocation terminates registered workers synchronously.
+Checkpoint quiescence also discards pending spans and joins the uploader before
+forking or saving. Clean process shutdown closes admissions and gives final
+uploads at most one configured deadline (three seconds by default) to finish,
+then cancels and joins remaining work. Immediate shutdown with =:drain-p nil=
+skips that grace period. Revocation, checkpointing and replacement of the owning
+configuration cancel uploads instead of draining them.
+The main image never loads native redactor handles or token contents. Worker
+failures are isolated from the user's values, errors and cancellation exits.
+
+* Hook and checkpoint interfaces
+
+After constructing the owning application configuration, call
+=telemetry-attach=. Secondary application roots receive revocation-only listeners;
+attaching a disabled root does not revoke or transfer ownership. Route interactive
+reads and writes of both consent settings through
+=(telemetry-consent-configuration configuration)=. A secondary root can revoke
+and synchronize the durable owner; only the canonical owner can enable consent.
+At service shutdown, call =telemetry-shutdown=. An explicit owner replacement
+requires shutdown followed by attach of the new configuration.
+
+Wrap a logical turn with =(telemetry-call-with-run configuration function)=.
+Nested provider requests reuse =*telemetry-run*=. Independent child turns create
+fresh roots. Pass the captured run explicitly to completion callbacks in other
+threads. Emit =telemetry-note-model= once per actual provider attempt, including
+authentication recovery and retries, with normalized provider usage. Emit
+=telemetry-note-tool= once per completed attempt with the typed outcome and
+monotonic duration. =telemetry-note-report= and =telemetry-note-repair= accept a
+=summary-function= thunk; acquire raw text only inside that thunk.
+Supply =:incident-id= and =:attempt-id= to link typed repair/check events.
+Papercut and mutation hooks supply their persisted export IDs automatically.
+Instrumentation revision 4 identifies model outcome, request-role, root identity
+and sanitized unlisted-model projections in collector comparisons. Tool events
+also include structured =autolith.tool.error_code= on every failure and signed
+=autolith.tool.exit_code= when available. Codes use fixed condition categories or
+domain validation codes, never error reports or arbitrary condition names.
+Run and tool events include =error.type= categories as well. Recoverable tool
+failures do not change a successful root's outcome. Missing resource reads fail
+with =not-found= while retaining their revision for subsequent file creation.
+A nonzero =shell.run= exit is a failure.
+Roles used by =run-job= may explicitly grant =papercut.report= to export reports.
+Instrumentation revision 5 distinguishes tool-to-report links and raw cache-write
+presence from earlier exports. Collector migration =06_run_context.sql= makes
+the run's unrelated tool and request-role columns nullable.
+Revision 6 makes job terminal state authoritative, claims root finalization once,
+and omits non-applicable successful-tool error categories.
+
+** Exercising an unlisted model
+
+An arbitrary =AUTOLITH_MODEL=gpt-e2e-unlisted-9= fails deferred configuration
+validation when no local provider serves it. In =run-job= this becomes
+=PROCESS-FAILURE= during application creation, with run =error.type= set to =internal=,
+before the first instrumented agent turn. Telemetry aliases only change exported
+labels; they do not register a runnable provider model.
+
+Add this registration to the =init.lisp= loaded by the test configuration:
+
+#+begin_src lisp
+(register-openai-compatible-provider
+ :name "telemetry-e2e"
+ :family ':openai
+ :endpoint "http://127.0.0.1:18080/v1/chat/completions"
+ :models '("gpt-e2e-unlisted-9"))
+#+end_src
+
+Use a Chat Completions fixture server at that endpoint that accepts the model
+ID, authenticate =telemetry-e2e= through the normal API-key store, enable
+telemetry for that configuration, and select =gpt-e2e-unlisted-9= in the job
+role's =:models=. Then run:
+
+#+begin_src sh
+AUTOLITH_MODEL=gpt-e2e-unlisted-9 autolith --permissions full-access \
+  run-job --input job.sexp --output result.sexp
+#+end_src
+
+The provider resolves locally while public catalog membership stays false.
+Both model and run rows export =model=gpt-e2e-unlisted-9= and
+=model_known=false=. Omitting credentials exercises a real authentication
+failure with the same exports, without contacting the fixture server. The
+offline regression below covers that failure path:
+
+#+begin_src sh
+./script/check --test test-telemetry-unlisted-provider-model --jobs 1
+./script/check --test test-telemetry-run-job-provider-failure --jobs 1
+#+end_src
+
+Relative =run-job --input= and =--output= paths resolve against the caller's
+current directory before execution; result event URIs use the absolute path.
+
+Before a checkpoint fork, enclose the entire fork admission interval in
+=telemetry-call-with-quiescence=. It excludes diagnostic acquisition, discards
+queued/active runs and terminates children while holding the privacy guard.
+Call =telemetry-detach= in the fork child before saving the core; this removes
+inherited process-owned controller/listener state without signalling parent
+processes. The parent resumes fresh admissions after the wrapper returns.
+One-shot =telemetry-quiesce= is also available for shutdown-style callers.
+
+* Tests
+
+Run the registered suite with:
+
+#+begin_src sh
+./script/check --suite telemetry --suite telemetry-hooks --jobs 1
+#+end_src
+
+Regenerate synthetic native OTLP fixtures for Seismograph's receiver and storage
+tests by pointing at its separate development workspace:
+
+#+begin_src sh
+AUTOLITH_TELEMETRY_FIXTURE_DIRECTORY=/path/to/seismograph/tests/fixtures \
+  ./script/check --test test-telemetry-model-collector-contract \
+    --test test-telemetry-context-window-streams \
+    --test test-telemetry-request-roles --test test-telemetry-compaction-roles --jobs 4
+#+end_src
+
+The fixtures contain only projected metadata. In the collector workspace run
+=cargo test --locked native_= and =sh tests/run-integration.sh= to replay them
+through storage projection and disposable ClickHouse.
+
+All ordinary tests mock uploads or supervised worker launches. The actual-model
+case requires explicit opt-in and an installed trusted library; uploads are
+mocked even in that case:
+
+#+begin_src sh
+AUTOLITH_TEST_TELEMETRY_MODEL=1 \
+  ./script/check --test test-telemetry-real-redactor --jobs 1
+#+end_src
+
+Reference contracts were inspected in =chakanysystems/seismograph=
+=src/otlp.rs= and =client/index.js=. The Defingerprinter reference checkout
+from =https://github.com/chakanysystems/defingerprinter.git= was refreshed and
+inspected at tag =0.1.0=, commit =ade272f23397fc1791b5c0a9b1046407cbe39e04=,
+pinned through =qlfile=. Model revision is
+=b1993e4e68b082835b80ffc65acc03325ea2e501=.

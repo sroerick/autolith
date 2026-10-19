@@ -32,6 +32,22 @@
   "Expose generic authority denials through the tool transport."
   ':access-denied)
 
+(defmethod tool-failure-code ((condition platform-error))
+  "Retain portable filesystem failure reasons without exposing paths or reports."
+  (cond ((platform-permission-error-code-p *platform* (platform-error-code condition))
+         ':os-permission-denied)
+        ((eq (platform-error-reason condition) ':missing)
+         ':not-found)
+        (t ':file-error)))
+
+(defmethod tool-failure-code ((condition file-operation-failed))
+  "Classify exact-file failures before their condition details are discarded."
+  (cond ((platform-permission-error-code-p *platform* (file-operation-failed-code condition))
+         ':os-permission-denied)
+        ((eq (file-operation-failed-reason condition) ':missing)
+         ':not-found)
+        (t ':file-error)))
+
 (defmethod tool-failure-code ((condition resource-operation-unsupported))
   "Expose generic unsupported operations through the tool transport."
   ':operation-unsupported)

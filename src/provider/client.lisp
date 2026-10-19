@@ -786,6 +786,13 @@ and codes follow the Codex reference at commit 6f51c65958."
                                       :conversation conversation))
    :terminal-errors-p t))
 
+(define-condition provider-result-rejected (provider-retryable-error)
+  ((result :initarg :result :reader provider-result-rejected-result
+           :type provider-result
+           :documentation "The completed result rejected by provider-specific validation."))
+  (:documentation
+   "A completed provider response requires retry, while its reported usage remains valid."))
+
 (-> provider-attempt-turn
     (model-provider conversation
      &key (:tool-namespaces vector)

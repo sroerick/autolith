@@ -325,7 +325,22 @@ nesting depth, and lifecycle listeners."))
     (agent-steering-input-content entry))))
 
 (defclass task-job (session-job)
-  ((definition :initarg :definition :accessor task-job-definition :type
+  ((telemetry-run
+    :initarg :telemetry-run
+    :initform nil
+    :accessor task-job-telemetry-run
+    :type (option telemetry-run)
+    :documentation "The run observed by this job, borrowed or created locally.")
+   (telemetry-owner
+    :initform nil
+    :accessor task-job-telemetry-owner
+    :documentation "Opaque finish token retained only when this job creates its run.")
+   (telemetry-terminal
+    :initform nil
+    :accessor task-job-telemetry-terminal
+    :type list
+    :documentation "Execution failure metadata retained until terminal publication finishes.")
+   (definition :initarg :definition :accessor task-job-definition :type
                (option task-agent-definition) :documentation
                "The full child role while this job remains live.")
    (definition-summary

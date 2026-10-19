@@ -471,14 +471,26 @@
     :documentation "The machine-readable failure discriminator, when one exists."))
   (:documentation "A tool call could not be validated or executed."))
 
+(define-condition tool-authority-denied (tool-error)
+  ()
+  (:documentation "A terminal tool failure caused by refused user or policy authority."))
+
 (defgeneric tool-failure-code (condition)
   (:documentation
-   "Return CONDITION's machine-readable tool failure code, or NIL.
+   "Return CONDITION's stable machine-readable tool failure category.
 Codes let tests and callers discriminate failures without pinning prose.")
   (:method ((condition condition))
-    nil)
+    ':tool-failure)
   (:method ((condition tool-error))
-    (tool-error-code condition)))
+    (or (tool-error-code condition) ':invalid-arguments))
+  (:method ((condition division-by-zero))
+    ':division-by-zero)
+  (:method ((condition type-error))
+    ':type-error)
+  (:method ((condition simple-error))
+    ':simple-error)
+  (:method ((condition file-error))
+    ':file-error))
 
 (define-condition worker-error (tool-error)
   ()

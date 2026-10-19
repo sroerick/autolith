@@ -980,13 +980,14 @@
                        (workspace-resource-tests--operation
                         "replace-empty" "content" "not a directory"))))
                (test-assert
-                (and (tool-result-success-p other-root)
+                (and (not (tool-result-success-p other-root))
+                     (eq (tool-result-error-code other-root) ':not-found)
                      (search "Kind: missing" (tool-result-content other-root))
                      (not (tool-result-success-p replacement))
                      (eq (workspace-file--path-kind
                           (lisp-scratchpad-root other-context))
                          ':missing))
-                "scratchpad:. observes a missing root without creating it as a file"))
+                "scratchpad:. reports not-found with an observation and cannot create its root as a file"))
              (let ((result
                      (create-resource
                       context
@@ -1075,7 +1076,8 @@
                 "scratchpad execution retains definitions in the selected REPL"))
              (let ((result (read-resource other-context "scratchpad:.")))
                (test-assert
-                (and (tool-result-success-p result)
+                (and (not (tool-result-success-p result))
+                     (eq (tool-result-error-code result) ':not-found)
                      (not (search "program.lisp" (tool-result-content result)))
                      (not (equal (lisp-scratchpad-root context)
                                  (lisp-scratchpad-root other-context))))
@@ -1249,20 +1251,36 @@
                               :direction ':output :if-exists ':supersede)
         (write-line "(defun autolith-diagnostic-fixture () (cl-user::list (uiop:autolith-not-external-symbol)))" stream))
       (unwind-protect
-           (let ((result (worker-response-tool-result
-                          (lisp-worker-request worker ':load-system
-                                               (list :system "autolith-diagnostic-fixture"
-                                                     :asd-pathname (namestring asd))))))
-             (test-assert (not (tool-result-success-p result))
-                          "a system with a compile error fails to load")
-             (let* ((content (tool-result-content result))
-                    (output-start (search "Output:" content))
-                    (output (and output-start
-                                 (subseq content output-start
-                                         (search "Backtrace:" content
-                                                 :start2 output-start)))))
-               (test-assert (and output
-                                 (search "AUTOLITH-NOT-EXTERNAL-SYMBOL" (string-upcase output)))
-                            "the failed load reports the compiler diagnostic, not only the condition")))
+           (progn
+             (dolist (case '(("(/ 1 0)" :division-by-zero)
+                             ("(error \"boom-custom\")" :simple-error)
+                             ("(+ 1 \"two\")" :type-error)))
+               (let ((result (worker-response-tool-result
+                              (lisp-worker-request worker ':eval (list :forms (list (first case)))))))
+                 (test-assert
+                  (and (not (tool-result-success-p result))
+                       (eq (tool-result-error-code result) (second case)))
+                  "Worker failures retain fixed condition categories across the process boundary.")))
+             (test-assert
+              (eq (tool-result-error-code
+                   (worker-response-tool-result
+                    '(:response :status :error :condition-type "PRIVATE-CUSTOM-CONDITION")))
+                  ':worker-failure)
+              "Unknown worker classes use a fixed category instead of exporting their names.")
+             (let ((result (worker-response-tool-result
+                            (lisp-worker-request worker ':load-system
+                                                 (list :system "autolith-diagnostic-fixture"
+                                                       :asd-pathname (namestring asd))))))
+               (test-assert (not (tool-result-success-p result))
+                            "a system with a compile error fails to load")
+               (let* ((content (tool-result-content result))
+                      (output-start (search "Output:" content))
+                      (output (and output-start
+                                   (subseq content output-start
+                                           (search "Backtrace:" content
+                                                   :start2 output-start)))))
+                 (test-assert (and output
+                                   (search "AUTOLITH-NOT-EXTERNAL-SYMBOL" (string-upcase output)))
+                              "the failed load reports the compiler diagnostic, not only the condition"))))
         (lisp-worker-stop worker))))
   nil)

@@ -220,6 +220,9 @@
      (multiple-value-bind (names enabled-p) (worker-host--allowlist context (json-object))
        (test-assert (and (null names) (null enabled-p)) "ordinary eval remains explicitly unenabled"))
      (test-assert
+      (eq (getf (worker-host-tests--call context "typo.nonexistent" "{}") :code)
+          ':tool-unavailable) "a host tool removed after admission is unavailable, not denied")
+     (test-assert
       (eq (getf (worker-host-tests--call context "lisp.eval" "{\"form\":\"42\"}") :code)
           ':worker-reentrancy) "same-worker eval rejected before admission")
      (test-assert

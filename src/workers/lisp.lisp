@@ -263,6 +263,22 @@
 
 ;;;; -- Tool Result Adaptation --
 
+(-> worker-response--failure-code (list) keyword)
+(defun worker-response--failure-code (properties)
+  "Project worker condition metadata through fixed categories, never class names or reports."
+  (or (loop for (name code) in '(("DIVISION-BY-ZERO" :division-by-zero)
+                               ("TYPE-ERROR" :type-error)
+                               ("SIMPLE-TYPE-ERROR" :type-error)
+                               ("SIMPLE-ERROR" :simple-error)
+                               ("UNDEFINED-FUNCTION" :undefined-function)
+                               ("UNBOUND-VARIABLE" :unbound-variable)
+                               ("END-OF-FILE" :end-of-file)
+                               ("READER-ERROR" :reader-error)
+                               ("FILE-ERROR" :file-error))
+            when (equal name (getf properties :condition-type))
+              return code)
+      ':worker-failure))
+
 (-> worker-response-tool-result (list) tool-result)
 (defun worker-response-tool-result (response)
   "Convert a portable worker RESPONSE into a bounded tool result."
@@ -289,7 +305,8 @@
            (when (non-empty-string-p output)
              (format stream "~%~%Output:~%~A" output))
            (when (non-empty-string-p backtrace)
-             (format stream "~%~%Backtrace:~%~A" backtrace)))))))
+             (format stream "~%~%Backtrace:~%~A" backtrace)))
+         :code (worker-response--failure-code properties)))))
 
 (-> lisp-tool-repl-name (hash-table) string)
 (defun lisp-tool-repl-name (arguments)
@@ -414,8 +431,9 @@ that worker, while cancellation after a completed request leaves the REPL intact
        nil)
       ((string= target "self")
        (when (resource-context-child-agent-p context)
-         (error 'tool-error
+         (error 'tool-authority-denied
                 :message "Task child agents cannot inspect the active image."
+                :code ':authority
                 :tool-name tool-name))
        t)
       (t

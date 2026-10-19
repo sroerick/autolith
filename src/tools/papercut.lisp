@@ -29,6 +29,10 @@
 
 ;;;; -- Tool Executions --
 
+(defmethod tool-child-safe-p ((tool papercut-report-tool))
+  "Allow explicit reporting grants in task roles and noninteractive jobs."
+  t)
+
 (defmethod tool-conversation-persistence ((tool papercut-report-tool))
   "Keep papercut calls and their short acknowledgements in the conversation.
 
@@ -60,6 +64,8 @@ existing report instead of recording another."
          (tool-context-configuration context)
          :title title
          :content content
+         :issue-kind (or (tool-argument arguments "issue-kind") "other")
+         :tool (tool-argument arguments "tool")
          :source-conversation
          (conversation-identifier (tool-context-conversation context)))
       (tool-success (papercut-tool--result papercut duplicate-p)))))

@@ -20,6 +20,13 @@
 (define-condition lsp-semantic-error (lsp-error) ()
   (:documentation "A semantic proposal violates Autolith application policy."))
 
+(define-condition lsp-semantic-authority-denied (lsp-semantic-error tool-authority-denied) ()
+  (:documentation "A semantic proposal lacks explicit authority for an annotation."))
+
+(defmethod tool-failure-code ((condition lsp-semantic-authority-denied))
+  "Preserve the semantic policy failure code while marking the authority refusal."
+  ':tool-failure)
+
 (defclass lsp-semantic-state ()
   ((entries :initform (make-hash-table :test #'eq :weakness :key)
             :reader lsp-semantic-state-entries
@@ -318,8 +325,8 @@
    (lambda (identifier annotation)
      (when (eq (json-get annotation "needsConfirmation") t)
        (unless (find identifier approved :test #'equal)
-         (lsp-semantic--fail
-          (format nil "Annotation ~A requires explicit approval before applying." identifier)))
+         (error 'lsp-semantic-authority-denied
+                :message (format nil "Annotation ~A requires explicit approval before applying." identifier)))
        (unless (eq (tool-context-authorize-command
                     context
                     (format nil "lsp.semantic-confirmation --proposal ~S --annotation ~S --details ~A"
@@ -327,8 +334,8 @@
                             (json-encode annotation))
                     (config :working-directory (tool-context-configuration context)))
                    ':full-access)
-         (lsp-semantic--fail
-          (format nil "Permission to apply annotation ~A was denied." identifier)))))
+         (error 'lsp-semantic-authority-denied
+                :message (format nil "Permission to apply annotation ~A was denied." identifier)))))
    (json-get (lsp-semantic-entry-value entry) "annotations"))
   (let ((*workspace-file-proposal-observations* (make-hash-table :test #'equal)))
     (maphash

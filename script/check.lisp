@@ -356,13 +356,17 @@ configurations read; launchers under test keep their own core selection."
         (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))))
 
 (defun check--committed-version (source-root)
-  "Return the version of HEAD, which pristine recovery uses for source fallback."
+  "Return the parent/HEAD VERSION used by pristine source fallback."
   (let ((version
           (string-right-trim
            '(#\Newline #\Return)
            (uiop:run-program
-            (list "git" "-C" (namestring source-root) "show" "HEAD:VERSION")
-            :output ':string))))
+            (if (probe-file (merge-pathnames ".jj/" source-root))
+                (list "jj" "--no-pager" "--color" "never"
+                      "--repository" (namestring source-root)
+                      "file" "show" "-r" "@-" "VERSION")
+                (list "git" "-C" (namestring source-root) "show" "HEAD:VERSION"))
+            :directory source-root :output ':string))))
     (unless (uiop:symbol-call :autolith '#:release-tag-valid-p
                               (format nil "v~A" version))
       (check--fail "Committed VERSION does not contain one semantic version."))

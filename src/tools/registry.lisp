@@ -22,7 +22,10 @@
     :initarg :parameters
     :reader tool-parameters
     :type json-object
-    :documentation "The JSON Schema accepted by this tool."))
+    :documentation "The JSON Schema accepted by this tool.")
+   (correction-metadata-p
+    :initarg :correction-metadata-p :initform nil :reader tool-correction-metadata-p
+    :type boolean :documentation "Whether the registry consumes the reserved correction annotation."))
   (:documentation "A documented, model-visible operation."))
 
 (defclass resource-tool (tool)
@@ -389,6 +392,12 @@
      :reader tool-result-category
      :type (member :success :failure :neutral :mechanics)
      :documentation "The semantic outcome category independent of progress or retry policy.")
+    (denied-p
+     :initarg :denied-p
+     :initform nil
+     :reader tool-result-denied-p
+     :type boolean
+     :documentation "True when this terminal failure refused user or policy authority.")
     (error-code
      :initarg :error-code
      :initform nil
@@ -404,7 +413,10 @@
     (setf (slot-value result 'category)
           (if (tool-result-success-p result)
               ':success
-              ':failure))))
+              ':failure)))
+  (when (and (not (tool-result-success-p result))
+             (null (tool-result-error-code result)))
+    (setf (slot-value result 'error-code) ':tool-failure)))
 
 (defgeneric tool-result-details (result)
   (:documentation "Return RESULT's machine-readable details, or NIL when plain.")
@@ -486,16 +498,17 @@ spilling is unavailable, in which case the tail is discarded as before.")
     (error ()
       nil)))
 
-(-> tool-failure (t &key (:code (option keyword))) tool-result)
-(defun tool-failure (content &key code)
-  "Return a failed bounded tool result containing CONTENT and optional CODE."
+(-> tool-failure (t &key (:code (option keyword)) (:denied-p boolean)) tool-result)
+(defun tool-failure (content &key code denied-p)
+  "Return a bounded terminal failure with optional CODE and authority refusal DENIED-P."
   (make-instance 'tool-result
                  :content (bounded-string
                            content
                            :overflow-uri-function *tool-result-overflow-function*)
                  :success-p nil
                  :category ':failure
-                 :error-code code))
+                 :error-code code
+                 :denied-p denied-p))
 
 (-> tool-mechanics (t &key (:code (option keyword))) tool-result)
 (defun tool-mechanics (content &key code)
@@ -810,11 +823,14 @@ spilling is unavailable, in which case the tail is discarded as before.")
 
 (-> resource-tool--resolve (resource-tool tool-context json-object) resource)
 (defun resource-tool--resolve (tool context arguments)
-  "Resolve TOOL's required resource URI under exact authority CONTEXT."
-  (resource-registry-resolve
-   (resource-tool-resource-registry tool)
-   (tool-argument arguments "uri" :required t)
-   context))
+  "Resolve TOOL's resource URI or absolute native path under exact authority CONTEXT."
+  (let* ((uri (tool-argument arguments "uri" :required t))
+         (identity
+           (if (and (non-empty-string-p uri)
+                    (ignore-errors (uiop:absolute-pathname-p (uiop:parse-native-namestring uri))))
+               (format nil "workspace:~A" (workspace-file--encode-identifier uri))
+               uri)))
+    (resource-registry-resolve (resource-tool-resource-registry tool) identity context)))
 
 (defmethod tool-execute
     ((tool resource-read-tool) (context tool-context) (arguments hash-table))
@@ -1242,10 +1258,21 @@ signals with the candidate canonical names."
                  (if missing-names
                      (tool--missing-arguments-result
                       tool arguments missing-names)
-                     (tool-execute tool context arguments))))))
+                     (progn
+                       (when (tool-correction-metadata-p tool)
+                         (multiple-value-bind (value present-p) (gethash "corrects_previous" arguments)
+                           (when (and present-p (not (or (json-true-p value) (json-false-p value))))
+                             (error 'tool-error :tool-name canonical-name
+                                               :message "corrects_previous must be a boolean."))
+                           (when *telemetry-tool-capture-p*
+                             (setf *telemetry-tool-corrects-previous-p* (and present-p (json-true-p value))))
+                           (remhash "corrects_previous" arguments)))
+                       (when *telemetry-tool-capture-p* (setf *telemetry-tool-arguments* arguments))
+                       (tool-execute tool context arguments)))))))
       (active-image-corruption (condition)
         (error condition))
       (error (condition)
         (tool-failure
          (format nil "~A failed: ~A" canonical-name condition)
-         :code (tool-failure-code condition))))))
+         :code (tool-failure-code condition)
+         :denied-p (typep condition '(or tool-authority-denied command-authorization-unavailable)))))))

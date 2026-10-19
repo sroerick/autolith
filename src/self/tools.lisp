@@ -123,15 +123,108 @@ symbol itself."
   `(with-recursive-lock-held (*live-mutation-lock*)
      ,@body))
 
+;;;; -- Repair Context --
+
+(defvar *self-repair-context* nil
+  "Portable metadata for the current explicit repair attempt; never source or values.")
+
+(-> self-repair--journal-context (configuration (option string)) list)
+(defun self-repair--journal-context (configuration identifier)
+  "Return durable telemetry context for the exact journal IDENTIFIER."
+  (when identifier
+    (loop for record in (reverse (mutation-journal-read-records configuration))
+          for properties = (rest record)
+          when (and (or (equal identifier (getf properties :id))
+                        (equal identifier (getf properties :mutation)))
+                    (getf properties :repair-context))
+            return (copy-list (getf properties :repair-context)))))
+
+(defmethod tool-execute :around ((tool mutable-self-tool)
+                                (context tool-context)
+                                (arguments hash-table))
+  "Validate explicit incident links before any mutable self operation."
+  (let* ((configuration (tool-context-configuration context))
+         (incident (tool-argument arguments "incident"))
+         (kind (tool-argument arguments "repair-kind"))
+         (scope (tool-argument arguments "verification-scope"))
+         (inherited (self-repair--journal-context
+                     configuration (tool-argument arguments "mutation")))
+         (linked (when incident (papercut-repair-context configuration incident))))
+    (when (and linked inherited
+               (not (equal (getf linked :incident-id) (getf inherited :incident-id))))
+      (error 'source-mutation-error
+             :message "The explicit incident does not match the selected mutation."
+             :tool-name (tool-canonical-name tool)
+             :pathname (configuration-journal-path configuration)))
+    (when (and kind (not (member kind '("redefine_function" "change_setting" "change_tool_strategy" "other")
+                                 :test #'equal)))
+      (error 'source-mutation-error :message "Unknown public repair kind."
+                                   :tool-name (tool-canonical-name tool)
+                                   :pathname (configuration-journal-path configuration)))
+    (when (and scope (not (member scope '("focused" "full") :test #'equal)))
+      (error 'source-mutation-error :message "Unknown verification scope."
+                                   :tool-name (tool-canonical-name tool)
+                                   :pathname (configuration-journal-path configuration)))
+    (let ((*self-repair-context*
+            (append (when kind (list :repair-kind kind))
+                    (when scope (list :verification-scope scope)) linked))
+          (*telemetry-tool-name* (tool-canonical-name tool)))
+      (call-next-method))))
+
+(-> self-repair--record-context (configuration list) list)
+(defun self-repair--record-context (configuration record)
+  "Annotate a journal event with durable random attempt and incident metadata."
+  (let* ((properties (rest record))
+         (kind (getf properties :kind))
+         (identifier (or (getf properties :mutation) (getf properties :id)))
+         (inherited (self-repair--journal-context configuration identifier))
+         (metadata (or inherited (copy-list *self-repair-context*))))
+    (when (and inherited (getf *self-repair-context* :incident-id)
+               (not (equal (getf inherited :incident-id)
+                           (getf *self-repair-context* :incident-id))))
+      (error 'source-mutation-error
+             :message "The incident does not match the mutation's repair context."
+             :tool-name (or *telemetry-tool-name* "self.exercise")
+             :pathname (configuration-journal-path configuration)))
+    (unless (getf metadata :attempt-id)
+      (let ((identifier (telemetry-new-report-id)))
+        (unless identifier
+          (return-from self-repair--record-context record))
+        (setf (getf metadata :attempt-id) identifier)))
+    (unless (getf metadata :repair-kind)
+      (setf (getf metadata :repair-kind)
+            (case kind
+              ((:definition :durable-definition) "redefine_function")
+              (:set "change_setting")
+              (otherwise "other"))))
+    (let ((scope (case kind
+                   (:exercise (or (getf *self-repair-context* :verification-scope) "focused"))
+                   (:verification (or (getf properties :verification-scope) "focused"))
+                   (otherwise "none"))))
+      (setf (getf metadata :operation) *telemetry-tool-name*
+            (getf metadata :verification-scope) scope)
+      ;; Evaluation journals have no mutation identifier; retain their call's attempt.
+      (when (null identifier)
+        (setf *self-repair-context* (copy-list metadata)))
+      (let ((contexts
+              (loop for mutation in (getf properties :mutations)
+                    for context = (self-repair--journal-context configuration mutation)
+                    when context
+                      collect (list* :operation *telemetry-tool-name*
+                                     :verification-scope scope context))))
+        (list* (first record) :repair-context metadata :repair-contexts contexts (rest record))))))
+
 (-> mutation-journal-append (configuration list) list)
 (defun mutation-journal-append (configuration record)
-  "Append portable mutation RECORD, repairing an interrupted journal tail."
-  (let ((pathname (configuration-journal-path configuration))
-        (entry (list* (first record)
-                      :time (get-universal-time)
-                      (rest record))))
+  "Append a portable journal event and its durable structured repair context."
+  (let* ((pathname (configuration-journal-path configuration))
+         (annotated (if (eq (first record) ':mutation)
+                        (self-repair--record-context configuration record)
+                        record))
+         (entry (list* (first annotated) :time (get-universal-time) (rest annotated))))
     (ensure-directories-exist pathname)
     (log-append pathname entry)
+    (telemetry-note-mutation-journal entry)
     entry))
 
 

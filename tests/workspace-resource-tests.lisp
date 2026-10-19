@@ -196,10 +196,12 @@
                                               arguments))
                                (content (tool-result-content result)))
                           (values result
-                                  (and (tool-result-success-p result)
+                                  (and (or (tool-result-success-p result)
+                                           (eq (tool-result-error-code result) ':not-found))
                                        (workspace-resource-tests--field
                                         content "URI: "))
-                                  (and (tool-result-success-p result)
+                                  (and (or (tool-result-success-p result)
+                                           (eq (tool-result-error-code result) ':not-found))
                                        (workspace-resource-tests--field
                                         content "Revision: "))))))
 
@@ -561,10 +563,11 @@
                                (read-resource full-access-context
                                               "workspace:escape/new.txt")
                              (test-assert
-                              (and (tool-result-success-p result)
+                              (and (not (tool-result-success-p result))
+                                   (eq (tool-result-error-code result) ':not-found)
                                    (search "Kind: missing"
                                            (tool-result-content result)))
-                              "resource.read observes an approved missing out-of-root path")
+                              "resource.read fails with an observation for an approved missing out-of-root path")
                              (let ((denied
                                      (edit-resource
                                       first-context canonical-uri revision
@@ -605,6 +608,18 @@
                                  (uiop:pathname-equal (second request) workspace))
                                authorization-requests))
                    "out-of-root resource authorization uses the active workspace directory")))
+             (with-test-fixture (':file-modes "resource.read permission failures")
+               (let ((path (merge-pathnames "unreadable.txt" workspace)))
+                 (workspace-resource-tests--write-text path "private content")
+                 (unwind-protect
+                      (progn
+                        (test-fixture-set-file-mode *platform* path 0)
+                        (let ((result (read-resource first-context "workspace:unreadable.txt")))
+                          (test-assert
+                           (and (not (tool-result-success-p result))
+                                (eq (tool-result-error-code result) ':os-permission-denied))
+                           "An OS-denied file read returns a stable permission code.")))
+                   (test-fixture-set-file-mode *platform* path #o600))))
              (let ((oversized (merge-pathnames "oversized.txt" workspace)))
                (workspace-resource-tests--write-text oversized "123456789")
                (let ((*workspace-file-resource-maximum-bytes* 8))
@@ -1556,10 +1571,11 @@
                (multiple-value-bind (result uri revision)
                    (read-resource first-context "workspace:created/nested.txt")
                  (test-assert
-                  (and (tool-result-success-p result)
+                  (and (not (tool-result-success-p result))
+                       (eq (tool-result-error-code result) ':not-found)
                        (search "Kind: missing" (tool-result-content result))
                        (null (probe-file path)))
-                  "resource.read establishes a revision for a missing path")
+                  "resource.read reports not-found while establishing a revision for creation")
                  (let ((edit-result
                          (edit-resource
                           first-context uri revision

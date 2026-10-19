@@ -40,6 +40,7 @@
                #:colordiff
                #:closer-mop
                #:dexador
+               #:defingerprinter
                #:fetch-gist
                #:flexi-streams
                #:idsmall
@@ -91,6 +92,7 @@
                              (:file "core/text-buffer")
                              (:file "configuration/settings")
                              (:file "configuration/configuration")
+                             (:file "telemetry/configuration")
                              (:file "provider/registry")
                              (:file "configuration/workspace")
                              (:file "conversation/image-input")
@@ -113,6 +115,10 @@
                              (:file "provider/copilot/authentication")
                              (:file "models/catalog")
                              (:file "models/provider-catalog")
+                             (:file "telemetry/runtime")
+                             (:file "telemetry/exporter")
+                             (:file "telemetry/uploads")
+                             (:file "telemetry/hook-protocol")
                              (:file "conversation/identifiers")
                              (:file "conversation/identifier-migration")
                              (:file "conversation/store")
@@ -302,7 +308,9 @@
                              (:file "acp/extension-jobs")
                              (:file "acp/extension-resources")
                              (:file "acp/completions")
+                             (:file "telemetry/hooks")
                              (:file "startup/main")
+                             (:file "startup/dependency-patches")
                              (:file "startup/active-image"))))
   :in-order-to ((asdf:test-op (asdf:test-op #:autolith/tests))))
 
@@ -478,8 +486,21 @@
                              (:file "test-runner")
                              (:file "fixture-tests")
                              (:file "test-runner-tests")
+                             (:file "telemetry-tests")
+                             (:file "telemetry-upload-tests")
                              (:file "model-catalog-tests")
                              (:file "provider-catalog-tests")
+                             (:file "telemetry-catalog-tests")
+                             (:file "telemetry-hook-support-tests")
+                             (:file "telemetry-hook-model-tests")
+                             (:file "telemetry-hook-provider-tests")
+                             (:file "telemetry-hook-run-tests")
+                             (:file "telemetry-hook-report-tests")
+                             (:file "telemetry-hook-repair-tests")
+                             (:file "telemetry-hook-tool-outcome-tests")
+                             (:file "telemetry-hook-tool-denial-tests")
+                             (:file "telemetry-hook-authority-tests")
+                             (:file "telemetry-hook-os-permission-tests")
                              (:file "test-suites"))))
   :perform (asdf:test-op (operation component)
              (declare (ignore operation component))

@@ -80,20 +80,20 @@ Offsets refer to execution-ID order in the current inventory, not a snapshot."
                 (task-continuity--find viewer identifier) viewer orchestrator))
               ((equal action "allow-restart")
                (unless (eq t (tool-argument arguments "authorize"))
-                 (task-continuity--fail "Safety declaration requires explicit authority."))
+                 (task-continuity--fail "Safety declaration requires explicit authority." :code ':authority))
                (task-continuity-declare
                 viewer orchestrator identifier
                 :safety (tool-argument arguments "safety" :required t)))
               ((equal action "checkpoint")
                (unless (eq t (tool-argument arguments "authorize"))
-                 (task-continuity--fail "Checkpoint declaration requires explicit authority."))
+                 (task-continuity--fail "Checkpoint declaration requires explicit authority." :code ':authority))
                (task-continuity-declare
                 viewer orchestrator identifier
                 :image (tool-argument arguments "image" :required t)
                 :repl (tool-argument arguments "repl" :required t)))
               ((equal action "abandon")
                (unless (eq t (tool-argument arguments "authorize"))
-                 (task-continuity--fail "Abandonment requires explicit authority."))
+                 (task-continuity--fail "Abandonment requires explicit authority." :code ':authority))
                (task-continuity-abandon viewer orchestrator identifier))
               (t
                (task-continuity--fail "Unknown continuity action.")))))

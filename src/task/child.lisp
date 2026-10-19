@@ -270,9 +270,10 @@ boundary cannot fit within that budget."
            (output
              (task-agent-definition-output
               (task-child-agent-definition agent))))
-      (labels ((yield-error (message)
+      (labels ((yield-error (message &key (code ':invalid-yield))
                  (error 'task-yield-error
                         :message message
+                        :code code
                         :tool-name "yield.submit"
                         :task-id identifier))
 
@@ -285,7 +286,8 @@ boundary cannot fit within that budget."
                               name)))
                    (values value present-p))))
         (when (task-completion-called-p completion)
-          (yield-error "This child already submitted its terminal yield."))
+          (yield-error "This child already submitted its terminal yield."
+                       :code ':already-yielded))
         (loop for field being the hash-keys of arguments
               unless (member field
                              '("status" "text" "data" "error" "label")
@@ -336,7 +338,8 @@ boundary cannot fit within that budget."
                        (when (and output
                                   (not (task-output-schema-valid-p data output)))
                          (yield-error
-                          "The supplied yield data does not satisfy the role output contract.")))
+                          "The supplied yield data does not satisfy the role output contract."
+                          :code ':output-contract)))
                       ((:failed :aborted)
                        (unless (and failure-present-p
                                     (non-empty-string-p
@@ -370,7 +373,8 @@ boundary cannot fit within that budget."
                            (:not-running
                             "This child is not running and cannot accept a terminal yield.")
                            (:steering-pending
-                            "Additional user context is waiting. Continue the child turn before yielding."))))
+                            "Additional user context is waiting. Continue the child turn before yielding."))
+                         :code ':yield-unavailable))
                       (tool-success
                        (task--write-readable-sexp
                         '(:yield-submit :accepted-p t))))))))))))))

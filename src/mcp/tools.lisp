@@ -1510,7 +1510,8 @@ retained value is credential-redacted or projected."
       (tool-failure
        (if (mcp-provider-tool-approval-required-p tool)
            "This MCP call requires approval, but approval was not granted."
-           "This MCP call is denied by its server policy."))
+           "This MCP call is denied by its server policy.")
+       :code ':permission-denied)
       (handler-case
           (mcparen:mcp-server-runtime-call
            (mcp-provider-tool-runtime tool)

@@ -909,6 +909,7 @@
                         (task-tests--execute-yield fixture arguments)))
                  (test-assert
                   (and (not (tool-result-success-p result))
+                       (eq (tool-result-error-code result) ':invalid-yield)
                        (not
                         (task-completion-called-p
                          (getf fixture :completion))))

@@ -1004,6 +1004,13 @@ restricted turn cannot discover tools outside its allowlist."
     (let* ((call      (getf plan :call))
            (call-id   (json-get call "call_id"))
            (tool-name (function-call-canonical-name call)))
+      (when *telemetry-run*
+        (telemetry--call-safely
+         (lambda ()
+           (telemetry-note-tool :run *telemetry-run*
+                                :tool tool-name
+                                :arguments (json-get call "arguments")
+                                :outcome ':error :error-code ':rejected-plan :duration-ms 0))))
       (conversation-append-tool-result
        (agent-conversation agent)
        call-id
@@ -1056,6 +1063,10 @@ restricted turn cannot discover tools outside its allowlist."
              (agent-configuration agent))))
          (*resource-readable-schemes*
            (and tool-restriction-p '("workspace")))
+         (*telemetry-tool-corrects-previous-p* nil)
+         (*telemetry-tool-arguments* nil)
+         (*telemetry-tool-capture-p* (not (null *telemetry-run*)))
+         (*telemetry-tool-name* (function-call-canonical-name call))
          (real-start (get-internal-real-time))
          (cpu-start  (get-internal-run-time))
          (result nil)
@@ -1084,6 +1095,9 @@ restricted turn cannot discover tools outside its allowlist."
      :plan plan
      :result result
      :condition condition
+     :telemetry-corrects-previous-p *telemetry-tool-corrects-previous-p*
+     :telemetry-arguments *telemetry-tool-arguments*
+     :telemetry-duration-ms (telemetry--elapsed-milliseconds real-start)
      :cpu-microseconds
      (and record-timings-p
           (round (* (- (get-internal-run-time) cpu-start) 1000000)
@@ -1148,10 +1162,28 @@ worker results become explicit unknown outcomes so provider history stays valid.
                (or result
                    (tool-failure *conversation-interrupted-tool-output*
                                  :code ':unknown-outcome)))
+             (error-type (when condition (telemetry--condition-error-type condition)))
              (output
                (if result
                    (agent--tool-retry-output plan result)
                    *conversation-interrupted-tool-output*)))
+        (when *telemetry-run*
+          (telemetry--call-safely
+           (lambda ()
+             (telemetry-note-tool
+              :run *telemetry-run*
+              :tool tool-name
+              :arguments (or (getf execution :telemetry-arguments) (json-get call "arguments"))
+              :corrects-previous (getf execution :telemetry-corrects-previous-p)
+              :error-code (tool-result-error-code effective-result)
+              :error-type error-type
+              :exit-code (getf (tool-result-details effective-result) :exit-code)
+              :outcome (telemetry--outcome
+                        :success-p (tool-result-success-p effective-result)
+                        :error-type error-type
+                        :denied-p (tool-result-denied-p effective-result)
+                        :error-code (tool-result-error-code effective-result))
+              :duration-ms (getf execution :telemetry-duration-ms)))))
         (conversation-append-tool-result
          (agent-conversation agent)
          call-id
@@ -1190,10 +1222,12 @@ worker results become explicit unknown outcomes so provider history stays valid.
 (defun agent--tool-thread-function (function)
   "Return FUNCTION wrapped with the current turn-scoped tool bindings."
   (let ((skill-logical-turn-state *skill-logical-turn-state*)
-        (worker-host-tool-policy (copy-tree *worker-host-tool-policy*)))
+        (worker-host-tool-policy (copy-tree *worker-host-tool-policy*))
+        (telemetry-run *telemetry-run*))
     (lambda ()
       (let ((*skill-logical-turn-state* skill-logical-turn-state)
-            (*worker-host-tool-policy* worker-host-tool-policy))
+            (*worker-host-tool-policy* worker-host-tool-policy)
+            (*telemetry-run* telemetry-run))
         (funcall function)))))
 
 (-> agent--run-tool-wave
@@ -1556,7 +1590,8 @@ Return the number of requests issued so the turn's request count covers them."
             (summary nil))
       (loop for attempt from 1 to *agent-compaction-maximum-summary-requests*
             for result =
-              (provider-stream-turn
+              (let ((*telemetry-request-role* ':compaction))
+                (provider-stream-turn
                provider
                summary-conversation
                :tool-namespaces #()
@@ -1564,7 +1599,7 @@ Return the number of requests issued so the turn's request count covers them."
                (lambda (event)
                  (declare (ignore event))
                  (agent-observer-status observer :provider-progress nil))
-               :compaction-p t)
+               :compaction-p t))
             do (push result summary-results)
                (setf summary (provider-result-assistant-text result))
                (when (non-empty-string-p summary)
@@ -1721,29 +1756,40 @@ loop, so compaction ahead of the user message shares the turn's budget."
                           :failure
                           (agent--provider-error-metadata condition)))
                    (error condition))))
-             (calls (provider-result-tool-calls result)))
-        (when (and calls (not tools-p))
-          (error 'agent-loop-error
-                 :message "A tool-free model turn returned function calls."
-                 :conversation-id (conversation-identifier conversation)
-                 :request-number request-number))
-        (when (and calls tool-restriction-p (not tool-schemas-p))
-          (error 'agent-loop-error
-                 :message
-                 (format nil
-                         "A restricted turn exceeded its ~D tool-round limit."
-                         *agent-restricted-maximum-tool-rounds*)
-                 :conversation-id (conversation-identifier conversation)
-                 :request-number request-number))
-        (when (and calls tool-restriction-p)
-          (agent--validate-tool-call-allowlist
-           agent calls tool-allowlist :request-number request-number))
-        (conversation-clear-ephemeral-input-items conversation)
-        (agent--validate-tool-call-identifiers
-         agent
-         calls
-         :seen-call-identifiers seen-call-identifiers
-         :request-number request-number)
+             (calls (provider-result-tool-calls result))
+             (completion-details
+               (list :request-number request-number
+                     :response-id (provider-result-response-id result)
+                     :usage (agent--portable-value
+                             (provider-usage-normalize (provider-result-usage result)))
+                     :output-item-count (length (provider-result-output-items result))
+                     :tool-call-count (length calls)
+                     :turn-completion (provider-result-turn-completion result))))
+        (handler-case
+            (progn
+              (when (and calls (not tools-p))
+                (error 'agent-loop-error
+                       :message "A tool-free model turn returned function calls."
+                       :conversation-id (conversation-identifier conversation)
+                       :request-number request-number))
+              (when (and calls tool-restriction-p (not tool-schemas-p))
+                (error 'agent-loop-error
+                       :message
+                       (format nil "A restricted turn exceeded its ~D tool-round limit."
+                               *agent-restricted-maximum-tool-rounds*)
+                       :conversation-id (conversation-identifier conversation)
+                       :request-number request-number))
+              (when (and calls tool-restriction-p)
+                (agent--validate-tool-call-allowlist
+                 agent calls tool-allowlist :request-number request-number))
+              (conversation-clear-ephemeral-input-items conversation)
+              (agent--validate-tool-call-identifiers
+               agent calls :seen-call-identifiers seen-call-identifiers
+                           :request-number request-number))
+          (agent-loop-error (condition)
+            ;; Rejected calls still carry billable provider usage.
+            (agent-observer-status observer :provider-request-completed completion-details)
+            (error condition)))
         (let ((call-plans
                 (agent--tool-call-plans agent calls :storm-state storm-state)))
           (agent--persist-provider-result
@@ -1756,18 +1802,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
           (agent--note-persisted-assistant-response
            observer result request-number)
           (agent--note-turn-state conversation result)
-          (agent-observer-status
-           observer
-           :provider-request-completed
-           (list :request-number request-number
-                 :response-id (provider-result-response-id result)
-                 :usage (agent--portable-value
-                         (provider-usage-normalize
-                          (provider-result-usage result)))
-                 :output-item-count
-                 (length (provider-result-output-items result))
-                 :tool-call-count (length calls)
-                 :turn-completion (provider-result-turn-completion result)))
+          (agent-observer-status observer :provider-request-completed completion-details)
           (when (or (agent-turn-complete-p agent result)
                     (and (null calls) (mission-agent-terminal-p agent)))
             (agent-observer-status

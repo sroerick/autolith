@@ -80,16 +80,30 @@ a user-local init.lisp change, or a private image commit.
 
 ** Temporary shell capture quota
 
-- Problem: 424 closed shell captures could not be pruned, exceeding the
-  256-artifact limit and preventing new shell executions.
-- Behavior: Raise the active-image artifact count allowance to 1024 while
+- Problem: 1,918 closed or interrupted shell captures could not be pruned,
+  exceeding the 256-artifact limit and preventing new shell executions.
+- Behavior: Raise the active-image artifact count allowance to 4096 while
   preserving protected captures and the 1 GiB total byte allowance.
-- Scope and location: exploratory =*shell-log-retention-count-limit*= setting,
-  mutation =dc5aa1b3-ab23-4e42-b147-fd5dba8136d6=. No private commit; papercut
-  =b2768af6-ee05-4b0c-8c2f-2b3821bdb984= tracks receipt-backed pruning.
-- Verification: inspection measured 4,253,525 bytes and zero active captures;
-  subsequent shell executions and the quota assertion passed.
+- Scope and location: exploratory =*shell-log-retention-count-limit*= setting.
+  No private commit; papercut =e6320f39-dd3a-4938-a2c8-5cc2957cfddd= tracks
+  receipt-backed pruning.
+- Verification: inspection measured 155,164,525 bytes and zero active captures;
+  subsequent shell executions succeeded.
 - Removal condition: discard the override after repairing capture pruning.
+
+** Session worker executable
+
+- Problem: =AUTOLITH_SBCL= referred to a deleted Nix executable, so Lisp workers
+  could not start.
+- Behavior: Read the valid executable from
+  =~/.local/share/autolith/runtimes/command= and set the process environment with
+  =platform-setenv=. Check the recorded path before using it.
+- Scope and location: process-local environment only; no private image commit.
+  Papercut =e72224a4-7763-4581-9603-dc57af07ad65= also records the indexed search
+  helper, whose initialized executable did not change with the environment.
+- Verification: a new Lisp worker started and parsed the public models.dev catalog.
+- Removal condition: start a fresh process with a valid worker executable and
+  repair the stale indexed search helper configuration.
 
 ** Active-image internal symbol reader
 

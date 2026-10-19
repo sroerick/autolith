@@ -82,8 +82,10 @@ Intersect requests with the originating turn's policy and exact tool registry."
       (dolist (name names)
         (let ((tool (find name (tool-registry-tools registry)
                           :key #'tool-canonical-name :test #'string=)))
-          (unless (and tool
-                       (not (string= (tool-namespace tool) "self"))
+          (unless tool
+            (worker-host--reject ':tool-unavailable
+                                 (format nil "Tool ~A is unavailable to this worker request." name)))
+          (unless (and (not (string= (tool-namespace tool) "self"))
                        (or (not (getf *worker-host-tool-policy* :restricted-p))
                            (member name (getf *worker-host-tool-policy* :allowlist)
                                    :test #'string=)))
@@ -183,10 +185,15 @@ CONTEXT is host-owned data; worker payloads cannot replace its authority."
                        (t
                        (let ((tool (find name (tool-registry-tools (tool-context-registry origin))
                                          :key #'tool-canonical-name :test #'string=)))
-                         (if (or (null tool) (string= (tool-namespace tool) "self"))
-                             (tool-failure "The requested host tool is no longer available."
-                                           :code ':capability-denied)
-                             (let ((call (json-object "namespace" (tool-namespace tool)
+                         (cond
+                           ((null tool)
+                            (tool-failure "The requested host tool is no longer available."
+                                          :code ':tool-unavailable))
+                           ((string= (tool-namespace tool) "self")
+                            (tool-failure "Worker host calls do not carry active-image authority."
+                                          :code ':capability-denied))
+                           (t
+                            (let ((call (json-object "namespace" (tool-namespace tool)
                                                      "name" (tool-name tool)
                                                      "call_id" call-id
                                                      "arguments" (getf payload :arguments))))
@@ -195,7 +202,7 @@ CONTEXT is host-owned data; worker payloads cannot replace its authority."
                                          (tool-context-registry origin) call call-context)))
                                  (if observer
                                      (agent-observer-call-with-tool-execution observer call-id #'execute)
-                                     (execute)))))))))
+                                     (execute))))))))))
                (let ((portable (worker-host--result result)))
                  (conversation-append-record
                   conversation (list :worker-tool-result :call-id call-id

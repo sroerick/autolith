@@ -297,6 +297,39 @@ Signal PLATFORM-ERROR with operation :PROTECT when the change cannot be applied.
 (defgeneric platform-file-permissions (platform pathname)
   (:documentation "Return the host's restorable access-permission value for PATHNAME."))
 
+(defgeneric platform-permission-error-code-p (platform code)
+  (:documentation "Return true when native CODE denotes a permission refusal on PLATFORM.")
+  (:method ((platform platform) code)
+    (declare (ignore code))
+    nil))
+
+(defgeneric platform-open-new-file (platform pathname)
+  (:documentation
+   "Exclusively create PATHNAME for octet output, preserving native failure codes.
+The caller owns the returned stream. Signal PLATFORM-ERROR on creation failure."))
+
+(defgeneric platform-ensure-directories-exist (platform pathname)
+  (:documentation "Create PATHNAME's absent parent directories, preserving native failure codes."))
+
+(-> platform--ensure-directories-exist (platform pathname function) null)
+(defun platform--ensure-directories-exist (platform pathname create)
+  "Create PATHNAME's parents with native CREATE, tolerating concurrent directory creation."
+  (labels ((ensure-directory (directory)
+             (let ((status (platform-path-status platform directory :follow-links-p t)))
+               (unless (and status (eq (platform-file-status-kind status) ':directory))
+                 (unless status
+                   (let ((parent (uiop:pathname-parent-directory-pathname directory)))
+                     (when (and parent (not (equal parent directory)))
+                       (ensure-directory parent))))
+                 (handler-case (funcall create directory)
+                   (platform-error (condition)
+                     (let ((actual (when (eq (platform-error-reason condition) ':exists)
+                                     (platform-path-status platform directory :follow-links-p t))))
+                       (unless (and actual (eq (platform-file-status-kind actual) ':directory))
+                         (error condition)))))))))
+    (ensure-directory (uiop:pathname-directory-pathname pathname)))
+  nil)
+
 (defgeneric (setf platform-file-permissions) (permissions platform pathname)
   (:documentation "Restore PERMISSIONS obtained from the same host onto PATHNAME."))
 

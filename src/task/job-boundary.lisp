@@ -2,6 +2,9 @@
 
 ;;;; -- Non-interactive Job Boundary --
 
+(defvar *run-job-telemetry-scope-p* nil
+  "Whether the headless boundary owns finalization, including before consent starts a run.")
+
 (define-condition run-job-error (autolith-error)
   ((category
     :initarg :category
@@ -325,6 +328,33 @@
     (values keyword t (option string) list (option keyword) (option string)))
 (defun run-job-execute-with-application (configuration request permission-mode)
   "Execute REQUEST through the existing application child-agent runtime."
+  (if *run-job-telemetry-scope-p*
+      (run-job--execute-with-application configuration request permission-mode)
+      (progn
+        (telemetry--call-safely (lambda () (telemetry-attach configuration)))
+        (multiple-value-bind (run token)
+            (telemetry--call-safely (lambda () (telemetry--begin-run configuration :launcher-p t)))
+          (let ((*run-job-telemetry-scope-p* t)
+                (*telemetry-run* run)
+                (results nil))
+            (unwind-protect
+                 (values-list
+                  (setf results
+                        (multiple-value-list
+                         (run-job--execute-with-application configuration request permission-mode))))
+              (telemetry--call-safely
+               (lambda ()
+                 (telemetry-finish-run
+                  run token (if results
+                                (list :state (first results) :category (fifth results))
+                                (list :state ':unfinished)))))
+              (telemetry--call-safely #'telemetry-shutdown)))))))
+
+(-> run-job--execute-with-application
+    (configuration run-job-request keyword)
+    (values keyword t (option string) list (option keyword) (option string)))
+(defun run-job--execute-with-application (configuration request permission-mode)
+  "Execute a child while its caller owns telemetry through result publication."
   (let ((application nil)
         (event-orchestrator nil)
         (event-listener nil))
@@ -373,6 +403,7 @@
                           (when *run-job-event-root-name*
                             (list :name *run-job-event-root-name*)))
                          :definition definition
+                         :telemetry-run *telemetry-run*
                          :detached nil))
                   :command-authorization-function
                   (run-job-headless-command-authorization
@@ -390,12 +421,20 @@
                      (multiple-value-bind (cancelled-snapshot cancelled-terminal-p)
                          (task-job-await job 5)
                        (declare (ignore cancelled-terminal-p))
-                       (return-from run-job-execute-with-application
-                         (values
-                          ':timed-out nil (task-job-execution-identifier job)
-                          (run-job--usage (getf cancelled-snapshot :result))
-                          ':timeout
-                          "The job exceeded its wall-clock timeout."))))
+                       (let* ((result (getf cancelled-snapshot :result))
+                              (artifact-path (getf result :output-path))
+                              (usage-result
+                                (or (and artifact-path
+                                         (handler-case
+                                             (run-job--read-task-result-artifact artifact-path)
+                                           (run-job-error () nil)))
+                                    result)))
+                         (return-from run-job--execute-with-application
+                           (values
+                            ':timed-out nil (task-job-execution-identifier job)
+                            (run-job--usage usage-result)
+                            ':timeout
+                            "The job exceeded its wall-clock timeout.")))))
                    (let* ((compact-result (getf snapshot :result))
                           (trace-id (task-job-execution-identifier job))
                           (usage (run-job--usage compact-result))
@@ -405,13 +444,14 @@
                                 (handler-case
                                     (run-job--read-task-result-artifact artifact-path)
                                   (run-job-error (condition)
-                                    (return-from run-job-execute-with-application
+                                    (return-from run-job--execute-with-application
                                       (values
                                        ':failed nil trace-id usage
                                        (run-job-error-category condition)
                                        (princ-to-string condition)))))
                                 compact-result))
                           (status (getf result :status)))
+                     (setf usage (run-job--usage result))
                      (cond
                        ((and
                          (eq status ':success)
@@ -468,8 +508,12 @@
         (terminal-status ':failed)
         (terminal-category ':process-failure)
         (terminal-trace nil)
+        (terminal-recorded-p nil)
         (publication-attempted-p nil)
-        (published-p nil))
+        (published-p nil)
+        (telemetry-owner nil)
+        (*run-job-telemetry-scope-p* t)
+        (*telemetry-run* nil))
     (labels ((publish (envelope)
                (setf publication-attempted-p t published-p nil)
                (run-job-write-result-atomically output-path envelope)
@@ -478,7 +522,8 @@
              (write-failure (category condition)
                (let ((publication-failed-p
                        (and *run-job-event-emitter* publication-attempted-p)))
-                 (setf terminal-status ':failed
+                 (setf terminal-recorded-p t
+                       terminal-status ':failed
                        terminal-category
                        (if publication-failed-p
                            ':result-publication-failed
@@ -497,18 +542,23 @@
                        identifier (run-job--recover-identifier form)
                        request (run-job-validate-envelope form)
                        identifier (run-job-request-identifier request))
+                 (setf configuration
+                       (or configuration (configuration-create :defer-provider-validation-p t)))
+                 (telemetry--call-safely (lambda () (telemetry-attach configuration)))
+                 (multiple-value-setq (*telemetry-run* telemetry-owner)
+                   (telemetry--call-safely (lambda () (telemetry--begin-run configuration :launcher-p t))))
                  (multiple-value-bind (status result trace-id usage category message)
                      (funcall
                       executor
-                      (or configuration
-                          (configuration-create :defer-provider-validation-p t))
+                      configuration
                       request permission-mode)
                    (when (and (eq status ':succeeded)
                               (not (run-job--success-result-valid-p
                                     result (run-job-request-output-contract request))))
                      (setf status ':failed result nil category ':invalid-output
                            message "The child result does not satisfy the supplied contract."))
-                   (setf terminal-status status
+                   (setf terminal-recorded-p t
+                         terminal-status status
                          terminal-category (and category (run-job-event--category category))
                          terminal-trace trace-id)
                    (publish
@@ -527,6 +577,14 @@
              (serious-condition (condition)
                (write-failure ':process-failure condition)
                1))
+        (telemetry--call-safely
+         (lambda ()
+           (telemetry-finish-run
+            *telemetry-run* telemetry-owner
+            (if terminal-recorded-p
+                (list :state terminal-status :category terminal-category :published-p published-p)
+                (list :state ':unfinished)))))
+        (telemetry--call-safely #'telemetry-shutdown)
         (when *run-job-event-emitter*
           (handler-case
               (let* ((status (if published-p terminal-status ':failed))
@@ -596,6 +654,8 @@ The output artifact is authoritative. With EVENTS :SEXP, EVENT-OUTPUT receives
 only data forms and producer diagnostics go to stderr, including new workers.
 Observation failure never changes execution or result publication."
   (check-type events (member nil :sexp))
+  (setf input-path (uiop:ensure-absolute-pathname input-path (uiop:getcwd))
+        output-path (uiop:ensure-absolute-pathname output-path (uiop:getcwd)))
   (if (null events)
       (run-job--run-artifact input-path output-path permission-mode
                              :executor executor :configuration configuration)

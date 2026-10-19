@@ -10,12 +10,20 @@
     :documentation "Portable execution and retained-log metadata, without log contents."))
   (:documentation "A bounded shell preview with independently readable retained output."))
 
-(-> shell-command-result (string list boolean) shell-command-tool-result)
-(defun shell-command-result (content details success-p)
+(-> shell-command-result
+    (string list boolean &key (:code (option keyword)) (:denied-p boolean))
+    shell-command-tool-result)
+(defun shell-command-result (content details success-p &key code denied-p)
   "Return a bounded shell outcome without spilling command output to context storage."
   (make-instance 'shell-command-tool-result
                  :content (bounded-string content :limit 8000)
                  :details details
+                 :error-code (or code
+                                 (when (and (not success-p)
+                                            (integerp (getf details :exit-code))
+                                            (not (zerop (getf details :exit-code))))
+                                   ':nonzero-exit))
+                 :denied-p denied-p
                  :success-p success-p))
 
 (-> shell-output--render-capture
@@ -126,5 +134,6 @@
                                          (shell-log-artifact-metadata artifact)))
                       :capture-diagnostic diagnostic)
                 (and (null diagnostic)
+                     (eql (sandbox-result-exit-code result) 0)
                      (eq (cl-exec-sandbox:sandbox-result-status result) ':exited)))))
         (ignore-errors (shell-log-release-artifact artifact))))))

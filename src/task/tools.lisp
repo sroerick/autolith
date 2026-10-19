@@ -236,6 +236,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
          (unless (task-parent-can-spawn-p parent name orchestrator)
            (error 'task-error
                   :message "The current agent may not spawn the requested role."
+                  :code ':authority
                   :tool-name "task.run"))
          (let ((definition
                  (task-find-agent-definition selectable-definitions name)))
@@ -260,8 +261,8 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                       (not (task-agent-definition-blocking-p definition)))))))
      items)))
 
-(defun task-tool-result (content details &optional (success-p t))
-  "Return exact readable CONTENT and portable DETAILS as a task tool result."
+(defun task-tool-result (content details &optional (success-p t) &key code denied-p)
+  "Return readable CONTENT, portable DETAILS and retained failure classification."
   (unless (and (stringp content)
                (<= (length content) *task-tool-content-limit*))
     (error 'task-error
@@ -271,6 +272,8 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                  :content content
                  :success-p (and success-p t)
                  :category (if success-p ':success ':failure)
+                 :error-code code
+                 :denied-p denied-p
                  :details details))
 
 (-> task--validate-tool-arguments (t list string) null)

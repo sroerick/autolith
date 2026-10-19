@@ -71,7 +71,7 @@
                          :success-p t :category ':success
                          :details (list :mission :goal (copy-tree goal)))))
     (mission-error (condition)
-      (tool-failure (princ-to-string condition)))))
+      (tool-failure (princ-to-string condition) :code (tool-failure-code condition)))))
 
 (-> mission--read-data (string) t)
 (defun mission--read-data (text)

@@ -147,6 +147,35 @@
     (task-job keyword t (option string))
     (values list (option string) keyword))
 (defun task-job--terminal-record (job state result report)
+  "Publish JOB's result and finish its owned run on every publication exit."
+  (let ((terminal nil))
+    (unwind-protect
+         (multiple-value-bind (final-result final-report final-state)
+             (task-job--publish-terminal-record job state result report)
+           (setf terminal
+                 (append (list :state final-state
+                               :published-p (not (null (getf final-result :output-path)))
+                               :yielded-p (getf final-result :yielded-p)
+                               :request-count (getf final-result :request-count)
+                               :cancellation-reason
+                               (or (job-cancellation-reason job)
+                                   (getf (task-job-telemetry-terminal job) :cancellation-reason)))
+                         (task-job-telemetry-terminal job)))
+           (values final-result final-report final-state))
+      (telemetry--call-safely
+       (lambda ()
+         (telemetry-report-terminal (task-job-telemetry-run job)
+                                    (or terminal (list :state ':unfinished)))
+         (telemetry-finish-run (task-job-telemetry-run job) (task-job-telemetry-owner job)
+                               (or terminal (list :state ':unfinished)))))
+      (setf (task-job-telemetry-run job) nil
+            (task-job-telemetry-owner job) nil
+            (task-job-telemetry-terminal job) nil))))
+
+(-> task-job--publish-terminal-record
+    (task-job keyword t (option string))
+    (values list (option string) keyword))
+(defun task-job--publish-terminal-record (job state result report)
   "Return JOB's terminal record for STATE, releasing what it must not retain.
 
 Runs inside the pool's publication claim, so the result artifact is written exactly
@@ -265,16 +294,47 @@ reason to stop a detached descendant."
 The pool has already moved JOB to :RUNNING and armed its cancellation guard, so
 this only mirrors that state into the progress record job tools read, refuses to
 start under a cancelled ancestor, and hands over to the child."
-  (task-job--set-progress-state job :running)
-  (let ((reason (task-job--cancelled-ancestor-reason job)))
-    (when reason
-      (error 'job-aborted
-             :message (format nil "Task ~A was ~(~A~) with its parent."
-                              (job-identifier job) reason)
-             :identifier (job-identifier job)
-             :reason reason)))
-  (task-continuity-record-job job (task-job-parent-agent job))
-  (task-run-child job))
+  (when (and (not (task-job-detached-p job))
+             (not (task-job-telemetry-run job)) *telemetry-run*)
+    (setf (task-job-telemetry-run job) *telemetry-run*))
+  (unless (task-job-telemetry-run job)
+    (multiple-value-bind (run token)
+        (telemetry--call-safely
+         (lambda () (telemetry--begin-run (agent-configuration (task-job-parent-agent job)))))
+      (setf (task-job-telemetry-run job) run
+            (task-job-telemetry-owner job) token)))
+  (let ((*telemetry-run* (task-job-telemetry-run job))
+        (publication-p nil))
+    (unwind-protect
+         (handler-case
+           (multiple-value-prog1
+               (progn
+                 (task-job--set-progress-state job :running)
+                 (let ((reason (task-job--cancelled-ancestor-reason job)))
+                   (when reason
+                     (error 'job-aborted
+                            :message (format nil "Task ~A was ~(~A~) with its parent."
+                                             (job-identifier job) reason)
+                            :identifier (job-identifier job)
+                            :reason reason)))
+                 (task-continuity-record-job job (task-job-parent-agent job))
+                 (task-run-child job))
+             (setf publication-p t))
+           (serious-condition (condition)
+             (setf (task-job-telemetry-terminal job)
+                   (list :error-type (telemetry--condition-error-type condition)
+                         :cancellation-reason
+                         (when (typep condition 'job-aborted) (job-aborted-reason condition)))
+                   publication-p t)
+             (error condition)))
+      ;; The pool publishes returns and escaping conditions. Other non-local
+      ;; exits bypass publication and must close their owner here.
+      (unless publication-p
+        (telemetry--call-safely
+         (lambda ()
+           (let ((terminal (list :state ':unfinished)))
+             (telemetry-report-terminal *telemetry-run* terminal)
+             (telemetry-finish-run *telemetry-run* (task-job-telemetry-owner job) terminal))))))))
 
 (-> task-parent-root-conversation-identifier (agent) non-empty-string)
 (defun task-parent-root-conversation-identifier (parent)
@@ -358,6 +418,8 @@ start under a cancelled ancestor, and hands over to the child."
                  (get-internal-real-time)))))
     (values (list :status status
                   :content content
+                  :error-code (when tool-result-p (tool-result-error-code result))
+                  :denied-p (and tool-result-p (tool-result-denied-p result))
                   :details (when tool-result-p
                              (conversation--bounded-tool-details (tool-result-details result)))
                   :duration-ms duration)
@@ -377,12 +439,16 @@ start under a cancelled ancestor, and hands over to the child."
                (job-condition-report job)
                "The tool execution has no retained result."))
          (details (and (listp record) (getf record :details)))
+         (error-code (and (listp record) (getf record :error-code)))
+         (denied-p (and (listp record) (getf record :denied-p)))
          (success-p (and (listp record) (eq (getf record :status) ':success))))
     (if (string= (tool-execution-job-tool-name job) "shell.run")
-        (shell-command-result content details success-p)
-        (let ((result (if success-p (tool-success content) (tool-failure content))))
+        (shell-command-result content details success-p :code error-code :denied-p denied-p)
+        (let ((result (if success-p (tool-success content)
+                          (tool-failure content :code error-code :denied-p denied-p))))
           (if details
-              (task-tool-result (tool-result-content result) details success-p)
+              (task-tool-result (tool-result-content result) details success-p
+                                :code error-code :denied-p denied-p)
               result)))))
 
 (-> task-orchestrator-start-execution-job
@@ -627,6 +693,8 @@ guarantee."
                         :root-identifier root-conversation-identifier
                         :initargs
                         (list :orchestrator orchestrator
+                              :telemetry-run (unless (getf entry :detached)
+                                               (or (getf entry :telemetry-run) *telemetry-run*))
                               :execution-identifier (make-identifier)
                               :session-order session-order
                               :definition (getf entry :definition)

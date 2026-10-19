@@ -44,8 +44,11 @@ TOOL-NAME and DESCRIPTION."
                     description native-path condition)
               (fail "~A ~A is not a regular file." description native-path)))
         (file-error (condition)
-          (fail "Could not read ~A ~A as an exact regular file: ~A"
-                description native-path condition))))))
+          (error 'tool-error
+                 :message (format nil "Could not read ~A ~A as an exact regular file: ~A"
+                                  description native-path condition)
+                 :tool-name tool-name
+                 :code (tool-failure-code condition)))))))
 
 
 ;;;; -- Bounded Text Windows --

@@ -14,6 +14,7 @@
 (require :asdf)
 (require :sb-posix)
 (load (merge-pathnames "roots.lisp" (uiop:pathname-directory-pathname *load-truename*)))
+(load (merge-pathnames "trace-context.lisp" (uiop:pathname-directory-pathname *load-truename*)))
 
 #+win32
 (defparameter *launcher-sandbox-default-p*
@@ -643,6 +644,7 @@ boot therefore leaves the generation identity available to recovery."
 
 (defun launcher-main (arguments)
   "Run the launcher for ARGUMENTS and return the exit status."
+  (autolith-script-ensure-trace-context)
   (let* ((source-root (uiop:pathname-parent-directory-pathname
                        (uiop:pathname-directory-pathname (truename *load-truename*))))
          (request (launcher-parse arguments))

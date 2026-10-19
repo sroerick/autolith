@@ -92,7 +92,7 @@
     (unless (non-empty-string-p form)
       (error 'tool-error :message "emacs.eval needs a non-empty form." :tool-name "emacs.eval"))
     (unless (emacs-tool--authorized-p context form)
-      (error 'tool-error :message "emacs.eval was not authorized." :tool-name "emacs.eval"))
+      (error 'tool-authority-denied :message "emacs.eval was not authorized." :tool-name "emacs.eval"))
     (emacs-server-call (tool-context-configuration context) *emacs-eval-elisp*
                        form (princ-to-string *emacs-eval-value-limit*))))
 

@@ -156,6 +156,42 @@
                           "description" "Retrieve one page as Markdown."
                           "parameters" (json-object "type" "object"))))))
 
+(-> test-provider-reserved-web-schema () null)
+(defun test-provider-reserved-web-schema ()
+  "Exercise reserved web parameters through registered eager and deferred requests."
+  (with-test-configuration (configuration)
+    (let* ((registry (make-default-tool-registry :configuration configuration))
+           (conversation (conversation-create configuration)))
+      (unwind-protect
+           (dolist (model '("gpt-5.3-codex" "gpt-6.1-sol"))
+             (let* ((provider
+                      (provider-family-create
+                       ':codex
+                       (configuration-copy configuration :model model
+                                           :provider-validation-p nil)))
+                    (request
+                      (provider-request-object
+                       provider conversation (tool-registry-provider-schemas registry)))
+                    (tools (provider-tests--request-tools request))
+                    (web
+                      (if (provider-deferred-tool-loading-p provider)
+                          (let ((namespace
+                                  (find "web" tools
+                                        :key (lambda (entry) (json-get entry "name"))
+                                        :test #'equal)))
+                            (and namespace
+                                 (find "run" (json-get namespace "tools")
+                                       :key (lambda (entry) (json-get entry "name"))
+                                       :test #'equal)))
+                          (find (provider-wire-tool-name provider "web" "run") tools
+                                :key (lambda (entry) (json-get entry "name"))
+                                :test #'equal))))
+               (test-assert
+                (and web (equalp (json-get web "parameters") (web-run-parameters)))
+                "The provider-reserved web schema reaches the request without client metadata.")))
+        (tool-registry-close-runtime-state registry))))
+  nil)
+
 (-> test-provider-request-tool-filtering () null)
 (defun test-provider-request-tool-filtering ()
   "Test local web schemas are sent only when the request can execute them."
