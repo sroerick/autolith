@@ -18,6 +18,21 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Railed job completion summaries
+
+- Problem: completed and cancelled job notices rendered summary bodies as plain
+  white text without the tool-output rail.
+- Behavior: wrap each summary row beneath a dim left rail and use subdued text.
+- Scope and location: private =application--job-completion-entry= definition,
+  image commit =7fb799af-aa66-45cf-9ed1-64a7b8aaffe3=, private Git
+  =c1df7a2517d18cb03a916b2194502b728c0dbcbe=.
+- Verification: 90 rendering cases and 348 railed rows cover completion outcomes,
+  compact display, terminal width, controls, Unicode, and bounded output. The
+  completion-controller suite passed 10 cases and 83 checks. Active rendering
+  assertions and clean-process private replay passed.
+- Removal condition: discard the override after installing equivalent tracked
+  completion-summary presentation.
+
 ** Authorized paths in explicit delimiter checks
 
 - Problem: =lisp.paren-check= authorized an external path, then supplied a
