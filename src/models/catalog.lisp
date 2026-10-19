@@ -177,16 +177,13 @@ Optional canonical_model_id must be a valid ID. Other public metadata is ignored
            (uiop:rename-file-overwriting-target temporary path))
       (when (probe-file temporary) (delete-file temporary)))))
 
-(defun model-catalog--worker-fetch ()
-  "Fetch the entire fixed public catalog anonymously, without redirects or discovery."
+(defun model-catalog--http-fetch ()
+  "Read one anonymous, complete, byte-bounded response in the current process.
+Native transports without Lisp deadlines must run only in a supervised child."
   (handler-case
       (sb-sys:with-deadline (:seconds *model-catalog-request-seconds*)
         (multiple-value-bind (stream status)
-            (dex:request *model-catalog-source* :method ':get
-                         :headers '(("Accept" . "application/json"))
-                         :max-redirects 0 :connect-timeout 3 :read-timeout 3
-                         :keep-alive nil :use-connection-pool nil :want-stream t :force-binary t
-                         :proxy nil :insecure nil :verbose nil)
+            (platform-public-http-response *platform* *model-catalog-source*)
           (unwind-protect
                (when (eql status 200)
                  (let ((bytes (make-array 0 :element-type '(unsigned-byte 8)
@@ -199,6 +196,49 @@ Optional canonical_model_id must be a valid ID. Other public metadata is ignored
                    (babel:octets-to-string bytes :encoding :utf-8)))
             (when (streamp stream) (close stream)))))
     (sb-sys:deadline-timeout () nil)))
+
+(defun model-catalog--worker-fetch (&optional configuration)
+  "Fetch within one whole-request deadline, supervising native blocking transports."
+  (if (platform-http-supervision-required-p *platform*)
+      (let* ((configuration (or configuration (make-configuration :provider-validation-p nil)))
+             (record (supervised-process-create)))
+        (supervised-process-request
+         record (list *model-catalog-source* *model-catalog-maximum-bytes*)
+         :seconds *model-catalog-request-seconds*
+         :start (lambda (install)
+                  (let ((core (config :active-image-core configuration)))
+                    (when (and core (probe-file core))
+                      (funcall install
+                               (uiop:launch-program
+                                (list (namestring sb-ext:*runtime-pathname*) "--noinform"
+                                      "--core" (namestring core) "--end-runtime-options"
+                                      (namestring (config :source-root configuration))
+                                      "--model-catalog-worker")
+                                :input :stream :output :stream :error-output nil
+                                :external-format :utf-8
+                                :environment (supervised-process-environment))))))))
+      (model-catalog--http-fetch)))
+
+(defun model-catalog--worker-main ()
+  "Serve one private anonymous catalog request without loading user state."
+  (let ((input *standard-input*) (output *standard-output*))
+    (let ((*standard-output* (make-broadcast-stream))
+          (*error-output* (make-broadcast-stream))
+          (*trace-output* (make-broadcast-stream))
+          (*debug-io* (make-two-way-stream (make-string-input-stream "") (make-broadcast-stream))))
+      (let ((result
+              (handler-case
+                  (let* ((*read-eval* nil) (request (read input nil nil)))
+                    (when (and (listp request) (= (length request) 2)
+                               (stringp (first request))
+                               (typep (second request) `(integer 0 ,*model-catalog-maximum-bytes*)))
+                      (let ((*model-catalog-source* (first request))
+                            (*model-catalog-maximum-bytes* (second request)))
+                        (model-catalog--http-fetch))))
+                (error () nil))))
+        (let ((*print-readably* t) (*print-pretty* nil))
+          (write result :stream output) (terpri output) (finish-output output)))))
+  (uiop:quit 0))
 
 (defun model-catalog--refresh (controller context fetch)
   "Fetch outside the owner's lock; publish only while the original CONTEXT is active."

@@ -594,6 +594,31 @@ nothing is listening there, and PLATFORM-CAPABILITY-UNAVAILABLE without the
       (platform--file-failure ':resolve pathname condition))))
 
 
+;;;; -- Anonymous Public HTTP --
+
+(defgeneric platform-public-http-response (platform source)
+  (:documentation "Open an anonymous GET of SOURCE, returning a binary stream and status.
+Disable redirects, credentials, cookies, proxies and connection reuse. The caller
+owns the response stream and must bound its body before allocating it."))
+
+(defgeneric platform-http-supervision-required-p (platform)
+  (:documentation "Return true when native HTTP calls require a supervised child deadline."))
+
+(defmethod platform-http-supervision-required-p ((platform platform))
+  "Use Lisp stream deadlines on the portable socket transport."
+  (declare (ignore platform))
+  nil)
+
+(defmethod platform-public-http-response ((platform platform) source)
+  "Open the streaming Dexador response without ambient authentication or proxies."
+  (declare (ignore platform))
+  (dex:request source :method ':get
+                     :headers '(("Accept" . "application/json"))
+                     :max-redirects 0 :connect-timeout 3 :read-timeout 3
+                     :keep-alive nil :use-connection-pool nil :want-stream t :force-binary t
+                     :proxy nil :insecure nil :verbose nil))
+
+
 ;;;; -- Conditions --
 
 (define-condition platform-error (autolith-error)

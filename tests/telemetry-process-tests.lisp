@@ -22,7 +22,7 @@
        (test-call-with-function-replacements
         (list (list 'uiop:launch-program
                     (lambda (&rest arguments) (declare (ignore arguments)) ':fixture))
-              (list 'telemetry--process-response
+               (list 'supervised-process-exchange
                     (lambda (process request) (declare (ignore process request)) ':ready))
               (list 'telemetry--stop-process
                     (lambda (process)
@@ -107,7 +107,7 @@
          (test-call-with-function-replacements
           (list (list 'uiop:launch-program
                       (lambda (&rest arguments) (declare (ignore arguments)) ':fixture))
-                (list 'telemetry--process-response
+                 (list 'supervised-process-exchange
                       (lambda (process request)
                         (declare (ignore process request))
                         (bt:wait-on-semaphore release-response :timeout 5)
@@ -119,7 +119,7 @@
                         (bt:signal-semaphore release-response)))
                 (list 'bt:make-thread
                       (lambda (function &rest options)
-                        (if (equal (getf options :name) "telemetry subprocess I/O")
+                        (if (equal (getf options :name) "supervised subprocess I/O")
                             (progn
                               (bt:signal-semaphore creating)
                               (bt:wait-on-semaphore release-creation :timeout 5)

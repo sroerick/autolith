@@ -87,6 +87,7 @@
                              (:file "core/platform")
                              (:file "core/platform-posix" :if-feature (:not :win32))
                              (:file "core/platform-win32" :if-feature :win32)
+                             (:file "core/supervised-process")
                              (:file "core/source-files")
                              (:file "core/streams")
                              (:file "core/text-buffer")

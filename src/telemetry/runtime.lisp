@@ -31,9 +31,10 @@
   (tool-failures (make-hash-table :test #'equal))
   (repair-ids (make-hash-table :test #'equal)))
 
-(defstruct (telemetry-process (:constructor telemetry--make-process))
-  "One supervised child and its complete teardown operation."
-  process thread (lock (bt:make-lock "telemetry process lifecycle")) stopped-p completed-p)
+(defstruct (telemetry-process (:include supervised-process)
+                              (:constructor telemetry--make-process))
+  "One consent-owned child and its completion acknowledgement."
+  completed-p)
 
 (defstruct telemetry-model
   "Projected identity and attempt metadata; nullable counters preserve unreported usage."
@@ -110,18 +111,12 @@
 
 (defun telemetry--stop-process (process)
   "Kill and reap a supervised child without exposing its diagnostics."
-  (ignore-errors (platform-terminate-process-object *platform* process :force t))
-  (ignore-errors (uiop:wait-process process))
-  (ignore-errors (uiop:close-streams process)))
+  (supervised-process-terminate process))
 
 (-> telemetry--stop-process-once (telemetry-process) null)
 (defun telemetry--stop-process-once (record)
   "Serialize RECORD's child teardown without holding the controller lock."
-  (bt:with-lock-held ((telemetry-process-lock record))
-    (unless (telemetry-process-stopped-p record)
-      (telemetry--stop-process (telemetry-process-process record))
-      (setf (telemetry-process-stopped-p record) t)))
-  nil)
+  (supervised-process-stop record :terminate #'telemetry--stop-process))
 
 (-> telemetry--complete-process (telemetry-controller telemetry-process) null)
 (defun telemetry--complete-process (controller record)

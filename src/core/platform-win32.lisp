@@ -1145,6 +1145,112 @@ System application directories are available through AppContainer's system acces
    "Windows SBCL has no filesystem sockets; use the TCP transport."))
 
 
+;;;; -- Anonymous Streaming WinHTTP --
+
+(defclass win32-public-http-stream (trivial-gray-streams:fundamental-binary-input-stream)
+  ((session :initarg :session
+            :reader win32-http-session
+            :documentation "WinHTTP session handle for this response.")
+   (connection :initarg :connection
+               :reader win32-http-connection
+               :documentation "Connection handle beneath the session.")
+   (request :initarg :request
+            :reader win32-http-request
+            :documentation "Request handle used for synchronous response reads.")
+   (buffer :initform (make-array 4096 :element-type '(unsigned-byte 8))
+           :reader win32-http-buffer
+           :documentation "Fixed-size native read buffer.")
+   (position :initform 0
+             :accessor win32-http-position
+             :documentation "Index of the next buffered octet.")
+   (end :initform 0
+        :accessor win32-http-end
+        :documentation "Number of buffered response octets.")
+   (closed-p :initform nil
+             :accessor win32-http-closed-p
+             :documentation "Whether CLOSE has been called."))
+  (:documentation "A synchronous native response owned entirely by one supervised child."))
+
+(defmethod stream-element-type ((stream win32-public-http-stream))
+  "Expose native response octets without character conversion."
+  '(unsigned-byte 8))
+
+(defmethod open-stream-p ((stream win32-public-http-stream))
+  "Report whether STREAM still owns its native handles."
+  (not (win32-http-closed-p stream)))
+
+(defmethod close ((stream win32-public-http-stream) &key abort)
+  "Close handles in dependency order, on the request's calling thread."
+  (declare (ignore abort))
+  (unless (win32-http-closed-p stream)
+    (setf (win32-http-closed-p stream) t)
+    (unwind-protect
+         (winhttp:close-handle (win32-http-request stream))
+      (unwind-protect
+           (winhttp:close-handle (win32-http-connection stream))
+        (winhttp:close-handle (win32-http-session stream)))))
+  t)
+
+(defmethod trivial-gray-streams:stream-read-byte ((stream win32-public-http-stream))
+  "Refill a fixed buffer, never slurping an unbounded native response."
+  (when (win32-http-closed-p stream)
+    (error 'stream-error :stream stream))
+  (when (= (win32-http-position stream) (win32-http-end stream))
+    (setf (win32-http-position stream) 0
+          (win32-http-end stream)
+          (winhttp:read-data (win32-http-request stream) (win32-http-buffer stream)))
+    (when (zerop (win32-http-end stream))
+      (return-from trivial-gray-streams:stream-read-byte :eof)))
+  (prog1 (aref (win32-http-buffer stream) (win32-http-position stream))
+    (incf (win32-http-position stream))))
+
+(defmethod platform-http-supervision-required-p ((platform win32-platform))
+  "Native synchronous WinHTTP calls do not participate in SBCL deadlines."
+  (declare (ignore platform))
+  t)
+
+(defmethod platform-public-http-response ((platform win32-platform) source)
+  "Open an anonymous native GET; the caller must supervise this process."
+  (declare (ignore platform))
+  (let* ((uri (quri:uri source))
+         (session nil) (connection nil) (request nil) (transferred-p nil))
+    (unless (and (member (quri:uri-scheme uri) '("http" "https") :test #'equal)
+                 (quri:uri-host uri) (null (quri:uri-userinfo uri)))
+      (error 'platform-error :operation ':http :message "Invalid public HTTP source."))
+    (unwind-protect
+         (progn
+           (setf session (winhttp:http-open nil nil)
+                 connection (winhttp:http-connect session (quri:uri-host uri) (quri:uri-port uri))
+                 request (winhttp:http-open-request
+                          connection :verb ':get
+                          :url (format nil "~A~@[?~A~]"
+                                       (let ((path (quri:uri-path uri)))
+                                         (if (and path (plusp (length path))) path "/"))
+                                       (quri:uri-query uri))
+                          :https-p (equal (quri:uri-scheme uri) "https")))
+           ;; WINHTTP_OPTION_DISABLE_FEATURE: cookies, redirects, authentication,
+           ;; and keep-alive. WinHttpOpen above uses WINHTTP_ACCESS_TYPE_NO_PROXY.
+           (cffi:with-foreign-object (flags :uint32)
+             (setf (cffi:mem-ref flags :uint32) #x0f)
+             (unless (cffi:foreign-funcall "WinHttpSetOption"
+                                         :pointer request :uint32 63
+                                         :pointer flags :uint32 4 :boolean)
+               (error 'platform-error :operation ':http
+                                      :message "Cannot disable ambient HTTP features.")))
+           (winhttp:add-request-headers request "Accept: application/json")
+           (winhttp:send-request request #())
+           (winhttp:receive-response request)
+           (let ((status (winhttp:query-status-code request))
+                 (stream (make-instance 'win32-public-http-stream
+                                        :session session :connection connection :request request)))
+             (setf transferred-p t)
+             (values stream status)))
+      (unless transferred-p
+        (when request (ignore-errors (winhttp:close-handle request)))
+        (when connection (ignore-errors (winhttp:close-handle connection)))
+        (when session (ignore-errors (winhttp:close-handle session)))))))
+
+
 ;;;; -- Installation --
 
 (setf *platform* (make-instance 'win32-platform))

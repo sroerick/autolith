@@ -3,7 +3,8 @@
 ;;;; -- Public Catalog Fixtures --
 
 (defclass model-catalog-test-context ()
-  ()
+  ((configuration :initarg :configuration :reader model-catalog-test-configuration
+                  :documentation "The saved-core configuration for neutral supervised HTTP."))
   (:documentation "An explicit catalog owner independent of telemetry or provider configuration."))
 
 (defmethod model-catalog-context-active-p ((context model-catalog-test-context))
@@ -12,14 +13,14 @@
   t)
 
 (defmethod model-catalog-context-fetch ((context model-catalog-test-context))
-  "Use the real bounded HTTP reader without telemetry's subprocess adapter."
-  (declare (ignore context))
-  (model-catalog--worker-fetch))
+  "Use the real bounded HTTP reader without telemetry's consent adapter."
+  (model-catalog--worker-fetch (model-catalog-test-configuration context)))
 
-(defun test-model-catalog--http-fixture (mode body function &key (port 0))
-  "Call FUNCTION with an ephemeral local HTTP source and port, then join its server."
+(defun test-model-catalog--http-fixture (mode body function &key (port 0) on-request)
+  "Call FUNCTION with a local HTTP source and port, then join its server.
+Call ON-REQUEST, when supplied, after reading the request headers."
   (let* ((listener (usocket:socket-listen "127.0.0.1" port :reuse-address t
-                                                               :element-type '(unsigned-byte 8)))
+                                                                :element-type '(unsigned-byte 8)))
          (port (usocket:get-local-port listener))
          (server nil))
     (unwind-protect
@@ -32,22 +33,32 @@
                         (when (usocket:wait-for-input listener :timeout 2 :ready-only t)
                           (let* ((connection (usocket:socket-accept listener))
                                  (stream (usocket:socket-stream connection))
-                                 (text (flexi-streams:make-flexi-stream stream :external-format :utf-8))
+                                 (text (flexi-streams:make-flexi-stream stream :external-format ':utf-8))
                                  (crlf (format nil "~C~C" #\Return #\Newline)))
                             (unwind-protect
                                  (progn
                                    (loop for line = (read-line text nil nil)
                                          while (and line (plusp (length (string-trim '(#\Return) line)))))
-                                   (if (eq mode ':stalled)
-                                       (sleep 0.4)
-                                       (let ((bytes (babel:string-to-octets body :encoding :utf-8)))
-                                         (write-sequence
-                                          (babel:string-to-octets
-                                           (format nil "HTTP/1.1 200 OK~AContent-Type: application/json~AContent-Length: ~D~AConnection: close~A~A"
-                                                   crlf crlf (length bytes) crlf crlf crlf)
-                                           :encoding :utf-8) stream)
-                                         (write-sequence bytes stream)
-                                         (finish-output stream))))
+                                   (when on-request (funcall on-request))
+                                   (case mode
+                                     (:stalled
+                                      (sleep 0.4))
+                                     (:redirect
+                                      (write-sequence
+                                       (babel:string-to-octets
+                                        (format nil "HTTP/1.1 302 Found~ALocation: ~A~AContent-Length: 0~AConnection: close~A~A"
+                                                crlf body crlf crlf crlf crlf)
+                                        :encoding ':utf-8) stream)
+                                      (finish-output stream))
+                                     (otherwise
+                                      (let ((bytes (babel:string-to-octets body :encoding ':utf-8)))
+                                        (write-sequence
+                                         (babel:string-to-octets
+                                          (format nil "HTTP/1.1 200 OK~AContent-Type: application/json~AContent-Length: ~D~AConnection: close~A~A"
+                                                  crlf crlf (length bytes) crlf crlf crlf)
+                                          :encoding ':utf-8) stream)
+                                        (write-sequence bytes stream)
+                                        (finish-output stream)))))
                               (usocket:socket-close connection)))))
                       :name "standalone model catalog HTTP fixture")))
            (funcall function (format nil "http://127.0.0.1:~D/api.json" port) port))
@@ -61,7 +72,7 @@
       (with-test-configuration (configuration)
         (let* ((root (config :cache-root configuration))
                (catalog (model-catalog-create :cache-root root))
-               (context (make-instance 'model-catalog-test-context))
+               (context (make-instance 'model-catalog-test-context :configuration configuration))
                (port 0)
                (saved nil)
                (fetched-at nil))
@@ -101,6 +112,55 @@
                                 (not (probe-file (model-catalog--path catalog))))
                             "Failures preserve last-good cache and leave cold starts without one.")))
            :port port)))))
+  ;; Exercise the native transport's process boundary on every host as well.
+  (with-test-configuration (configuration)
+    (let ((body (concatenate 'string (test-model-catalog--fixture '("child-model"))
+                             (make-string 10000 :initial-element #\Space)))
+          (children nil)
+          (launch (symbol-function 'uiop:launch-program)))
+      (test-call-with-function-replacements
+       (list (list 'platform-http-supervision-required-p
+                   (lambda (platform) (declare (ignore platform)) t))
+             (list 'uiop:launch-program
+                   (lambda (command &rest options)
+                     (let ((process (apply launch command options)))
+                       (when (and (listp command) (member "--model-catalog-worker" command :test #'equal))
+                         (push process children))
+                       process))))
+       (lambda ()
+         (dolist (mode '(:ready :oversized :stalled))
+           (test-model-catalog--http-fixture
+            mode body
+            (lambda (source port)
+              (declare (ignore port))
+              (let* ((*model-catalog-source* source)
+                     (*model-catalog-maximum-bytes* (if (eq mode ':oversized) 32 (* 16 1024 1024)))
+                     (*model-catalog-request-seconds* (if (eq mode ':stalled) 0.15 10))
+                     (start (get-internal-real-time))
+                     (result (model-catalog--worker-fetch configuration)))
+                (test-assert (if (eq mode ':ready) (equal result body) (null result))
+                             "The private worker returns a complete bounded body or no result.")
+                (when (eq mode ':stalled)
+                  (test-assert (< (/ (- (get-internal-real-time) start) internal-time-units-per-second) 2)
+                               "Native request cancellation includes synchronous process cleanup."))))))
+         (test-assert (= (length children) 3) "Each neutral request starts exactly one saved-core worker.")
+         (test-assert (every (lambda (process) (not (uiop:process-alive-p process))) children)
+                      "Successful, oversized and timed-out workers are all reaped.")))))
+  (with-test-configuration (configuration)
+    (let ((contacted-p nil))
+      (test-model-catalog--http-fixture
+       ':ready (test-model-catalog--fixture '("redirect-target-model"))
+       (lambda (target target-port)
+         (declare (ignore target-port))
+         (test-model-catalog--http-fixture
+          ':redirect target
+          (lambda (source port)
+            (declare (ignore port))
+            (let ((*model-catalog-source* source))
+              (test-assert (null (model-catalog--worker-fetch configuration))
+                           "A redirect is rejected before fetching its target.")))))
+       :on-request (lambda () (setf contacted-p t)))
+      (test-assert (not contacted-p) "Redirect targets receive no request.")))
   nil)
 
 (defun test-model-catalog--fixture (identifiers)
