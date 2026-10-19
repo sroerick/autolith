@@ -4,6 +4,14 @@
 
 (setf *test-suites* nil)
 
+(define-test-suite model-catalog
+  test-provider-catalog-picker
+  test-provider-catalog-failures
+  test-provider-catalog-subscriptions
+  test-model-catalog-standalone-http
+  test-model-catalog-parser
+  test-model-catalog-http-stream)
+
 (define-test-suite shell-output
   test-shell-retained-preview-and-ranges
   test-shell-prelaunch-failure

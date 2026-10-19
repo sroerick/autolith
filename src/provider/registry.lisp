@@ -101,26 +101,54 @@ same source and shadow lower-precedence registrations with the same name."
 (-> provider-load-model-cache (configuration) null)
 (defun provider-load-model-cache (configuration)
   "Load successful dynamic model metadata from CONFIGURATION's private cache."
-  (provider-registry-load-model-cache *provider-registry* configuration))
+  (provider-registry-load-model-cache *provider-registry* configuration)
+  (let ((catalog (provider-catalog-load configuration)))
+    (when (model-catalog-providers catalog)
+      (dolist (registration (provider-registrations))
+        (ignore-errors (provider-catalog--install catalog registration)))))
+  nil)
 
 (-> provider-refresh-models
     (configuration &key (:provider-name (option string)))
     list)
 (defun provider-refresh-models (configuration &key provider-name)
-  "Refresh dynamic provider model lists and return discovery failures.
+  "Refresh models.dev metadata and account-specific discovery; return failures.
 
 When PROVIDER-NAME is supplied, refresh only that effective registration. Static
-registrations are ignored. Failures retain the last successful model list."
-  (mapcar (lambda (failure)
-            (make-condition 'provider-model-discovery-error
-                            :message       (cl-llm-provider-api:provider-api-error-message
-                                            failure)
-                            :provider-name (cl-llm-provider-api:provider-model-discovery-error-provider-name
-                                            failure)
-                            :cause         (cl-llm-provider-api:provider-model-discovery-error-cause
-                                            failure)))
-          (provider-registry-refresh-models *provider-registry* configuration
-                                            :provider-name provider-name)))
+registrations use models.dev when mapped. Failures retain the last successful list."
+  (let* ((registrations (if provider-name
+                            (list (or (provider-registration-find provider-name)
+                                      (error 'configuration-error :message "Unknown provider.")))
+                            (provider-registrations)))
+         (catalog (provider-catalog-load configuration))
+         (failures nil))
+    (when (some #'provider-catalog--source registrations)
+      (provider-catalog-refresh catalog))
+    (dolist (registration registrations)
+      (if (provider-catalog--source registration)
+          (handler-case (provider-catalog--install catalog registration)
+            (error (cause)
+              (push (make-condition 'provider-model-discovery-error
+                                    :message "Could not load provider models from models.dev."
+                                    :provider-name (provider-registration-name registration)
+                                    :cause cause)
+                    failures)))
+          (setf failures
+                (append
+                 (reverse
+                  (mapcar
+                   (lambda (failure)
+                     (make-condition
+                      'provider-model-discovery-error
+                      :message (cl-llm-provider-api:provider-api-error-message failure)
+                      :provider-name
+                      (cl-llm-provider-api:provider-model-discovery-error-provider-name failure)
+                      :cause (cl-llm-provider-api:provider-model-discovery-error-cause failure)))
+                   (provider-registry-refresh-models
+                    *provider-registry* configuration
+                    :provider-name (provider-registration-name registration))))
+                 failures))))
+    (nreverse failures)))
 
 (-> provider-bootstrap-configuration
     (configuration &key (:refresh-p boolean))
