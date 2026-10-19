@@ -357,11 +357,12 @@
        (test-call-with-function-replacements
         (list (list 'uiop:launch-program
                     (lambda (command &rest options)
-                      (declare (ignore command))
-                      (setf process
-                            (apply original
-                                   (list (namestring sb-ext:*runtime-pathname*) "--noinform" "--non-interactive"
-                                         "--eval" "(sleep 30)") options)))))
+                      (if (and (listp command) (member "--telemetry-worker" command :test #'equal))
+                          (setf process
+                                (apply original
+                                       (list (namestring sb-ext:*runtime-pathname*) "--noinform" "--non-interactive"
+                                             "--eval" "(sleep 30)") options))
+                          (apply original command options)))))
         (lambda ()
           (let* ((run (telemetry--begin-run configuration))
                  (start (get-internal-real-time)))

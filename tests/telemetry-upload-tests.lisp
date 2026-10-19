@@ -107,13 +107,15 @@
          (test-call-with-function-replacements
           (list (list 'uiop:launch-program
                       (lambda (command &rest options)
-                        (declare (ignore command))
-                        (setf process
-                              (apply original
-                                     (list (namestring sb-ext:*runtime-pathname*) "--noinform" "--non-interactive"
-                                           "--eval" "(sleep 30)") options))
-                        (bt:signal-semaphore started)
-                        process)))
+                        (if (and (listp command) (member "--telemetry-worker" command :test #'equal))
+                            (progn
+                              (setf process
+                                    (apply original
+                                           (list (namestring sb-ext:*runtime-pathname*) "--noinform" "--non-interactive"
+                                                 "--eval" "(sleep 30)") options))
+                              (bt:signal-semaphore started)
+                              process)
+                            (apply original command options)))))
           (lambda ()
             (telemetry-call-with-run configuration (lambda () :done))
             (test-assert (bt:wait-on-semaphore started :timeout 2) "An actual upload child is running.")
