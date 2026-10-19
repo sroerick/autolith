@@ -464,6 +464,17 @@
                                             "CHECK--READ-SINGLE-FORM"
                                             (fourth (test-check--call "CHECK-PROCESS-COMMAND" entry)))
                                            ':temporary-root))
+                         (when (eq mode ':normal)
+                           (let ((environment (test-check--call "CHECK-PROCESS-ENVIRONMENT" entry))
+                                 (worker-root (merge-pathnames "worker-1/" directory)))
+                             (dolist (entry '(("XDG_CONFIG_HOME" "config/")
+                                              ("XDG_STATE_HOME" "state/")
+                                              ("XDG_CACHE_HOME" "cache/")))
+                               (test-assert
+                                (member (format nil "~A=~A" (first entry)
+                                                (merge-pathnames (second entry) worker-root))
+                                        environment :test #'string=)
+                                "Default-root configurations use worker-owned configuration, state and caches."))))
                          (snapshot-write (merge-pathnames "unclaimed/state.sexp" owned)
                                          '(:fixture :present))
                          (when (eq mode :unwind)

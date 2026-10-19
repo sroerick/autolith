@@ -305,14 +305,12 @@ configurations read; launchers under test keep their own core selection."
                            :label (format nil "Test worker ~D" index)
                            :names names :result-path result
                            :output (merge-pathnames "output.log" directory)
-                           ;; Cases that build configurations on default roots
-                           ;; must never read or write the developer's own
-                           ;; preferences or user init, so each worker owns
-                           ;; its config and state roots. Data stays shared
-                           ;; because the runtime launcher lives below it.
+                           ;; Give default-root configurations private preferences,
+                           ;; state and model caches. Share data for the runtime launcher.
                            :environment (check--environment-with
                                          (list (format nil "XDG_CONFIG_HOME=~Aconfig/" directory)
                                                (format nil "XDG_STATE_HOME=~Astate/" directory)
+                                               (format nil "XDG_CACHE_HOME=~Acache/" directory)
                                                (format nil "AUTOLITH_TEST_ACTIVE_CORE=~A"
                                                        (uiop:native-namestring active-core))))
                            ;; Leave TMPDIR alone: native Unix-domain sockets need short paths.
