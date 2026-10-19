@@ -88,8 +88,8 @@
          (let* ((controller *telemetry-controller*)
                 (path (model-catalog--path controller)))
            (test-assert (= calls 1) "Cold startup attempts one background refresh.")
-           (test-assert (equal (telemetry--model controller "new-public-model") "new-public-model")
-                        "Cold offline retains the sanitized identity without claiming membership.")
+           (test-assert (eq (telemetry--model controller "new-public-model") ':custom)
+                        "Cold offline uses a category until public membership is available.")
            (test-assert (null (telemetry--model controller nil)) "Missing stays absent.")
            (test-assert (null (probe-file path)) "Failure does not create a cache.")
            (dotimes (index 5) (telemetry--ensure-model-catalog controller))
@@ -126,8 +126,9 @@
            (test-model-catalog--await controller)
            (test-assert (equal (telemetry--model controller "next-public-model") "next-public-model")
                         "A later catalog update replaces membership.")
-           (test-assert (not (nth-value 1 (telemetry--model controller "new-public-model")))
-                        "Removed IDs are no longer public.")))))))
+           (test-assert (equal (multiple-value-list (telemetry--model controller "new-public-model"))
+                               '(:custom nil))
+                        "Removed IDs return to the private-model category.")))))))
 
 (defun test-model-catalog-cache-rejection ()
   "Reject wrong cache metadata and invalid bodies, without adopting partial IDs."

@@ -90,8 +90,8 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
                                 "Model spans omit the non-applicable tool attribute.")
                    (test-assert (equal (test-telemetry--attribute span "autolith.request.role") "agent")
                                 "Model requests keep their applicable role.")
-                   (test-assert (equal (test-telemetry--attribute span "gen_ai.request.model") "gpt-e2e-unlisted-9")
-                                "Model requests keep their applicable model.")
+                    (test-assert (equal (test-telemetry--attribute span "gen_ai.request.model") "custom")
+                                 "Model requests keep their projected model category.")
                    (test-assert (equal (test-telemetry--attribute span "error.type") "authentication")
                                 "Failed model requests keep their applicable error type.")))))))
   nil)
@@ -246,7 +246,7 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
   nil)
 
 (defun test-telemetry-model-collector-contract ()
-  "Export privacy regressions and independent membership flags for collector replay."
+  "Export private model names as categories with independent public-membership flags."
   (test-telemetry--call
    (lambda (configuration)
      (setf (config :telemetry-enabled-p configuration) t)
@@ -257,15 +257,12 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
        (telemetry-attach configuration)
        (test-model-catalog--await *telemetry-controller*))
      (let ((fixtures nil)
-           (cases (append
-                   (loop for code in '(#xA0 12 11)
-                         collect (list (format nil "John~CSmith" (code-char code)) "redacted-text"))
-                   '(("127.0.0.1:8000/model" "redacted-address/model")
-                     ("[::1]:8000/model" "redacted-address/model")
-                     ("private.internal:8443/model" "redacted-host/model")
-                     ("localhost:8000/model" "redacted-host/model")
-                     ("gpt?4.1" "gpt-4.1")))))
-       (dolist (case cases)
+           (names '("jane-doe-private-client" "client_acme/internal"
+                    "john@example.com/model" "/Users/fixture/model"
+                    "token=fixture-secret" "127.0.0.1:8000/model"
+                    "private.internal:8443/model" "John Smith model"
+                    "gpt?4.1" "GPT-4.1")))
+       (dolist (name names)
          (dolist (request-p '(nil t))
            (let* ((bodies nil)
                   (*telemetry-process-function*
@@ -273,17 +270,19 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
                       (declare (ignore run))
                       (push (third request) bodies)
                       t))
-                  (request (if request-p (first case) "gpt-4.1"))
-                  (response (if request-p "gpt-4.1" (first case))))
+                  (request (if request-p name "gpt-4.1"))
+                  (response (if request-p "gpt-4.1" name)))
              (telemetry-call-with-run
               configuration
               (lambda ()
                 (telemetry-note-model :request-model request :response-model response :provider "openai")))
-             (let ((fixture (json-object "request_model" (if request-p (second case) "gpt-4.1")
-                                         "response_model" (if request-p "gpt-4.1" (second case))
-                                         "request_known" (json-boolean (not request-p))
-                                         "response_known" (json-boolean request-p)
-                                         "envelope" (json-decode (first bodies)))))
+             (test-assert (not (search name (first bodies)))
+                          "Private model names never enter an exported envelope.")
+             (let ((fixture (json-object "request_model" (if request-p "custom" "gpt-4.1")
+                                        "response_model" (if request-p "gpt-4.1" "custom")
+                                        "request_known" (json-boolean (not request-p))
+                                        "response_known" (json-boolean request-p)
+                                        "envelope" (json-decode (first bodies)))))
                (loop for span across (test-telemetry--spans (first bodies))
                      do (test-assert
                          (and (equal (test-telemetry--attribute span "gen_ai.request.model")
@@ -294,13 +293,13 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
                                   (not request-p))
                               (eq (json-true-p (test-telemetry--attribute span "autolith.model.response_known"))
                                   request-p))
-                         "Both model and run spans preserve sanitized identities and original membership."))
+                         "Model and run spans distinguish public IDs from private categories."))
                (push fixture fixtures)))))
        (test-telemetry--collector-fixture "native-models.json" (coerce (nreverse fixtures) 'vector)))))
   nil)
 
 (defun test-telemetry-public-models ()
-  "Export exact public names, explicit aliases, and sanitized unlisted identities."
+  "Export exact public names, explicit aliases, and categories for unlisted IDs."
   (test-telemetry--call
    (lambda (configuration)
      (setf (config :telemetry-enabled-p configuration) t
@@ -311,55 +310,26 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
              (lambda (run)
                (declare (ignore run))
                (test-model-catalog--fixture
-                '("gpt-5.4" "gpt-5.4-2026-03-05" "gpt-4o-2024-11-20"
-                  "claude-opus-5" "claude-haiku-4-5-20251001" "gemini-3.5-flash"
-                  "grok-4.7" "accounts/fireworks/models/kimi-k3")))))
+                '("gpt-6.1-sol" "gpt-5.4" "claude-opus-5"
+                  "gemini-3.5-flash" "grok-4.7" "accounts/fireworks/models/kimi-k3")))))
        (telemetry-attach configuration)
        (test-model-catalog--await *telemetry-controller*))
      (let ((bodies nil)
-           (cases '(("gpt-6.1-sol" "owner-public-alias")
-                    ("gpt-5.4" "gpt-5.4")
-                    ("gpt-5.4-2026-03-05" "gpt-5.4-2026-03-05")
-                    ("gpt-4o-2024-11-20" "gpt-4o-2024-11-20")
-                    ("claude-opus-5" "claude-opus-5")
-                    ("claude-haiku-4-5-20251001" "claude-haiku-4-5-20251001")
-                    ("gemini-3.5-flash" "gemini-3.5-flash")
-                    ("grok-4.7" "grok-4.7")
-                    ("accounts/fireworks/models/kimi-k3" "accounts/fireworks/models/kimi-k3")
-                    ("private-local-model" "local-public-alias")
-                    (nil nil)
-                    ("" nil)
-                    (42 nil)
-                    ("private-response-model" "private-response-model")
-                    ("gpt-6.1-sol-private" "gpt-6.1-sol-private")
-                    ("gpt-5.4-2026-03-06" "gpt-5.4-2026-03-06")
-                    ("GPT-5.4" "GPT-5.4")
-                    ("tenant/gemini-3.5-flash" "tenant/gemini-3.5-flash")
-                    ("claude-opus-5 " "redacted-text")
-                    ("john@example.com/model" "redacted-email")
-                    ("/Users/fixture/model" "redacted-path")
-                    ("C:\\Users\\fixture" "redacted-path")
-                    ("https://private.example/model" "redacted-url")
-                    ("token=fixture-secret" "redacted-secret")
-                    ("org/sk-fixture/model" "org/redacted-secret/model")
-                    ("127.0.0.1/model" "redacted-address/model")
-                    ("127.0.0.1:8000/model" "redacted-address/model")
-                    ("[::1]:8000/model" "redacted-address/model")
-                    ("[::ffff:127.0.0.1]:8000/model" "redacted-address/model")
-                    ("[fe80::1%en0]:8000/model" "redacted-address/model")
-                    ("fe80::1%en0/model" "redacted-address/model")
-                    ("2001:db8::1/model" "redacted-address/model")
-                    ("private.internal:8443/model" "redacted-host/model")
-                    ("private.internal.:8443/model" "redacted-host/model")
-                    ("localhost:8000/model" "redacted-host/model")
-                    ("private.internal/model" "redacted-host/model")
-                    ("John Smith model" "redacted-text")
-                    ("org/model?x" "org/model-x"))))
-       (dolist (code '(9 10 11 12 13 32 #x85 #xA0 #x1680 #x2000 #x2001 #x2002
-                       #x2003 #x2004 #x2005 #x2006 #x2007 #x2008 #x2009 #x200A
-                       #x2028 #x2029 #x202F #x205F #x3000))
-         (setf cases (append cases (list (list (format nil "John~CSmith" (code-char code))
-                                              "redacted-text")))))
+           (cases '(("gpt-6.1-sol" "owner-public-alias" t)
+                    ("gpt-5.4" "gpt-5.4" t)
+                    ("claude-opus-5" "claude-opus-5" t)
+                    ("gemini-3.5-flash" "gemini-3.5-flash" t)
+                    ("grok-4.7" "grok-4.7" t)
+                    ("accounts/fireworks/models/kimi-k3" "accounts/fireworks/models/kimi-k3" t)
+                    ("private-local-model" "local-public-alias" t)
+                    (nil nil nil)
+                    ("" nil nil)
+                    (42 nil nil)
+                    ("private-response-model" "custom" nil)
+                    ("gpt-6.1-sol-private" "custom" nil)
+                    ("GPT-5.4" "custom" nil)
+                    ("tenant/gemini-3.5-flash" "custom" nil)
+                    ("claude-opus-5 " "custom" nil))))
        (let ((*telemetry-process-function*
                (lambda (run request)
                  (declare (ignore run))
@@ -378,21 +348,14 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
                       (coerce (test-telemetry--spans (first bodies)) 'list))))
          (test-assert (= (length models) (length cases)) "Every model attempt is exported.")
          (loop for span in models
-               for (name expected) in cases
+               for (name expected known-p) in cases
                do (dolist (attribute '("gen_ai.request.model" "gen_ai.response.model"))
                     (test-assert (equal (test-telemetry--attribute span attribute) expected)
-                                 (format nil "Model ~S projects as ~A for ~A." name expected attribute))))
-         (loop for span in models for (name expected) in cases
-               do (test-assert
-                   (eq (json-true-p (test-telemetry--attribute span "autolith.model.known"))
-                       (and (stringp name)
-                            (or (member name '("gpt-6.1-sol" "private-local-model") :test #'equal)
-                                (gethash name (model-catalog-identifiers *telemetry-controller*))) t))
-                   "Membership is explicit rather than inferred from the exported text."))
-         (dolist (name '("private-local-model" "john@example.com" "/Users/fixture"
-                         "fixture-secret" "sk-fixture" "127.0.0.1" "private.internal" "John Smith"))
-           (test-assert (notany (lambda (body) (search name body)) bodies)
-                        "Common identifiers and aliased private names never reach the wire.")))))))
+                                 (format nil "Model ~S projects as ~A for ~A." name expected attribute)))
+                  (dolist (attribute '("autolith.model.known" "autolith.model.response_known"))
+                    (test-assert (eq (json-true-p (test-telemetry--attribute span attribute)) known-p)
+                                 "Public membership and explicit aliases determine the known flags.")))))))
+  nil)
 
 (defun test-telemetry-run-model-identity ()
   "Populate root identities from agent calls while preserving mixed and missing values."
@@ -454,7 +417,7 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
             (common (list (list "autolith.run.span_id" "stringValue" root-id)))
             (identity '(("gen_ai.provider.name" "stringValue" "openai")
                         ("gen_ai.request.model" "stringValue" "model-a")
-                        ("gen_ai.response.model" "stringValue" "private-response")
+                        ("gen_ai.response.model" "stringValue" "custom")
                         ("autolith.model.known" "boolValue" t)
                         ("autolith.model.response_known" "boolValue" nil)))
             (expected
@@ -620,8 +583,8 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
                       "An explicit report identity links its repair.")
          (test-assert (string= (test-telemetry--attribute model "gen_ai.request.model") "model-a")
                       "Trusted aliases take precedence.")
-         (test-assert (string= (test-telemetry--attribute model "gen_ai.response.model") "unmapped-private-model")
-                      "Unmapped models retain their sanitized identifier.")
+         (test-assert (string= (test-telemetry--attribute model "gen_ai.response.model") "custom")
+                      "Unmapped models export the private-model category.")
          (test-assert (not (json-true-p (test-telemetry--attribute model "autolith.model.response_known")))
                       "An unlisted returned identity is explicitly unknown to the catalog.")
          (test-assert (null (test-telemetry--attribute (aref spans 1) "gen_ai.provider.name"))

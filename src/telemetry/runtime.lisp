@@ -386,7 +386,7 @@ Run-end upload is asynchronous and failure-isolated. Unreported exits are intern
 
 (defparameter *telemetry-model-categories*
   '((:mixed "mixed") (:custom "custom"))
-  "MIXED denotes differing run identities; CUSTOM is an explicitly supplied category.")
+  "MIXED denotes differing run identities; CUSTOM replaces unlisted model IDs.")
 
 (defparameter *telemetry-request-roles*
   '((:agent "agent") (:permission-classifier "permission_classifier")
@@ -446,61 +446,10 @@ Catalog rows contain a keyword, accepted spelling and optional exporter wire spe
   "Accept bounded nonnegative integer metadata."
   (and (typep value '(integer 0 1000000000)) value))
 
-(-> telemetry--unicode-whitespace-p (character) boolean)
-(defun telemetry--unicode-whitespace-p (character)
-  "Recognize Unicode White_Space before replacing non-ASCII model characters."
-  (let ((code (char-code character)))
-    (and (or (<= 9 code 13) (<= #x2000 code #x200A)
-             (member code '(#x20 #x85 #xA0 #x1680 #x2028 #x2029 #x202F #x205F #x3000)))
-         t)))
-
-(-> telemetry--model-text (string) (option string))
-(defun telemetry--model-text (value)
-  "Bound unlisted IDs and redact common credentials, addresses, paths and free text.
-This deterministic metadata filter cannot guarantee removal of every personal name."
-  (cond ((> (length value) 1024) "redacted-oversize")
-        ((zerop (length value)) nil)
-        ((find #\@ value) "redacted-email")
-        ((search "://" value) "redacted-url")
-        ((or (find (char value 0) "/~.") (find #\\ value)
-             (and (> (length value) 1) (alpha-char-p (char value 0))
-                  (char= (char value 1) #\:)
-                  (or (= (length value) 2) (char/= (char value 2) #\:)))
-             (member ".." (uiop:split-string value :separator "/") :test #'equal))
-         "redacted-path")
-        ((find-if #'telemetry--unicode-whitespace-p value)
-         "redacted-text")
-        (t
-         (let* ((parts (mapcar #'telemetry--model-segment (uiop:split-string value :separator "/")))
-                (safe (map 'string (lambda (character)
-                                     (if (and (< (char-code character) 128)
-                                              (or (alphanumericp character) (find character "._:/-")))
-                                         character #\-))
-                           (format nil "~{~A~^/~}" parts)))
-                (start (position-if #'alphanumericp safe)))
-           (when start (subseq safe start (min (length safe) (+ start 256))))))))
-
-(-> telemetry--model-segment (string) string)
-(defun telemetry--model-segment (value)
-  "Redact common machine identifiers within a slash-separated model ID."
-  (cond ((cl-ppcre:scan "(?i)^(?:sk-|ghp_|AKIA)|(?:token|secret|password|api[_-]key|authorization)[=:]" value)
-         "redacted-secret")
-        ((or (cl-ppcre:scan "^[0-9]{1,3}(?:\\.[0-9]{1,3}){3}(?::[0-9]+)?$" value)
-             (cl-ppcre:scan "^\\[[0-9a-fA-F:.]+(?:%[A-Za-z0-9._~-]+)?\\](?::[0-9]+)?$" value)
-             (cl-ppcre:scan "^[0-9a-fA-F:.]*:[0-9a-fA-F:.]*:[0-9a-fA-F:.]*(?:%[A-Za-z0-9._~-]+)?$" value))
-         "redacted-address")
-        ((cl-ppcre:scan "(?:\\.[A-Za-z]{2,}\\.?(?::[0-9]+)?|^[A-Za-z0-9_-]+:[0-9]+)$" value)
-         "redacted-host")
-        ((or (cl-ppcre:scan "^[A-Za-z0-9_+=-]{32,}$" value)
-             (and (>= (count-if #'digit-char-p value) 7)
-                  (every (lambda (character) (or (digit-char-p character) (find character "+-()."))) value)))
-         "redacted-id")
-        (t value)))
-
 (-> telemetry--model (telemetry-controller t) (values (or null string keyword) boolean))
 (defun telemetry--model (controller value)
-  "Return a projected identity and whether it is an alias or exact public catalog member."
-  (cond ((null value)
+  "Return an explicit alias, exact public ID, or a fixed category with its known flag."
+  (cond ((or (null value) (equal value ""))
          (values nil nil))
         ((stringp value)
          (let ((alias (rest (assoc value
@@ -513,7 +462,7 @@ This deterministic metadata filter cannot guarantee removal of every personal na
                   (values value t))
                  (t
                   (values (or (telemetry--enum value *telemetry-model-categories*)
-                              (telemetry--model-text value)) nil)))))
+                              ':custom) nil)))))
         (t
          (values nil nil))))
 

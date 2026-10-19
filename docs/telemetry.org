@@ -72,7 +72,7 @@ configurations cannot override the process owner's consent or destination.
 
 * Exported metadata
 
-The exporter sends OTLP/HTTP JSON schema 1, instrumentation revision 6, with
+The exporter sends OTLP/HTTP JSON schema 1, instrumentation revision 7, with
 fresh random span IDs and a launcher trace shared across recovery attempts.
 Exact event timestamps are retained. Each
 logical root carries its outcome and actual model/tool attempt
@@ -86,14 +86,10 @@ input/output/cache token counts. Explicit =:telemetry-model-aliases= pairs take
 precedence over the allowlist, including for known public names. The returned
 model comes from the provider's actual streaming response envelope for Responses,
 Chat Completions, Anthropic and Gemini protocols. It is never filled from the
-requested model. Unlisted identifiers retain their sanitized spelling with
-=autolith.model.known=false= and an independent =autolith.model.response_known=
-flag for the returned model. Missing identities are omitted. Common email,
-address, host, path, credential and opaque-ID patterns are redacted; whitespace
-causes the whole unlisted identifier to become =redacted-text=. The result is
-printable ASCII bounded to 256 characters. This deterministic filter is best
-effort, not a guarantee against personal or proprietary deployment names.
-Configure explicit public aliases when those names must remain private.
+requested model. Unlisted identifiers export as =custom= with
+=autolith.model.known=false=. The returned model has an independent
+=autolith.model.response_known= flag. Missing identities are omitted.
+Configure =:telemetry-model-aliases= to export public labels for private models.
 Catalog matching is exact and case-sensitive, with no prefix matching or
 runtime model discovery.
 
@@ -187,11 +183,11 @@ caller records that no verification occurred.
 The remaining broad categories describe actual observations: =mixed= means
 different primary model identities; provider =other= means an uncatalogued
 provider family or multiple families; issue and repair =other= mean a classified
-incident or operation outside the named kinds. Model =custom= remains an
-explicit category, while ordinary unlisted model identifiers keep their
-sanitized spelling. Error =internal= means an observed local failure that fits
-no narrower category. Finish-reason =OTHER= is a provider-reported terminal
-reason. Finish reasons normalize case once: =STOP= and =MAX_TOKENS= export as
+incident or operation outside the named kinds. Model =custom= denotes an
+unlisted identifier or an explicitly supplied category. Error =internal= means
+an observed local failure that fits no narrower category. Finish-reason =OTHER=
+is a provider-reported terminal reason. Finish reasons normalize case once:
+=STOP= and =MAX_TOKENS= export as
 =stop= and =max_tokens=, and =MODEL_CONTEXT_WINDOW_EXCEEDED= exports as
 =model_context_window_exceeded=. The catalog's uppercase-only Gemini reasons
 =SAFETY=, =RECITATION=, =OTHER= and =MALFORMED_FUNCTION_CALL= retain that wire
@@ -221,7 +217,7 @@ needed. A consent-owned timer checks expiry every minute, including idle session
 Each successful refresh is valid for 24 hours; failed attempts use a
 five-minute backoff from completion. A stale catalog is usable during a failed
 refresh. If cache publication fails, AL uses the validated catalog in memory.
-Cold offline starts retain sanitized unlisted names with false known flags.
+Cold offline starts use explicit aliases or =custom= until public membership is available.
 Disabled telemetry loads no cache and starts no fetch thread or subprocess.
 An explicit provider/model-picker refresh may independently use this public cache.
 
@@ -358,7 +354,7 @@ monotonic duration. =telemetry-note-report= and =telemetry-note-repair= accept a
 Supply =:incident-id= and =:attempt-id= to link typed repair/check events.
 Papercut and mutation hooks supply their persisted export IDs automatically.
 Instrumentation revision 4 identifies model outcome, request-role, root identity
-and sanitized unlisted-model projections in collector comparisons. Tool events
+and model-name projections in collector comparisons. Tool events
 also include structured =autolith.tool.error_code= on every failure and signed
 =autolith.tool.exit_code= when available. Codes use fixed condition categories or
 domain validation codes, never error reports or arbitrary condition names.
@@ -372,6 +368,7 @@ presence from earlier exports. Collector migration =06_run_context.sql= makes
 the run's unrelated tool and request-role columns nullable.
 Revision 6 makes job terminal state authoritative, claims root finalization once,
 and omits non-applicable successful-tool error categories.
+Revision 7 replaces unlisted model identifiers with =custom= in model and run spans.
 
 ** Exercising an unlisted model
 
@@ -402,7 +399,7 @@ AUTOLITH_MODEL=gpt-e2e-unlisted-9 autolith --permissions full-access \
 #+end_src
 
 The provider resolves locally while public catalog membership stays false.
-Both model and run rows export =model=gpt-e2e-unlisted-9= and
+Both model and run rows export =model=custom= and
 =model_known=false=. Omitting credentials exercises a real authentication
 failure with the same exports, without contacting the fixture server. The
 offline regression below covers that failure path:
