@@ -100,6 +100,8 @@ ownership of TEMPORARY-ROOT when supplied or allocating a fresh run directory."
        (dolist (name cases)
          (unless (member name (tests-select))
            (error 'test-selection-error :selector name))
+          (format stream "~&RUN ~(~A~)~%" name)
+          (finish-output stream)
          (let* ((start (get-internal-real-time))
                 (results (fiveam:run name))
                 (elapsed (/ (- (get-internal-real-time) start)

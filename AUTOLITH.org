@@ -18,6 +18,18 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Inspectable test-worker stalls
+
+- Problem: worker timeouts omitted the active case and blocked thread stacks.
+- Behavior: record =RUN= before each case. Set =AUTOLITH_TEST_STACK_AFTER= to
+  collect live Lisp thread backtraces after the requested delay.
+- Scope and location: tracked project work in =tests/test-runner.lisp= and
+  =script/test-worker.lisp=.
+- Verification: a controlled shard replay identified the pending subprocess
+  case, its pipe reader, and its owner waiting for I/O completion.
+- Removal condition: retire the optional watchdog after equivalent thread
+  capture is available automatically at worker timeouts.
+
 ** Railed job completion summaries
 
 - Problem: completed and cancelled job notices rendered summary bodies as plain

@@ -313,6 +313,10 @@ is a per-worker deadline in seconds (default 600). Every run reports case timing
 and the slowest cases. Worker failures, invalid results, and timeouts fail the
 command; worker process groups are terminated and reaped on exit.
 
+Set `AUTOLITH_TEST_STACK_AFTER` to a positive integer number of seconds when
+diagnosing a stalled worker. Inspect its captured log for `RUN` entries and
+live Lisp thread backtraces.
+
 Register zero-argument test functions in `tests/test-suites.lisp` using
 `define-test-suite`. Use FiveAM assertions or `test-assert`, which records a
 FiveAM check in registered tests. `with-test-configuration` binds a fresh

@@ -64,6 +64,35 @@
       (format *error-output* "~&Live threads after cases: ~{~A~^, ~}~%"
               (mapcar #'sb-thread:thread-name others)))))
 
+(defun test-worker--start-stack-watchdog ()
+  "Print live Lisp thread stacks after AUTOLITH_TEST_STACK_AFTER seconds."
+  (let ((value (uiop:getenv "AUTOLITH_TEST_STACK_AFTER")))
+    (when value
+      (let ((seconds (handler-case (parse-integer value)
+                       (parse-error ()
+                         (check--fail "AUTOLITH_TEST_STACK_AFTER must be a positive integer."))))
+            (output *error-output*))
+        (unless (plusp seconds)
+          (check--fail "AUTOLITH_TEST_STACK_AFTER must be a positive integer."))
+        (sb-thread:make-thread
+         (lambda ()
+           (sleep seconds)
+           (dolist (thread (sb-thread:list-all-threads))
+             (unless (eq thread sb-thread:*current-thread*)
+               (handler-case
+                   (sb-thread:interrupt-thread
+                    thread
+                    (lambda ()
+                      (let ((dump
+                              (with-output-to-string (stream)
+                                (format stream "~&Worker thread ~S after ~D seconds:~%"
+                                        (sb-thread:thread-name sb-thread:*current-thread*) seconds)
+                                (sb-debug:print-backtrace :count 60 :stream stream))))
+                        (write-string dump output)
+                        (finish-output output))))
+                 (error () nil)))))
+         :name "test worker stack watchdog")))))
+
 (defun test-worker-main (arguments source-root &key preloaded-p)
   "Run one assigned shard and atomically publish its portable result."
   (handler-case
@@ -91,6 +120,7 @@
                  (cases (uiop:symbol-call '#:autolith '#:tests-select :tests names)))
             (unless (equal (mapcar #'string-downcase cases) names)
               (check--fail "Worker selection does not match its assigned cases."))
+            (test-worker--start-stack-watchdog)
             (let ((result (uiop:symbol-call '#:autolith '#:tests-run-cases cases
                                             :temporary-root (getf request :temporary-root))))
               (check--validate-result result names)
