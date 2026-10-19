@@ -140,9 +140,9 @@ quiescing, because both touch the private history repository."
           :mutation-history-commit
           (and image-commit (image-commit-history-commit image-commit))
           :git-commit (or git-commit
-                          (string-trim
-                           '(#\Space #\Tab #\Newline #\Return)
-                           (self-git-command configuration '("rev-parse" "HEAD"))))
+                          (source-revision
+                           (make-source-provenance
+                            (config :source-root configuration))))
           :journal-position
           (let ((journal (configuration-journal-path configuration)))
             (if (probe-file journal)
@@ -331,58 +331,51 @@ structured type and message survive the round trip."
         (main arguments))))
 
 (defun checkpoint--source-snapshot (configuration)
-  "Return the clean checked commit from CONFIGURATION's source tree."
-  (labels ((clean-commit ()
-             "Return HEAD when the source is clean, otherwise signal a checkpoint error."
-             (let ((status (self-git-command
-                            configuration
-                            '("status" "--porcelain"))))
-               (when (non-empty-string-p status)
-                 (error 'checkpoint-error
-                        :message "A checkpoint requires a clean source revision."
-                        :stage ':validation
-                        :pathname (config :source-root configuration))))
-             (string-trim
-              '(#\Space #\Tab #\Newline #\Return)
-              (self-git-command configuration '("rev-parse" "HEAD")))))
-    (let ((before (clean-commit)))
-      (multiple-value-bind (output ignored status)
-          (handler-case
-              (uiop:run-program
-               (platform-source-check-command
-                *platform* (config :source-root configuration))
-               :directory (config :source-root configuration)
-               :output ':string
-               :error-output ':output
-               :ignore-error-status t)
-            (error (condition)
-              (error 'checkpoint-error
-                     :message (format nil "The repository check failed: ~A" condition)
-                     :stage ':validation
-                     :pathname (config :source-root configuration))))
-        (declare (ignore ignored))
-        (unless (zerop status)
-          (error 'checkpoint-error
-                 :message (format nil "The repository check failed (exit ~D):~%~A"
-                                  status (subseq output (max 0 (- (length output) 16384))))
-                 :stage ':validation
-                 :pathname (config :source-root configuration))))
-      (let ((after (clean-commit)))
-        (unless (string= before after)
-          (error 'checkpoint-error
-                 :message "The source revision changed during checkpoint validation."
-                 :stage ':validation
-                 :pathname (config :source-root configuration)))
-        after))))
+  "Return the clean checked revision from CONFIGURATION's source tree."
+  (let* ((source (make-source-provenance (config :source-root configuration)))
+         (clean-revision (lambda ()
+                           (unless (source-clean-p source)
+                             (error 'checkpoint-error
+                                    :message "A checkpoint requires a clean source revision."
+                                    :stage ':validation
+                                    :pathname (config :source-root configuration)))
+                           (source-revision source)))
+         (before (funcall clean-revision)))
+    (multiple-value-bind (output ignored status)
+        (handler-case
+            (uiop:run-program
+             (platform-source-check-command
+              *platform* (config :source-root configuration))
+             :directory (config :source-root configuration)
+             :output ':string
+             :error-output ':output
+             :ignore-error-status t)
+          (error (condition)
+            (error 'checkpoint-error
+                   :message (format nil "The repository check failed: ~A" condition)
+                   :stage ':validation
+                   :pathname (config :source-root configuration))))
+      (declare (ignore ignored))
+      (unless (zerop status)
+        (error 'checkpoint-error
+               :message (format nil "The repository check failed (exit ~D):~%~A"
+                                status (subseq output (max 0 (- (length output) 16384))))
+               :stage ':validation
+               :pathname (config :source-root configuration))))
+    (let ((after (funcall clean-revision)))
+      (unless (string= before after)
+        (error 'checkpoint-error
+               :message "The source revision changed during checkpoint validation."
+               :stage ':validation
+               :pathname (config :source-root configuration)))
+      after)))
 
 (-> checkpoint--revalidate-source (configuration string) null)
 (defun checkpoint--revalidate-source (configuration expected-commit)
   "Require CONFIGURATION to remain clean at EXPECTED-COMMIT immediately before fork."
-  (let ((status (self-git-command configuration '("status" "--porcelain")))
-        (commit (string-trim
-                 '(#\Space #\Tab #\Newline #\Return)
-                 (self-git-command configuration '("rev-parse" "HEAD")))))
-    (unless (and (not (non-empty-string-p status))
+  (let* ((source (make-source-provenance (config :source-root configuration)))
+         (commit (source-revision source)))
+    (unless (and (source-clean-p source)
                  (string= commit expected-commit))
       (error 'checkpoint-error
              :message "The source changed after checkpoint validation."

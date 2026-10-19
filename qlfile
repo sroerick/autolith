@@ -24,7 +24,7 @@ git cl-jobpond https://github.com/lambda-symbolics/cl-jobpond.git :ref 3fa176f20
 git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref d7cd04903fb36b62224fe618a0e1a11bebf0d8cb
 git cl-rfc8252 https://github.com/lambda-symbolics/cl-rfc8252.git :ref b9affbd04c12e2adac4a2403f60a3a2802f9ac45
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref 740ccdff7d10c192c75cc1589259682e3e66e007
-git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref 1e67d70c13cdc52fedae82fdf310d3d9409099e1
+git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref a6d6b63c058012fd692663d6624e00f3ec91bf78
 git cl-lsp https://github.com/lambda-symbolics/cl-lsp.git :ref 170885bfc140fb7864c4cb6ddb0e91d96be7c468
 git cl-resources https://github.com/lambda-symbolics/cl-resources.git :ref 2a160c6fdacac6f1f70689c43209b26182fd7f4d
 git clasted https://github.com/lambda-symbolics/clasted.git :ref dc8b2df5a68b396c4cdd825a58e7a4d50dfb9def
@@ -44,7 +44,7 @@ git ls-compat https://github.com/lambda-symbolics/ls-compat.git :ref d67c607188e
 git ls-flock https://github.com/lambda-symbolics/ls-flock.git :ref 0e3e0ada0f5b693cb3f32f46aefbb8dbebcc20f2
 git idsmall https://github.com/luciusmagn/idsmall.git :ref 3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9
 git mcparen https://github.com/lambda-symbolics/mcparen.git :ref 03c47248988ebb7dd9aaa40a77d4ca5ac6e21889
-git sbcl-generations https://github.com/lambda-symbolics/sbcl-generations.git :ref df5128f03e60fe3ab1b8740b6f6555f402623148
+git sbcl-generations https://github.com/lambda-symbolics/sbcl-generations.git :ref b8d7b6c99c95123840be3d44d120f4146b8baac4
 git sexp-config https://github.com/lambda-symbolics/sexp-config.git :ref d36be049fb4f31e7f51d0f9b718fbf36bd642fca
 git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 4d38e6544d87412d99acef9f097272df41359eff
 git sophisticated-clipboard https://github.com/lambda-symbolics/sophisticated-clipboard.git :ref 756b65f4f8be18c786e2331de89708729df42bd4

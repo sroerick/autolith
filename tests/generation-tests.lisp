@@ -82,10 +82,14 @@
     (dolist (status '(0 7 :launch-failure))
       (test-call-with-function-replacements
        (list
-        (list 'self-git-command
-              (lambda (active-configuration arguments)
-                (declare (ignore active-configuration))
-                (if (string= (first arguments) "status") "" "fixture-commit")))
+         (list 'source-clean-p
+               (lambda (source &key paths)
+                 (declare (ignore source paths))
+                 t))
+         (list 'source-revision
+               (lambda (source)
+                 (declare (ignore source))
+                 "fixture-commit"))
         (list 'uiop:run-program
               (lambda (&rest arguments)
                 (declare (ignore arguments))

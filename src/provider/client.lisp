@@ -167,6 +167,12 @@
   (declare (ignore provider))
   ':codex)
 
+(defmethod provider-cache-write-tokens ((provider codex-subscription-provider) usage)
+  "Ignore ChatGPT's structural zero for unsupported cache writes."
+  (let ((writes (call-next-method)))
+    (when (and writes (plusp writes))
+      writes)))
+
 (-> provider-child-reference-history-p (model-provider) boolean)
 (defgeneric provider-child-reference-history-p (provider)
   (:documentation

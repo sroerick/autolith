@@ -470,7 +470,7 @@ let
     pname = "sbcl-generations";
     version = qlotVersion "sbcl-generations";
     src = qlotSource "sbcl-generations";
-    lispLibs = with lispPackages; [ bordeaux-threads ];
+    lispLibs = with lispPackages; [ bordeaux-threads ironclad ];
   };
 
   clJobpond = pkgs.sbcl.buildASDFSystem {

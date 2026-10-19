@@ -385,7 +385,6 @@
                 #:*rlm-default-call-budget*
                 #:*rlm-default-depth-budget*
                 #:*rlm-default-token-budget*
-                #:*sse-end-of-stream*
                 #:*sse-maximum-event-characters*
                 #:*sse-maximum-line-characters*
                 #:*sse-read-line-function*
@@ -419,6 +418,13 @@
                 #:provider-responses-request-namespaces
                 #:provider-responses-wire-effort
                 #:provider-result
+                #:provider-result-metadata
+                #:provider-response-metadata-event
+                #:provider-response-metadata-event-metadata
+                #:provider-response-metadata-model
+                #:provider-response-metadata-finish-reason
+                #:provider-response-metadata-cache-write-tokens
+                #:provider-cache-write-tokens
                 #:provider-result-output-items
                 #:provider-result-tool-search-calls
                 #:provider-deferred-wire-tools
@@ -824,6 +830,10 @@
                 #:make-generation-store
                 #:make-restart-checkpoint-backend
                 #:make-sbcl-core-probe-runner
+                #:make-source-provenance
+                #:source-revision
+                #:source-clean-p
+                #:source-file-identities
                 #:image-build-record
                 #:image-build-record-compatible-p
                 #:image-install

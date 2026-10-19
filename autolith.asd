@@ -310,7 +310,6 @@
                              (:file "acp/completions")
                              (:file "telemetry/hooks")
                              (:file "startup/main")
-                             (:file "startup/dependency-patches")
                              (:file "startup/active-image"))))
   :in-order-to ((asdf:test-op (asdf:test-op #:autolith/tests))))
 

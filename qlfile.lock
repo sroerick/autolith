@@ -104,8 +104,8 @@
   :version "git-740ccdff7d10c192c75cc1589259682e3e66e007"))
 ("cl-llm-provider-api" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "1e67d70c13cdc52fedae82fdf310d3d9409099e1")
-  :version "git-1e67d70c13cdc52fedae82fdf310d3d9409099e1"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "a6d6b63c058012fd692663d6624e00f3ec91bf78")
+  :version "git-a6d6b63c058012fd692663d6624e00f3ec91bf78"))
 ("cl-lsp" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-lsp.git" :ref "170885bfc140fb7864c4cb6ddb0e91d96be7c468")
@@ -184,8 +184,8 @@
   :version "git-03c47248988ebb7dd9aaa40a77d4ca5ac6e21889"))
 ("sbcl-generations" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-generations.git" :ref "df5128f03e60fe3ab1b8740b6f6555f402623148")
-  :version "git-df5128f03e60fe3ab1b8740b6f6555f402623148"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-generations.git" :ref "b8d7b6c99c95123840be3d44d120f4146b8baac4")
+  :version "git-b8d7b6c99c95123840be3d44d120f4146b8baac4"))
 ("sexp-config" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-config.git" :ref "d36be049fb4f31e7f51d0f9b718fbf36bd642fca")

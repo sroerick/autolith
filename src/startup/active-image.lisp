@@ -25,7 +25,6 @@
                     "script/build-active"
                     "script/build-active.lisp"
                     "script/restart-publisher.lisp"
-                    "script/source-provenance.lisp"
                     "autolith.asd"
                     "VERSION"
                     "qlfile"

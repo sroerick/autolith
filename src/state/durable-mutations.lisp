@@ -227,9 +227,9 @@ so it is opt-in rather than the default commit gate."))
                           :previous-source previous-source
                           :proposed-source proposed-source
                           :base-commit
-                          (string-trim
-                           '(#\Space #\Tab #\Newline #\Return)
-                           (self-git-command configuration '("rev-parse" "HEAD")))
+                          (source-revision
+                           (make-source-provenance
+                            (config :source-root configuration)))
                           :phase :pending)))
     (maphash
      (lambda (identifier existing)
@@ -529,14 +529,12 @@ records resolves once."
 
 (-> self-git-command (configuration list &key (:ignore-error-status boolean)) string)
 (defun self-git-command (configuration arguments &key ignore-error-status)
-  "Return source provenance, adapting read-only Git queries for jj workspaces."
-  (cl-user::autolith-source-command
-   (config :source-root configuration) arguments
-   (lambda (source-root arguments)
-     (uiop:run-program
-      (append (list "git" "-C" (namestring source-root)) arguments)
-      :output ':string :error-output ':output
-      :ignore-error-status ignore-error-status))
+  "Run a Git command for mutation-test and fixture operations."
+  (uiop:run-program
+   (append (list "git" "-C"
+                 (namestring (config :source-root configuration)))
+           arguments)
+   :output ':string :error-output ':output
    :ignore-error-status ignore-error-status))
 
 (-> self-validate-commit-title (string) string)

@@ -43,7 +43,7 @@
   (test-telemetry--call
    (lambda (configuration)
      (dolist (case '((telemetry-test-anthropic-stream "model_context_window_exceeded"
-                     "{\"type\":\"message_start\",\"message\":{\"id\":\"fixture\",\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}"
+                     "{\"type\":\"message_start\",\"message\":{\"id\":\"fixture\",\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":0,\"cache_creation_input_tokens\":37}}}"
                      "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"model_context_window_exceeded\"},\"usage\":{\"output_tokens\":0}}"
                      "{\"type\":\"message_stop\"}")
                     (telemetry-test-gemini-stream "MODEL_CONTEXT_WINDOW_EXCEEDED"
@@ -64,6 +64,9 @@
          (test-assert (equal (test-telemetry--attribute model "gen_ai.response.finish_reason")
                              (string-downcase (second case)))
                       "The observed terminal reason survives export.")
+         (when (eq (first case) 'telemetry-test-anthropic-stream)
+           (test-assert (equal (test-telemetry--attribute model "autolith.usage.cache_write_tokens") "37")
+                        "Observed cache writes survive a failed stream without a final result."))
          (test-telemetry--collector-fixture
           (if (eq (first case) 'telemetry-test-anthropic-stream)
               "native-terminal-anthropic.json" "native-terminal-gemini.json")

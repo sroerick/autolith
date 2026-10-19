@@ -36,19 +36,13 @@
                            user-setup)))
   (load (merge-pathnames "script/runtime-requirement.lisp" source-root))
   (autolith-require-minimum-runtime version-pathname)
-  (when (probe-file (merge-pathnames ".jj/" source-root))
-    (unless (probe-file quicklisp-setup)
-      (error "Recovery provenance needs Quicklisp at ~A." quicklisp-setup))
-    (load quicklisp-setup)
-    (uiop:symbol-call '#:ql '#:quickload :ironclad :silent t))
-  (load (merge-pathnames "script/source-provenance.lisp" source-root))
+  (unless (probe-file quicklisp-setup)
+    (error "Recovery provenance needs Quicklisp at ~A." quicklisp-setup))
+  (load quicklisp-setup)
+  (uiop:symbol-call '#:ql '#:quickload :sbcl-generations :silent t)
   (labels ((load-recovery-source ()
              "Load only the packages needed to compile the recovery runtime."
-             (unless (probe-file quicklisp-setup)
-               (error "Recovery build needs Quicklisp at ~A." quicklisp-setup))
-             (load quicklisp-setup)
              (uiop:symbol-call '#:ql '#:quickload :serapeum :silent t)
-             (uiop:symbol-call '#:ql '#:quickload :sbcl-generations :silent t)
              (let ((package (or (find-package "AUTOLITH")
                                 (make-package "AUTOLITH" :use '("CL")))))
                (export (mapcar (lambda (name) (intern name package))
@@ -56,30 +50,12 @@
                        package))
              (load (merge-pathnames "recovery/runtime.lisp" source-root)))
 
-            (git-output (arguments)
-              "Return Git-compatible provenance for a Git or jj source tree."
-              (autolith-source-command
-               source-root arguments
-               (lambda (root arguments)
-                 (string-trim
-                  '(#\Space #\Tab #\Newline #\Return)
-                  (uiop:run-program
-                   (append (list "git" "-c" "safe.directory=*"
-                                 "-C" (namestring root))
-                           arguments)
-                   :output ':string :error-output ':output)))))
-
-           (source-blob (relative-pathname)
-             "Return the Git object identity of one current source file."
-             (git-output (list "hash-object" relative-pathname)))
-
            (source-identity ()
              "Return exact provenance for inputs controlling the recovery image."
              (let* ((paths '("script/build-recovery"
                              "script/build-recovery.lisp"
                              "recovery/runtime.lisp"
                              "script/trace-context.lisp"
-                             "script/source-provenance.lisp"
                              "recovery/launcher.lisp"
                              "bin/autolith"
                              "bin/autolith-active"
@@ -88,30 +64,32 @@
                              "script/check.lisp"
                              "qlfile.lock"
                              "sbcl.version"))
-                    (status (git-output
-                             (append '("status" "--porcelain" "--")
-                                     paths))))
-               (list :source-commit (git-output '("rev-parse" "HEAD"))
-                     :source-clean-p (zerop (length status))
-                     :runtime-blob (source-blob "recovery/runtime.lisp")
-                     :trace-context-source-blob
-                     (source-blob "script/trace-context.lisp")
-                     :builder-blob (source-blob "script/build-recovery")
-                     :builder-source-blob
-                     (source-blob "script/build-recovery.lisp")
-                     :provenance-source-blob
-                     (source-blob "script/source-provenance.lisp")
-                     :source-launcher-blob
-                     (source-blob "recovery/launcher.lisp")
-                     :stable-launcher-blob (source-blob "bin/autolith")
-                     :active-source-launcher-blob
-                     (source-blob "bin/autolith-active")
-                     :runtime-adapter-blob
-                     (source-blob "bin/autolith-runtime")
-                     :check-blob (source-blob "script/check")
-                     :check-source-blob (source-blob "script/check.lisp")
-                     :dependency-lock-blob (source-blob "qlfile.lock")
-                     :sbcl-version-blob (source-blob "sbcl.version"))))
+                    (source (uiop:symbol-call '#:sbcl-generations
+                                              '#:make-source-provenance
+                                              source-root))
+                    (identities (uiop:symbol-call '#:sbcl-generations
+                                                  '#:source-file-identities
+                                                  source paths)))
+               (flet ((file-identity (path)
+                        (second (assoc path identities :test #'string=))))
+                 (list :source-commit
+                       (uiop:symbol-call '#:sbcl-generations '#:source-revision source)
+                       :source-clean-p
+                       (uiop:symbol-call '#:sbcl-generations '#:source-clean-p
+                                         source :paths paths)
+                       :runtime-blob (file-identity "recovery/runtime.lisp")
+                       :trace-context-source-blob
+                       (file-identity "script/trace-context.lisp")
+                       :builder-blob (file-identity "script/build-recovery")
+                       :builder-source-blob (file-identity "script/build-recovery.lisp")
+                       :source-launcher-blob (file-identity "recovery/launcher.lisp")
+                       :stable-launcher-blob (file-identity "bin/autolith")
+                       :active-source-launcher-blob (file-identity "bin/autolith-active")
+                       :runtime-adapter-blob (file-identity "bin/autolith-runtime")
+                       :check-blob (file-identity "script/check")
+                       :check-source-blob (file-identity "script/check.lisp")
+                       :dependency-lock-blob (file-identity "qlfile.lock")
+                       :sbcl-version-blob (file-identity "sbcl.version")))))
 
            (probe-core (pathname sbcl-command)
              "Require PATHNAME to boot and report the current recovery protocol."

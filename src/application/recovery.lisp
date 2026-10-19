@@ -58,9 +58,8 @@
                                      (config :state-root configuration))))
          (commit
            (handler-case
-               (string-trim
-                '(#\Space #\Tab #\Newline #\Return)
-                (self-git-command configuration '("rev-parse" "HEAD")))
+               (source-revision
+                (make-source-provenance (config :source-root configuration)))
              (error ()
                nil)))
          (safe-backtrace
