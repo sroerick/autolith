@@ -487,6 +487,7 @@
                              (:file "test-runner-tests")
                              (:file "telemetry-tests")
                              (:file "telemetry-upload-tests")
+                             (:file "telemetry-process-tests")
                              (:file "model-catalog-tests")
                              (:file "provider-catalog-tests")
                              (:file "telemetry-catalog-tests")

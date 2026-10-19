@@ -31,6 +31,10 @@
   (tool-failures (make-hash-table :test #'equal))
   (repair-ids (make-hash-table :test #'equal)))
 
+(defstruct (telemetry-process (:constructor telemetry--make-process))
+  "One supervised child and its complete teardown operation."
+  process thread (lock (bt:make-lock "telemetry process lifecycle")) stopped-p completed-p)
+
 (defstruct telemetry-model
   "Projected identity and attempt metadata; nullable counters preserve unreported usage."
   provider request-model response-model request-known-p response-known-p
@@ -110,8 +114,37 @@
   (ignore-errors (uiop:wait-process process))
   (ignore-errors (uiop:close-streams process)))
 
+(-> telemetry--stop-process-once (telemetry-process) null)
+(defun telemetry--stop-process-once (record)
+  "Serialize RECORD's child teardown without holding the controller lock."
+  (bt:with-lock-held ((telemetry-process-lock record))
+    (unless (telemetry-process-stopped-p record)
+      (telemetry--stop-process (telemetry-process-process record))
+      (setf (telemetry-process-stopped-p record) t)))
+  nil)
+
+(-> telemetry--complete-process (telemetry-controller telemetry-process) null)
+(defun telemetry--complete-process (controller record)
+  "Remove RECORD only after its child and I/O thread have both stopped."
+  (bt:with-lock-held ((telemetry-controller-lock controller))
+    (setf (telemetry-controller-processes controller)
+          (remove record (telemetry-controller-processes controller)))
+    (bt:with-lock-held ((telemetry-process-lock record))
+      (setf (telemetry-process-completed-p record) t)))
+  nil)
+
+(-> telemetry--retire-process (telemetry-process) null)
+(defun telemetry--retire-process (record)
+  "Stop RECORD and wait for its owning operation to finish I/O cleanup."
+  (telemetry--stop-process-once record)
+  (loop until (bt:with-lock-held ((telemetry-process-lock record))
+                (telemetry-process-completed-p record))
+        do (sleep 0.005))
+  nil)
+
 (defun telemetry--purge (controller)
-  "Revoke every run and child synchronously, under the controller lock."
+  "Revoke runs under the controller lock and return all outstanding operations.
+Keep records registered until teardown completes, including across concurrent purges."
   (model-catalog-retire controller)
   (telemetry--retire-uploader controller)
   (incf (telemetry-controller-epoch controller))
@@ -122,15 +155,12 @@
           (telemetry-run-previous-digest run) nil))
   (setf (telemetry-controller-queue controller) nil
         (telemetry-controller-runs controller) nil)
-  (dolist (process (telemetry-controller-processes controller))
-    (telemetry--stop-process process))
-  (setf (telemetry-controller-processes controller) nil)
-  nil)
+  (copy-list (telemetry-controller-processes controller)))
 
 (defun telemetry--settings-changed (configuration setting old new)
   "Adopt owner consent changes; attached secondary roots may revoke, never enable."
   (declare (ignore old))
-  (let ((controller *telemetry-controller*) (mirror nil))
+  (let ((controller *telemetry-controller*) (mirror nil) (processes nil))
     (when controller
       (bt:with-lock-held ((telemetry-controller-lock controller))
         (let* ((name (setting-name setting))
@@ -139,9 +169,9 @@
                (consent-p (member name '(:telemetry-enabled-p :telemetry-diagnostics-p))))
           (when (and (not (telemetry-controller-stopped controller)) root-p
                      (or (and owner-p (or (eq name ':active-image-core)
-                                         (search "TELEMETRY-" (symbol-name name))))
+                                           (search "TELEMETRY-" (symbol-name name))))
                          (and consent-p (null new))))
-            (telemetry--purge controller)
+            (setf processes (telemetry--purge controller))
             (case name
               (:telemetry-enabled-p
                (setf (telemetry-controller-enabled controller) (and owner-p (eq new t))
@@ -152,6 +182,10 @@
                (setf (telemetry-controller-diagnostics controller)
                      (and owner-p (telemetry-controller-enabled controller) (eq new t)))))
             (when (and (not owner-p) consent-p) (setf mirror name)))))
+      ;; Process termination may wait for an I/O thread. Never hold the
+      ;; controller lock while performing that blocking teardown.
+      (dolist (record processes)
+        (telemetry--retire-process record))
       ;; Process consent is already revoked before synchronizing the durable owner.
       (when mirror
         (ignore-errors (setf (config mirror (telemetry-controller-owner controller)) nil)))
@@ -195,10 +229,13 @@ Revocation and checkpoint quiescence always cancel immediately instead of draini
   (let ((controller *telemetry-controller*))
     (when controller
       (when drain-p (ignore-errors (telemetry--drain-uploads controller)))
-      (bt:with-lock-held ((telemetry-controller-lock controller))
-        (setf (telemetry-controller-stopped controller) t
-              (telemetry-controller-enabled controller) nil)
-        (telemetry--purge controller))
+      (let (processes)
+        (bt:with-lock-held ((telemetry-controller-lock controller))
+          (setf (telemetry-controller-stopped controller) t
+                (telemetry-controller-enabled controller) nil
+                processes (telemetry--purge controller)))
+        (dolist (record processes)
+          (telemetry--retire-process record)))
       (model-catalog-join controller)
       (telemetry--join-uploader controller)
       (dolist (configuration (telemetry-controller-roots controller))
@@ -210,9 +247,12 @@ Revocation and checkpoint quiescence always cancel immediately instead of draini
   "Discard pending telemetry and synchronously stop children before a checkpoint."
   (let ((controller *telemetry-controller*))
     (when controller
-      (bt:with-lock-held ((telemetry-controller-lock controller))
-        (setf (telemetry-controller-quiescent controller) t)
-        (telemetry--purge controller))
+      (let (processes)
+        (bt:with-lock-held ((telemetry-controller-lock controller))
+          (setf (telemetry-controller-quiescent controller) t
+                processes (telemetry--purge controller)))
+        (dolist (record processes)
+          (telemetry--retire-process record)))
       (model-catalog-join controller)
       (telemetry--join-uploader controller)))
   nil)

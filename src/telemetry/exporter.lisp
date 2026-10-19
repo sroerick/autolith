@@ -231,6 +231,20 @@
               for value = (uiop:getenv name)
               when value collect (concatenate 'string name "=" value))))
 
+(defun telemetry--process-response (process request)
+  "Write one readable request and read a response without reader evaluation."
+  (handler-case
+      (progn
+        (let ((*print-readably* t) (*print-pretty* nil)
+              (input (uiop:process-info-input process)))
+          (write request :stream input)
+          (terpri input)
+          (finish-output input)
+          (close input))
+        (let ((*read-eval* nil))
+          (read (uiop:process-info-output process) nil nil)))
+    (error () nil)))
+
 (defun telemetry--process (run request)
   "Perform one child operation, enforcing a hard deadline and synchronous revocation.
 Neither native model handles nor token contents ever enter the parent heap."
@@ -243,61 +257,54 @@ Neither native model handles nor token contents ever enter the parent heap."
              (configuration (telemetry-controller-owner controller))
              (deadline (+ (get-internal-real-time)
                           (ceiling (* (if (eq (first request) ':catalog)
-                                         10000
-                                         (config :telemetry-timeout-ms configuration))
+                                          10000
+                                          (config :telemetry-timeout-ms configuration))
                                       internal-time-units-per-second) 1000)))
-             (process nil) (thread nil) (result nil) (done nil)
+             (record nil) (result nil) (done nil)
              (result-lock (bt:make-lock "telemetry worker response")))
         (unwind-protect
              (progn
+               ;; Retirement must see the child and its I/O thread together.
                (bt:with-lock-held ((telemetry-controller-lock controller))
                  (unless (and (telemetry--live-p run)
                               (< (length (telemetry-controller-processes controller)) 8))
                    (return-from telemetry--process nil))
                  (let ((core (config :active-image-core configuration)))
-                   (unless (and core (probe-file core)) (return-from telemetry--process nil))
-                   (setf process
+                   (unless (and core (probe-file core))
+                     (return-from telemetry--process nil))
+                   (setf record (telemetry--make-process)
+                         (telemetry-process-process record)
                          (uiop:launch-program
                           (list (namestring sb-ext:*runtime-pathname*) "--noinform"
                                 "--core" (namestring core) "--end-runtime-options"
                                 (namestring (config :source-root configuration)) "--telemetry-worker")
                           :input :stream :output :stream :error-output nil
                           :external-format :utf-8 :environment (telemetry--worker-environment)))
-                   (push process (telemetry-controller-processes controller))))
-               (setf thread
-                     (bt:make-thread
-                      (lambda ()
-                        (let ((response
-                                (handler-case
-                                    (progn
-                                      (let ((*print-readably* t) (*print-pretty* nil))
-                                        (write request :stream (uiop:process-info-input process))
-                                        (terpri (uiop:process-info-input process))
-                                        (finish-output (uiop:process-info-input process)))
-                                      (close (uiop:process-info-input process))
-                                      (let ((*read-eval* nil))
-                                        (read (uiop:process-info-output process) nil nil)))
-                                  (error () nil))))
-                          (bt:with-lock-held (result-lock)
-                            (setf result response done t))))
-                      :name "telemetry subprocess I/O"))
+                   (push record (telemetry-controller-processes controller))
+                   (setf (telemetry-process-thread record)
+                         (bt:make-thread
+                          (lambda ()
+                            (let ((response (telemetry--process-response
+                                             (telemetry-process-process record) request)))
+                              (bt:with-lock-held (result-lock)
+                                (setf result response done t))))
+                          :name "telemetry subprocess I/O"))))
                (loop
                  (when (bt:with-lock-held (result-lock) done) (return))
                  (unless (bt:with-lock-held ((telemetry-controller-lock controller))
-                           (telemetry--live-p run)) (return))
+                           (telemetry--live-p run))
+                   (return))
                  (when (>= (get-internal-real-time) deadline) (return))
                  (sleep 0.005))
                (bt:with-lock-held ((telemetry-controller-lock controller))
                  (when (and (telemetry--live-p run)
                             (< (get-internal-real-time) deadline))
                    (bt:with-lock-held (result-lock) (when done result)))))
-          (when process
-            (telemetry--stop-process process)
-            (bt:with-lock-held ((telemetry-controller-lock controller))
-              (setf (telemetry-controller-processes controller)
-                    (remove process (telemetry-controller-processes controller)))))
-          ;; Closing the killed child's pipes releases the Lisp-only I/O thread.
-          (when thread (ignore-errors (bt:join-thread thread)))))))
+          (when record
+            (telemetry--stop-process-once record)
+            (when (telemetry-process-thread record)
+              (ignore-errors (bt:join-thread (telemetry-process-thread record))))
+            (telemetry--complete-process controller record))))))
 
 (defun telemetry--pre-redact (text)
   "Mask credentials, paths, URLs, hosts and opaque identifiers around native inference."

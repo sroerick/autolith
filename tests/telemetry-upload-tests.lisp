@@ -131,8 +131,10 @@
                  (test-assert (not (telemetry-controller-enabled *telemetry-controller*))
                               "Replacing the owner with an opted-out configuration cancels old uploads."))
                 (:clean-exit (telemetry-shutdown)))
-              (test-assert (< (/ (- (get-internal-real-time) start) internal-time-units-per-second) 2)
-                           "Immediate retirement or the bounded exit grace stops the stalled upload.")
+              (let ((seconds (/ (- (get-internal-real-time) start) internal-time-units-per-second)))
+                (test-assert (< seconds 2)
+                             (format nil "~A retirement took ~,3F seconds instead of stopping promptly."
+                                     action seconds)))
               (test-assert (not (uiop:process-alive-p process)) "Retirement kills and reaps the upload child.")
               (test-assert (not (bt:thread-alive-p thread)) "The uploader is joined before retirement returns.")
               (test-assert (and (null (telemetry-controller-queue controller))

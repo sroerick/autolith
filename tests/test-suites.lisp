@@ -111,6 +111,8 @@
   test-telemetry-redaction-failures
   test-telemetry-worker-redactor-contract
   test-telemetry-subprocess-deadlines
+  test-telemetry-concurrent-process-retirement
+  test-telemetry-process-admission-retirement
   test-telemetry-anonymous-upload
   test-telemetry-real-redactor)
 
