@@ -28,8 +28,22 @@ be =/v1/traces=, without URL credentials, query or fragment. Uploads refuse
 redirects and verify HTTPS certificates. Uploads are anonymous and require no
 credentials or token file.
 
-Enable =:telemetry-diagnostics-p= separately to export short report and repair
-summaries after local redaction. The trusted absolute shared-library path comes
+Enable =:telemetry-diagnostics-p= separately to export explicit incident
+explanations of up to 8,000 characters after local redaction. Supply =diagnostic=
+on =papercut.report=, papercut resource edits, or mutable =self.*= operations.
+Reports describe the trigger, expected and observed behavior, evidence, and
+suspected cause. Repairs describe the change and its rationale; checks describe
+what they establish. Assessments and closures describe results and remaining
+uncertainty. A narrative never determines whether a check passed.
+
+The local report =content=, assessment =note=, and closure =resolution= remain
+private. Old reports without =diagnostic= retain the title-only export; their
+existing bodies are never exported. Explanations are recorded with the report
+or journal event, so later checks reuse the incident and attempt IDs without
+reusing an earlier phase's prose. Diagnostic acquisition still requires live
+consent and is cancelled on revocation.
+
+The trusted absolute shared-library path comes
 from =AUTOLITH_DEFINGERPRINTER_LIBRARY=. At process attach, capture that trusted
 path; pass it explicitly to each redaction child, which resolves and verifies
 an absolute regular library file before loading it. Nix provides immutable model
@@ -40,6 +54,16 @@ external artifacts, never repository contents.
 Application consent guards every native operation. Each one-shot worker uses the
 published 0.1.0 create/redact/close interface (C ABI version 2); model
 initialization is lazy.
+
+The native ABI truncates individual results at 1,024 characters. The worker
+therefore redacts pieces of at most 512 characters in one native context,
+preferring sentence boundaries and otherwise complete words. Every piece goes
+through the full native pipeline. A failed piece, saturated native result,
+unsupported text, or deadline discards the entire narrative. Chunk boundaries
+reduce the model's available context; redaction remains probabilistic.
+Both input and final redacted output must fit the 8,000-character bound.
+Uploads split FIFO batches by actual UTF-8 JSON bytes (at most 1 MiB) and span
+count (at most 512), including envelope overhead and escaping.
 
 Set either consent setting to =nil= to synchronously invalidate all active run
 snapshots, terminate their subprocesses and discard queued spans. Re-enabling
@@ -277,7 +301,7 @@ correlation for one issue or attempt.
 
 Diagnostic consent gates the summary thunk before reading it. Deterministic
 credential/path/host masking surrounds Defingerprinter's full pinned Rampart
-model. Only successful native output of at most 1024 characters enters the
+model. Only complete successful redacted narratives of at most 8,000 characters enter the
 queue, with the =rampart= engine and pinned upstream revision marker. Unsupported
 languages/scripts, missing artifacts, redaction failures and deadlines discard
 text while numerical telemetry remains available. Supported languages are

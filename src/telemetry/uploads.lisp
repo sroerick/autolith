@@ -5,6 +5,40 @@
 (defparameter *telemetry-upload-interval* 5
   "Seconds to batch available completed events while their owning runs remain active.")
 
+(defparameter *telemetry-upload-byte-limit* 1048576
+  "Maximum encoded UTF-8 request bytes accepted by Seismograph.")
+
+(defparameter *telemetry-upload-span-limit* 512
+  "Maximum spans in one Seismograph request.")
+
+(-> telemetry--take-upload-body (telemetry-controller) (option string))
+(defun telemetry--take-upload-body (controller)
+  "Take a FIFO prefix bounded by encoded envelope bytes and span count under the lock."
+  (let* ((queue (telemetry-controller-queue controller))
+         (empty-bytes (length (babel:string-to-octets
+                               (json-encode (telemetry--envelope controller nil)) :encoding :utf-8)))
+         (bytes empty-bytes)
+         (count 0)
+         (spans nil))
+    (loop while queue
+          for span = (first queue)
+          for size = (length (babel:string-to-octets (json-encode span) :encoding :utf-8))
+          for next-bytes = (+ bytes size (if spans 1 0))
+          do (cond
+               ((> (+ empty-bytes size) *telemetry-upload-byte-limit*)
+                ;; Discard an individually impossible span without stranding later events.
+                (setf queue (rest queue)))
+               ((or (>= count *telemetry-upload-span-limit*)
+                    (> next-bytes *telemetry-upload-byte-limit*))
+                (return))
+               (t
+                (push span spans)
+                (incf count)
+                (setf bytes next-bytes queue (rest queue)))))
+    (setf (telemetry-controller-queue controller) queue)
+    (when queue (setf (telemetry-controller-upload-now-p controller) t))
+    (when spans (json-encode (telemetry--envelope controller (nreverse spans))))))
+
 (-> telemetry--upload-context (telemetry-controller) telemetry-run)
 (defun telemetry--upload-context (controller)
   "Snapshot the consent epoch under CONTROLLER's lock without retaining an owning run."
@@ -18,11 +52,10 @@
          (request
            (bt:with-lock-held ((telemetry-controller-lock controller))
              (when (telemetry--live-p context)
-               (let ((spans (telemetry-controller-queue controller)))
-                 (setf (telemetry-controller-queue controller) nil)
-                 (when spans
+               (let ((body (telemetry--take-upload-body controller)))
+                 (when body
                    (list :upload (config :telemetry-endpoint (telemetry-controller-owner controller))
-                         (json-encode (telemetry--envelope controller spans)))))))))
+                         body)))))))
     (when request (ignore-errors (telemetry--process context request))))
   nil)
 

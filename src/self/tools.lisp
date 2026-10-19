@@ -147,6 +147,7 @@ symbol itself."
          (incident (tool-argument arguments "incident"))
          (kind (tool-argument arguments "repair-kind"))
          (scope (tool-argument arguments "verification-scope"))
+         (diagnostic (telemetry-diagnostic-text (tool-argument arguments "diagnostic")))
          (inherited (self-repair--journal-context
                      configuration (tool-argument arguments "mutation")))
          (linked (when incident (papercut-repair-context configuration incident))))
@@ -166,7 +167,8 @@ symbol itself."
                                    :tool-name (tool-canonical-name tool)
                                    :pathname (configuration-journal-path configuration)))
     (let ((*self-repair-context*
-            (append (when kind (list :repair-kind kind))
+            (append (list :diagnostic diagnostic)
+                    (when kind (list :repair-kind kind))
                     (when scope (list :verification-scope scope)) linked))
           (*telemetry-tool-name* (tool-canonical-name tool)))
       (call-next-method))))
@@ -201,7 +203,8 @@ symbol itself."
                    (:exercise (or (getf *self-repair-context* :verification-scope) "focused"))
                    (:verification (or (getf properties :verification-scope) "focused"))
                    (otherwise "none"))))
-      (setf (getf metadata :operation) *telemetry-tool-name*
+      (setf (getf metadata :diagnostic) (getf *self-repair-context* :diagnostic)
+            (getf metadata :operation) *telemetry-tool-name*
             (getf metadata :verification-scope) scope)
       ;; Evaluation journals have no mutation identifier; retain their call's attempt.
       (when (null identifier)
@@ -210,7 +213,8 @@ symbol itself."
               (loop for mutation in (getf properties :mutations)
                     for context = (self-repair--journal-context configuration mutation)
                     when context
-                      collect (list* :operation *telemetry-tool-name*
+                      collect (list* :diagnostic (getf *self-repair-context* :diagnostic)
+                                     :operation *telemetry-tool-name*
                                      :verification-scope scope context))))
         (list* (first record) :repair-context metadata :repair-contexts contexts (rest record))))))
 

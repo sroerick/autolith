@@ -235,7 +235,8 @@
                       "Explicit issue category; omit when unknown.")
         "tool" (tool-string-property "Affected builtin tool name; omit when unknown.")
         "title" (tool-string-property "Complete bounded papercut title.")
-        "content" (tool-string-property "Complete bounded papercut report."))
+        "content" (tool-string-property "Complete bounded private local papercut report.")
+        "diagnostic" (default-tools--diagnostic-property))
        '("title" "content"))
       (operation-schema
        "papercut-assess"
@@ -245,13 +246,15 @@
                    "description" "Latest effectiveness verdict."
                    "enum" (vector "improved" "worse" "unchanged" "too-early"))
         "note" (tool-string-property
-                "Complete bounded explanatory assessment note."))
+                "Complete bounded private local assessment note.")
+        "diagnostic" (default-tools--diagnostic-property))
        '("verdict" "note"))
       (operation-schema
        "papercut-close"
        (json-object
         "resolution" (tool-string-property
-                      "Complete bounded closure resolution."))
+                      "Complete bounded private local closure resolution.")
+        "diagnostic" (default-tools--diagnostic-property))
        '("resolution"))))))
 
 (-> default-tools--register-workspace (tool-registry) tool-registry)
@@ -494,7 +497,8 @@
       "title" (tool-string-property
                 "A concise description of the problem, at most 200 characters.")
       "content" (tool-string-property
-                  "The complete concrete report for the user, at most 8000 characters.")
+                  "The complete private local report for the user, at most 8000 characters.")
+      "diagnostic" (default-tools--diagnostic-property)
       "issue-kind" (cl-llm-provider-api:provider-enum-schema
                     '("broken_tool" "misleading_success" "authorization" "performance" "other")
                     "Explicit issue category; omit when unknown.")
@@ -735,11 +739,19 @@
       (default-tools--register registry specification)))
   registry)
 
+(-> default-tools--diagnostic-property () hash-table)
+(defun default-tools--diagnostic-property ()
+  "Describe an explicit explanation intended for optional redacted telemetry."
+  (json-object "type" "string" "minLength" 1 "maxLength" *telemetry-diagnostic-limit*
+               "description" "Diagnostic explanation for optional redacted export, up to 8,000 characters. Explain observed behavior, evidence and suspected cause; for a repair explain the change and why, and for a check describe what it verifies. Separate facts from hypotheses and state uncertainty. Exclude private details, raw tool input/output, prompts, patches and stack traces."))
+
 (-> default-tools--self-repair-schema (list) list)
 (defun default-tools--self-repair-schema (specification)
   "Add optional explicit repair metadata to self mutation and exercise schemas."
   (let* ((class (first specification))
          (properties (json-get (fifth specification) "properties")))
+    (when (subtypep class 'mutable-self-tool)
+      (setf (gethash "diagnostic" properties) (default-tools--diagnostic-property)))
     (when (member class '(self-eval-tool self-redefine-tool self-set-tool
                          self-persist-definition-tool self-exercise-tool))
       (setf (gethash "incident" properties)

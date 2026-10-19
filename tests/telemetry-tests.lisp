@@ -798,8 +798,9 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
            (dolist (entry (list (list "[PERSON] fixture@example.org" ':ok "[PERSON] [EMAIL]")
                                (list "unsafe output" ':inference-error nil)
                                (list nil ':ok nil)
-                               (list (make-string 1024 :initial-element #\Space) ':ok
-                                     (make-string 1024 :initial-element #\Space))
+                               (list (make-string 1023 :initial-element #\Space) ':ok
+                                     (make-string 1023 :initial-element #\Space))
+                               (list (make-string 1024 :initial-element #\Space) ':ok nil)
                                (list (make-string 1025 :initial-element #\Space) ':ok nil)))
              (destructuring-bind (output result expected) entry
                (setf safe output status result)
@@ -809,7 +810,7 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
            (test-assert (handler-case (progn (telemetry--worker-redact request) nil)
                           (simple-error () t))
                         "Native conditions unwind through context cleanup.")
-           (test-assert (= loads closes 6) "Every created context closes on success or failure.")))))))
+           (test-assert (= loads closes 7) "Every created context closes on success or failure.")))))))
 
 ;;;; -- Supervision and Authentication --
 
@@ -912,7 +913,18 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
                        (let ((*telemetry-process-function* nil)) (funcall process-function run request))))))
            (telemetry-call-with-run
             configuration (lambda () (telemetry-note-report
-                                      :summary-function (lambda () "Alice Smith lives in Amsterdam.")))))
+                                      :summary-function
+                                      (lambda ()
+                                        (concatenate 'string "Alice Smith lives in Amsterdam. "
+                                                     (apply #'concatenate 'string
+                                                            (make-list 170 :initial-element
+                                                                       "The tool returned success without a result. "))
+                                                     "Verification remains incomplete."))))))
          (test-assert (and body (search "autolith.redaction.engine" body))
                       "Explicit real model integration succeeds.")
-         (test-assert (not (search "Alice Smith" body)) "Actual model removes the person's name."))))))
+         (test-assert (not (search "Alice Smith" body)) "Actual model removes the person's name.")
+         (test-assert (search "remains incomplete" body) "Actual native redaction retains the end of a long explanation.")
+         (let ((report (find "report" (test-telemetry--spans body) :test #'equal
+                             :key (lambda (span) (test-telemetry--attribute span "autolith.event.kind")))))
+           (test-assert (> (length (test-telemetry--attribute report "autolith.diagnostic.summary")) 1024)
+                        "The actual native pipeline exports a complete long explanation.")))))))

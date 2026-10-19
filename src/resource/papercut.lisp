@@ -215,7 +215,7 @@
 (defun papercut-resource--render-item (papercut)
   "Return complete model-visible data for one active PAPERCUT."
   (format nil
-          "id: ~A~%uri: ~A~%reported: ~A~%workspace: ~A~%source conversation: ~A~%~A~%title: ~A~2%~A"
+          "id: ~A~%uri: ~A~%reported: ~A~%workspace: ~A~%source conversation: ~A~%~A~%title: ~A~2%~A~@[~2%diagnostic (optional redacted export):~%~A~]"
           (papercut-identifier papercut)
           (resource-item-uri "papercut" (papercut-identifier papercut))
           (papercut-timestamp-string (papercut-reported-at papercut))
@@ -224,7 +224,8 @@
           (papercut-resource--render-assessment
            papercut *papercut-assessment-note-limit*)
           (papercut-title papercut)
-          (papercut-content papercut)))
+          (papercut-content papercut)
+          (papercut-diagnostic papercut)))
 
 (-> papercut-resource--assessment-snapshot (papercut) list)
 (defun papercut-resource--assessment-snapshot (papercut)
@@ -395,8 +396,9 @@
       ((string= name "papercut-report")
        (resource-item-validate-operation-fields
         "Papercut"
-        operation '("op" "title" "content" "issue-kind" "tool") '("op" "title" "content"))
+        operation '("op" "title" "content" "issue-kind" "tool" "diagnostic") '("op" "title" "content"))
        (list :kind ':report
+             :diagnostic (telemetry-diagnostic-text (tool-argument operation "diagnostic"))
              :issue-kind (papercut--issue-kind (or (tool-argument operation "issue-kind") "other"))
              :tool (telemetry--tool (tool-argument operation "tool"))
              :title (papercut-resource--required-text
@@ -406,8 +408,9 @@
       ((string= name "papercut-assess")
        (resource-item-validate-operation-fields
         "Papercut"
-        operation '("op" "verdict" "note") '("op" "verdict" "note"))
+        operation '("op" "verdict" "note" "diagnostic") '("op" "verdict" "note"))
        (list :kind ':assess
+             :diagnostic (telemetry-diagnostic-text (tool-argument operation "diagnostic"))
              :verdict (papercut-resource--required-verdict operation)
              :note (papercut-resource--required-text
                     operation
@@ -417,8 +420,9 @@
       ((string= name "papercut-close")
        (resource-item-validate-operation-fields
         "Papercut"
-        operation '("op" "resolution") '("op" "resolution"))
+        operation '("op" "resolution" "diagnostic") '("op" "resolution"))
        (list :kind ':close
+             :diagnostic (telemetry-diagnostic-text (tool-argument operation "diagnostic"))
              :resolution (papercut-resource--required-text
                           operation
                           "resolution"
@@ -515,6 +519,7 @@
                         (:report
                          (papercut--report-unlocked
                           configuration :title (getf operation :title)
+                                        :diagnostic (getf operation :diagnostic)
                                         :content (getf operation :content)
                                         :issue-kind (getf operation :issue-kind)
                                         :tool (getf operation :tool)
@@ -525,11 +530,13 @@
                          (papercut--assess-unlocked
                           configuration (papercut-resource-identifier resource)
                           :active active :verdict (getf operation :verdict)
-                                         :note (getf operation :note)))
+                                         :note (getf operation :note)
+                                         :diagnostic (getf operation :diagnostic)))
                         (:close
                          (papercut--mark-closed-unlocked
                           configuration (papercut-resource-identifier resource)
-                          (getf operation :resolution) :active active)))))))
+                          (getf operation :resolution) :active active
+                          :diagnostic (getf operation :diagnostic))))))))
             (ecase (getf operation :kind)
               (:report
                (destructuring-bind (papercut duplicate-p) result
@@ -546,16 +553,15 @@
                     (resource-uri item-resource)))))
               (:assess
                (papercut--note-repair result
-                                     (case (getf operation :verdict)
-                                       (:improved "applied") (:worse "failed") (otherwise "proposed"))
-                                     (getf operation :note))
+                                     (string-downcase (symbol-name (getf operation :verdict)))
+                                     (getf operation :diagnostic))
                (values
                 (papercut-resource--item-observation-from-report resource result)
                 (format nil "Assessed papercut ~A as ~(~A~)."
                         (papercut-resource-identifier resource) (getf operation :verdict))
                 nil))
               (:close
-               (papercut--note-repair result "applied" (getf operation :resolution))
+               (papercut--note-repair result "closed" (getf operation :diagnostic))
                (values
                 (papercut-resource--closed-observation
                  resource result (getf operation :resolution))

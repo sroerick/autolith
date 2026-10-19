@@ -318,10 +318,40 @@ Neither native model handles nor token contents ever enter the parent heap."
                    (let ((code (char-code char)))
                      (if (or (< code 32) (<= 127 code 159)) #\Space char))) result)))
 
+(-> telemetry--redact-narrative (t string string) (option string))
+(defun telemetry--redact-narrative (redactor text language)
+  "Redact complete sentence or word pieces within the native ABI's output bound.
+The native API truncates at 1,024 characters. Reject saturated output or any
+failed piece rather than exporting a partial explanation. One session handles
+all pieces within the caller's existing deadline."
+  (block redact
+    (let ((start 0)
+          (length (length text)))
+      (with-output-to-string (stream)
+        (loop while (< start length)
+              for ceiling = (min length (+ start 512))
+              for end = (if (= ceiling length)
+                            ceiling
+                            (or (loop for index downfrom (1- ceiling) above (+ start 256)
+                                      when (and (char= (char text index) #\Space)
+                                                (find (char text (1- index)) ".!?;"))
+                                        return (1+ index))
+                                (let ((space (position #\Space text :start start :end ceiling :from-end t)))
+                                  (when space (1+ space)))
+                                (return-from redact nil)))
+              do (multiple-value-bind (safe status)
+                     (defingerprinter:redact redactor (subseq text start end) :language language)
+                   (unless (and (eq status ':ok) (stringp safe) (< (length safe) 1024))
+                     (return-from redact nil))
+                   (write-string safe stream))
+                 (setf start end))))))
+
 (defun telemetry--worker-redact (request)
   "Load a trusted absolute library and a lazy context inside a consent-admitted child."
   (destructuring-bind (operation text language model runtime library) request
     (declare (ignore operation))
+    (unless (and (stringp text) (<= (length text) *telemetry-diagnostic-limit*))
+      (return-from telemetry--worker-redact nil))
     (unless (and (stringp library) (uiop:absolute-pathname-p library))
       (return-from telemetry--worker-redact nil))
     (let* ((path (platform-truename *platform* (pathname library)))
@@ -331,9 +361,9 @@ Neither native model handles nor token contents ever enter the parent heap."
       (defingerprinter:load-library path)
       (let ((redactor (defingerprinter:make-redactor :model-directory model :runtime-library runtime)))
         (unwind-protect
-             (multiple-value-bind (safe status)
-                 (defingerprinter:redact redactor text :language language)
-               (when (and (eq status ':ok) (stringp safe) (<= (length safe) 1024))
+             (let ((safe (telemetry--redact-narrative redactor text language)))
+               (when (and (stringp safe)
+                          (<= (length safe) *telemetry-diagnostic-limit*))
                  (telemetry--pre-redact safe)))
           (defingerprinter:close-redactor redactor))))))
 

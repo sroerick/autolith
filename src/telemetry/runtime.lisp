@@ -2,6 +2,19 @@
 
 ;;;; -- Process-Owned Consent --
 
+(defparameter *telemetry-diagnostic-limit* 8000
+  "Maximum characters in an explicit diagnostic before and after redaction.")
+
+(-> telemetry-diagnostic-text (t) (option string))
+(defun telemetry-diagnostic-text (value)
+  "Validate optional text deliberately supplied for consent-gated diagnostic export."
+  (when value
+    (unless (and (non-empty-string-p value)
+                 (<= (length value) *telemetry-diagnostic-limit*))
+      (error 'tool-error :tool-name "diagnostic"
+                         :message "Diagnostic must contain between 1 and 8,000 characters."))
+    value))
+
 (defstruct (telemetry-controller (:include model-catalog)
                                (:constructor telemetry--make-controller))
   "Process-local consent, bounded projected spans and supervised subprocesses."
@@ -710,7 +723,7 @@ Different primary identities become mixed; missing response names never inherit 
                    (member language '("en" "es" "fr" "de" "it" "pt" "nl") :test #'equal)))
         (handler-case
             (let ((text (funcall summary-function)))
-              (when (and (stringp text) (<= (length text) 4096)
+              (when (and (stringp text) (<= (length text) *telemetry-diagnostic-limit*)
                          (every (lambda (char) (<= (char-code char) #x024f)) text))
                 (let ((safe (telemetry--process run
                                               (list :redact (telemetry--pre-redact text) language
@@ -719,8 +732,9 @@ Different primary identities become mixed; missing response names never inherit 
                                                     (config :telemetry-runtime-library
                                                             (telemetry-controller-owner controller))
                                                     (telemetry-controller-library controller)))))
-                  (when (and (stringp safe) (<= (length safe) 1024))
-                    (telemetry--pre-redact safe)))))
+                  (when (and (stringp safe) (<= (length safe) *telemetry-diagnostic-limit*))
+                    (let ((masked (telemetry--pre-redact safe)))
+                      (when (<= (length masked) *telemetry-diagnostic-limit*) masked))))))
           (error () nil))))))
 
 (defun telemetry-note-report (&key (run *telemetry-run*) report-id tool issue-kind duplicate-p

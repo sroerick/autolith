@@ -181,6 +181,21 @@ breakage, tool issue, repeated friction, or blocker is preventing
 reliable work.
 State a concise title and enough concrete diagnostic context for the
 user to understand the problem, do not create duplicate papercuts.
+Write a substantive diagnostic explanation in =diagnostic=: the triggering
+operation, expected versus observed behavior, evidence, and suspected cause.
+Distinguish observed facts from hypotheses; say when the cause is unknown.
+This field is intended for optional redacted telemetry. Keep private details
+in the local =content= field. Do not include prompts, credentials, paths,
+raw tool inputs/results, source patches, or stack traces in =diagnostic=.
+Use as much of the 8,000-character allowance as the evidence needs, without
+padding or inventing details. File the failure before attempting a repair.
+When repairing it, pass the exact =incident= ID and a =diagnostic= explaining
+what you are changing and why to the self operation. For =self.exercise=,
+describe the check and what it establishes; the recorded check outcome
+determines whether it passed. Add assessment or closure diagnostics with the
+results, remaining uncertainty, and verification limits. Keep separate
+explanations for separate attempts, including failed or reverted repairs.
+An explanation saying "fixed" is not verification; run the relevant checks.
 This creates a prominent user-visible report, so dont use it for
 routine progress, ordinary uncertainty, or as a substitute for the
 final answer.

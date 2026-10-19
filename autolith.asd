@@ -497,6 +497,7 @@
                              (:file "telemetry-hook-run-tests")
                              (:file "telemetry-hook-report-tests")
                              (:file "telemetry-hook-repair-tests")
+                             (:file "telemetry-diagnostic-tests")
                              (:file "telemetry-hook-tool-outcome-tests")
                              (:file "telemetry-hook-tool-denial-tests")
                              (:file "telemetry-hook-authority-tests")

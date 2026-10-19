@@ -82,6 +82,12 @@
   ;; telemetry-hook-os-permission-tests.lisp
   test-telemetry-os-permission-failure-hooks)
 
+(define-test-suite telemetry-diagnostics
+  test-telemetry-incident-diagnostics
+  test-telemetry-diagnostic-redactor-pieces
+  test-telemetry-resource-diagnostics
+  test-telemetry-diagnostic-upload-bounds)
+
 (define-test-suite telemetry
   test-telemetry-background-start-failure
   test-telemetry-background-completion
