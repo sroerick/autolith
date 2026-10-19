@@ -26,6 +26,71 @@
                   (eq (getf (rest record) :result) ':installed)))
            (reverse (mutation-journal-read-records configuration))))
 
+(defun test-telemetry-evaluation-repair-intent ()
+  "Export evaluation repairs only for calls linked to an incident."
+  (test-telemetry--call
+   (lambda (configuration)
+     (test-telemetry-hooks--repair-fixture
+      configuration
+      (lambda (registry context)
+        (dolist (case '(("42" nil "applied")
+                        ("(error \"private-probe-failure\")" t "failed")
+                        ("(" t "failed")))
+          (destructuring-bind (source expected-failure outcome) case
+            (dolist (linked-p '(nil t))
+              (let* ((bodies
+                       (test-telemetry-hooks--capture
+                        configuration
+                        (lambda ()
+                          (telemetry-call-with-run
+                           configuration
+                           (lambda ()
+                             (let* ((incident
+                                      (when linked-p
+                                        (papercut-report configuration
+                                                         :title "Evaluation repair fixture"
+                                                         :content "Explicit evaluation repair")))
+                                    (arguments (json-object "forms" (vector source))))
+                               (when incident
+                                 (setf (gethash "incident" arguments) (papercut-identifier incident)))
+                               (test-assert
+                                (eq expected-failure
+                                    (handler-case
+                                        (progn
+                                          (tool-execute (tool-registry-find registry "self" "eval")
+                                                        context arguments)
+                                          nil)
+                                      (error () t)))
+                                "Evaluation results propagate to the caller.")
+                               (when incident
+                                 (papercut-mark-closed configuration (papercut-identifier incident)
+                                                       :resolution "Evaluation fixture complete."))))))))
+                     (body (test-telemetry-hooks--merge-bodies bodies))
+                     (repairs (test-telemetry-hooks--kind body "repair")))
+                (test-assert
+                 (equal (mapcar (lambda (span)
+                                  (test-telemetry--attribute span "autolith.repair.outcome"))
+                                repairs)
+                        (when linked-p (list "proposed" outcome)))
+                 "Only incident-linked evaluations emit repair transitions.")
+                (when linked-p
+                  (let* ((report (first (test-telemetry-hooks--kind body "report")))
+                         (incident-id (test-telemetry--attribute report "autolith.incident.id"))
+                         (attempt-id (test-telemetry--attribute (first repairs)
+                                                                "autolith.repair.attempt.id")))
+                    (test-assert (telemetry--report-id-p attempt-id)
+                                 "The linked evaluation has a public attempt identity.")
+                    (dolist (span repairs)
+                      (test-assert
+                       (and (equal incident-id (test-telemetry--attribute span "autolith.incident.id"))
+                            (equal attempt-id (test-telemetry--attribute span "autolith.repair.attempt.id")))
+                       "Proposal and result retain their incident and attempt identities."))))))))
+        (test-assert
+         (= 12 (count ':eval (mutation-journal-read-records configuration)
+                      :key (lambda (record) (getf (rest record) :kind))))
+         "All six evaluations retain their proposal and result audit records.")))))
+  nil)
+
 (defun test-telemetry-incident-repair-lifecycle ()
   "Exercise repair attempts, durable linkage, check verdicts and closure."
   (test-telemetry--call

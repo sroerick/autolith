@@ -53,6 +53,7 @@
   test-telemetry-papercut-metadata-hooks
   test-telemetry-issue-correlation
   ;; telemetry-hook-repair-tests.lisp
+  test-telemetry-evaluation-repair-intent
   test-telemetry-incident-repair-lifecycle
   test-telemetry-invalid-incident-link
   test-telemetry-repair-hook-projections

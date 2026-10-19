@@ -255,7 +255,9 @@ Supply the exact active local papercut ID in =incident= when you call
 =self.eval=, =self.redefine=, =self.set= or =self.persist-definition= for a repair.
 Supply =repair-kind= to declare =redefine_function=, =change_setting=,
 =change_tool_strategy= or =other=. Unknown incidents and conflicting mutation
-links fail before a mutation. Omit =incident= for a standalone attempt.
+links fail before a mutation. Omit =incident= for a standalone definition or
+setting change. =self.eval= exports repair events only with an explicit
+=incident= link; every evaluation retains its local journal records.
 
 Each consented attempt has a separate random ID stored in the mutation journal.
 Checks, discard and commit reuse that ID. =self.exercise= inherits the selected

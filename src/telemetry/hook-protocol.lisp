@@ -31,7 +31,8 @@
 
 (-> telemetry-note-mutation-journal (list) null)
 (defun telemetry-note-mutation-journal (record)
-  "Project journal events using durable context, without source, values or output."
+  "Project repair journal events without source, values or output.
+Evaluation events require an explicit incident link; ordinary probes are not repairs."
   (when *telemetry-run*
     (telemetry--call-safely
      (lambda ()
@@ -49,7 +50,11 @@
          ;; A started check or discard is not another proposed repair.
          (when (and outcome (not (and (eq result ':pending)
                                      (member kind '(:exercise :discard :image-commit)))))
-           (dolist (context contexts)
+           (dolist (context (if (eq kind ':eval)
+                               (remove-if-not (lambda (context)
+                                                (getf context :incident-id))
+                                              contexts)
+                               contexts))
              (let* ((incident-id (getf context :incident-id))
                     (attempt-id (or (getf context :attempt-id)
                                     (telemetry-mutation-report-id
