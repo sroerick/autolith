@@ -24,13 +24,25 @@ try {
     [IO.Directory]::CreateDirectory(('\\?\' + $directory)) | Out-Null
     $file = Join-Path $directory 'data.bin'
     [IO.File]::WriteAllBytes(('\\?\' + $file), [byte[]](1, 2, 3, 4, 5))
-    [Environment]::SetEnvironmentVariable("AUTOLITH_STAT_TEST_$kind", $file)
+    # SBCL 2.6.6 can expose UTF-16 units from supplementary environment characters.
+    $utf8Path = [BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($file)).Replace('-', '')
+    [Environment]::SetEnvironmentVariable("AUTOLITH_STAT_TEST_$kind", $utf8Path)
   }
   $save = @'
 (progn
+  (defun autolith-runtime--test-path (name)
+    "Decode the UTF-8 path carried by ASCII environment NAME."
+    (let* ((hex (uiop:getenv name))
+           (bytes (make-array (/ (length hex) 2) :element-type '(unsigned-byte 8))))
+      (loop for index below (length bytes)
+            do (setf (aref bytes index)
+                     (parse-integer hex :start (* 2 index)
+                                        :end (* 2 (1+ index)) :radix 16)))
+      (sb-ext:octets-to-string bytes :external-format ':utf-8)))
   (defun autolith-runtime--test-stat ()
+    "Exercise native stat values on long ASCII and Unicode paths."
     (dolist (variable '("AUTOLITH_STAT_TEST_ASCII" "AUTOLITH_STAT_TEST_UNICODE"))
-      (let* ((file (uiop:getenv variable))
+      (let* ((file (autolith-runtime--test-path variable))
              (directory (subseq file 0 (- (length file) (length "data.bin"))))
              (base (uiop:getenv "AUTOLITH_STAT_TEST_BASE"))
              (relative (subseq file (1+ (length base))))
