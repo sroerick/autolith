@@ -377,6 +377,25 @@
          "truncated, trailing, and reader-evaluated worker data are rejected"))))
   nil)
 
+(-> test-check-worker-image () null)
+(defun test-check-worker-image ()
+  "Verify the CLI executes cases from a source-matched preloaded test image."
+  (let ((core (uiop:getenv "AUTOLITH_TEST_WORKER_CORE")))
+    (if core
+        (let ((source-root (asdf:system-source-directory :autolith)))
+          (test-assert
+           (and sb-ext:*core-pathname*
+                (equal (platform-truename *platform* (uiop:parse-native-namestring core))
+                       (platform-truename *platform* sb-ext:*core-pathname*)))
+           "The case runs in the test image supplied by the CLI.")
+          (test-assert
+           (sbcl-generations:image-build-record-compatible-p
+            (sbcl-generations:image-running-build-record) source-root
+            :inputs (lambda (root) (test-check--call "TEST-WORKER-SOURCE-PATHS" root)))
+           "The running image records every application and test input."))
+        (fiveam:skip "Run this image-lifecycle check through script/check.")))
+  nil)
+
 (-> test-check-process-lifecycle () null)
 (defun test-check-process-lifecycle ()
   "Test concurrent process admission, exit failures and descendant cleanup."

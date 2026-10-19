@@ -282,12 +282,51 @@ from this runner's heap."
                       :saver ':fresh-process)
     core))
 
-(defun check--run-workers (cases &key source-root temporary-root active-core
-                                    (jobs (check--processor-count)) (timeout 600))
-  "Run CASES in fresh SBCL processes and remove their owned fixture directories.
+(defun check--build-worker-core (source-root temporary-root)
+  "Build and probe one source-matched test image before admitting worker processes."
+  (let* ((script (merge-pathnames "script/test-worker.lisp" source-root))
+         (core (merge-pathnames "test-worker/autolith-tests.core" temporary-root))
+         (*check-script-library-mode* t))
+    (load script)
+    (format t "~&Building this run's preloaded test image.~%")
+    (finish-output)
+    (uiop:symbol-call
+     '#:sbcl-generations '#:image-install source-root core
+     :inputs (symbol-function 'test-worker-source-paths)
+     :toplevel (symbol-function 'test-worker--toplevel)
+     :prepare (lambda ()
+                (uiop:symbol-call '#:autolith '#:active-image--prepare-saver))
+     :saver ':fresh-process
+     :fresh-process-command
+     (lambda (temporary)
+       (append (check--runtime-command source-root)
+               (list (uiop:native-namestring script) "--save-core"
+                     (uiop:native-namestring temporary))))
+     :probe-runner (uiop:symbol-call
+                    '#:sbcl-generations '#:make-sbcl-core-probe-runner
+                    :command (uiop:native-namestring sb-ext:*runtime-pathname*))
+     :probe-argument (symbol-value (find-symbol "*TEST-WORKER-PROBE-ARGUMENT*" '#:cl-user)))))
+
+(defun check--worker-command (&key source-root worker-core request result)
+  "Return a preloaded worker command, or the raw-script command used by CLI fixtures."
+  (if worker-core
+      (progn
+        (unless (probe-file worker-core)
+          (check--fail "The generated test image is missing: ~A." worker-core))
+        (list (uiop:native-namestring sb-ext:*runtime-pathname*) "--noinform"
+              "--core" (uiop:native-namestring worker-core) "--end-runtime-options"
+              (uiop:native-namestring source-root)
+              (uiop:native-namestring request) (uiop:native-namestring result)))
+      (append (check--runtime-command source-root)
+              (list (namestring (merge-pathnames "script/test-worker.lisp" source-root))
+                    (namestring request) (namestring result)))))
+
+(defun check--run-workers (cases &key source-root temporary-root active-core worker-core
+                                     (jobs (check--processor-count)) (timeout 600))
+  "Run CASES in isolated images and remove their owned fixture directories.
 Parent cleanup follows process-group termination, including crashes and timeouts.
-Workers receive ACTIVE-CORE as AUTOLITH_TEST_ACTIVE_CORE, which only test
-configurations read; launchers under test keep their own core selection."
+WORKER-CORE contains the test system; ACTIVE-CORE is passed separately for cases
+that start fresh Autolith processes. Private XDG roots isolate user preferences."
   (let ((entries nil) (results nil) (fixture-roots nil) (successful-p t))
     (unwind-protect
          (progn
@@ -308,15 +347,19 @@ configurations read; launchers under test keep their own core selection."
                            ;; Give default-root configurations private preferences,
                            ;; state and model caches. Share data for the runtime launcher.
                            :environment (check--environment-with
-                                         (list (format nil "XDG_CONFIG_HOME=~Aconfig/" directory)
-                                               (format nil "XDG_STATE_HOME=~Astate/" directory)
-                                               (format nil "XDG_CACHE_HOME=~Acache/" directory)
-                                               (format nil "AUTOLITH_TEST_ACTIVE_CORE=~A"
-                                                       (uiop:native-namestring active-core))))
+                                         (append
+                                          (list (format nil "XDG_CONFIG_HOME=~Aconfig/" directory)
+                                                (format nil "XDG_STATE_HOME=~Astate/" directory)
+                                                (format nil "XDG_CACHE_HOME=~Acache/" directory)
+                                                (format nil "AUTOLITH_TEST_ACTIVE_CORE=~A"
+                                                        (uiop:native-namestring active-core)))
+                                          (when worker-core
+                                            (list (format nil "AUTOLITH_TEST_WORKER_CORE=~A"
+                                                          (uiop:native-namestring worker-core))))))
                            ;; Leave TMPDIR alone: native Unix-domain sockets need short paths.
-                           :command (append (check--runtime-command source-root)
-                                            (list (namestring (merge-pathnames "script/test-worker.lisp" source-root))
-                                                  (namestring request) (namestring result))))
+                           :command (check--worker-command :source-root source-root
+                                                          :worker-core worker-core
+                                                          :request request :result result))
                           entries))
            (setf entries (nreverse entries))
            (format t "~&Running ~D cases in ~D isolated workers.~%" (length cases) (length entries))
@@ -351,7 +394,7 @@ configurations read; launchers under test keep their own core selection."
                                                   when timing collect timing))))
              (and (uiop:symbol-call '#:autolith '#:tests-report aggregate) successful-p)))
       (dolist (root fixture-roots)
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))))
+        (check--delete-temporary-root root)))))
 
 (defun check--committed-version (source-root)
   "Return the parent/HEAD VERSION used by pristine source fallback."
@@ -510,11 +553,12 @@ configurations read; launchers under test keep their own core selection."
                    (jobs (getf options :jobs))
                    (timeout (getf options :timeout)))
               (unwind-protect
-                   (let ((passed-p (check--run-workers
-                                    cases :source-root source-root :temporary-root temporary-root
-                                    :active-core (check--build-active-core source-root
-                                                                           temporary-root)
-                                    :jobs jobs :timeout timeout)))
+                   (let* ((active-core (check--build-active-core source-root temporary-root))
+                          (worker-core (check--build-worker-core source-root temporary-root))
+                          (passed-p (check--run-workers
+                                     cases :source-root source-root :temporary-root temporary-root
+                                     :active-core active-core :worker-core worker-core
+                                     :jobs jobs :timeout timeout)))
                      (unless (or suites tests)
                        (check--run-recovery :source-root source-root :temporary-root temporary-root
                                             :quicklisp-setup quicklisp-setup :jobs jobs :timeout timeout))

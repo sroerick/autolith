@@ -1280,6 +1280,7 @@
   test-check-committed-version
   test-check-command-selection
   test-check-result-validation
+  test-check-worker-image
   test-check-process-lifecycle)
 
 

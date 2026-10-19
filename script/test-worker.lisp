@@ -6,9 +6,56 @@
 (defvar *check-script-library-mode* nil
   "Bind true when loading CLI helpers without running the command.")
 
-(let ((*check-script-library-mode* t))
-  (load (merge-pathnames "check.lisp"
-                         (uiop:pathname-directory-pathname *load-truename*))))
+(unless (fboundp 'check--load-tests)
+  (let ((*check-script-library-mode* t))
+    (load (merge-pathnames "check.lisp"
+                           (uiop:pathname-directory-pathname *load-truename*)))))
+
+(defparameter *test-worker-probe-argument*
+  "--autolith-internal-test-worker-probe"
+  "The private probe shared by the test image builder and its installer.")
+
+(defun test-worker-source-paths (source-root)
+  "Return every application, test and builder input embedded in a test image."
+  (sort
+   (remove-duplicates
+    (append (uiop:symbol-call '#:autolith '#:active-image-source-paths source-root)
+            '("script/check.lisp" "script/test-worker.lisp" "script/roots.lisp")
+            (mapcar (lambda (pathname) (enough-namestring pathname source-root))
+                    (uiop:symbol-call '#:autolith '#:source-lisp-pathnames
+                                      (merge-pathnames "tests/" source-root))))
+    :test #'string=)
+   #'string<))
+
+(defun test-worker--toplevel (arguments)
+  "Run one shard from its source-matched, already loaded test image."
+  (handler-case
+      (progn
+        (unless (= (length arguments) 3)
+          (check--fail "The test image needs SOURCE-ROOT REQUEST RESULT."))
+        (let ((source-root (uiop:ensure-directory-pathname (pathname (first arguments)))))
+          (unless (uiop:symbol-call
+                   '#:sbcl-generations '#:image-build-record-compatible-p
+                   (uiop:symbol-call '#:sbcl-generations '#:image-running-build-record)
+                   source-root :inputs #'test-worker-source-paths)
+            (check--fail "The loaded test image does not match its source and runtime."))
+          (uiop:quit (test-worker-main (rest arguments) source-root :preloaded-p t))))
+    (error (condition)
+      (format *error-output* "~&Test image failed: ~A~%" condition)
+      (uiop:quit 2))))
+
+(defun test-worker--save-core (source-root pathname)
+  "Load the test system in this fresh builder, save its image and exit."
+  (check--load-tests source-root)
+  (uiop:symbol-call
+   '#:sbcl-generations '#:image-save pathname
+   (uiop:symbol-call '#:sbcl-generations '#:image-build-record
+                     source-root :inputs #'test-worker-source-paths)
+   :inputs #'test-worker-source-paths
+   :toplevel #'test-worker--toplevel
+   :prepare (lambda ()
+              (uiop:symbol-call '#:autolith '#:active-image--prepare-saver))
+   :probe-argument *test-worker-probe-argument*))
 
 (defun test-worker--report-live-threads ()
   "Name every Lisp thread still alive after the cases, so leaks are visible."
@@ -17,7 +64,7 @@
       (format *error-output* "~&Live threads after cases: ~{~A~^, ~}~%"
               (mapcar #'sb-thread:thread-name others)))))
 
-(defun test-worker-main (arguments source-root)
+(defun test-worker-main (arguments source-root &key preloaded-p)
   "Run one assigned shard and atomically publish its portable result."
   (handler-case
       (progn
@@ -38,7 +85,8 @@
                           (length (remove-duplicates (getf request :cases)
                                                      :test #'string-equal))))
             (check--fail "Invalid test worker request."))
-          (check--load-tests source-root)
+          (unless preloaded-p
+            (check--load-tests source-root))
           (let* ((names (getf request :cases))
                  (cases (uiop:symbol-call '#:autolith '#:tests-select :tests names)))
             (unless (equal (mapcar #'string-downcase cases) names)
@@ -59,7 +107,9 @@
       2)))
 
 (unless *check-script-library-mode*
-  (uiop:quit
-   (test-worker-main (uiop:command-line-arguments)
-                     (uiop:pathname-parent-directory-pathname
-                      (uiop:pathname-directory-pathname (truename *load-truename*))))))
+  (let ((arguments (uiop:command-line-arguments))
+        (source-root (uiop:pathname-parent-directory-pathname
+                      (uiop:pathname-directory-pathname (truename *load-truename*)))))
+    (if (and (= (length arguments) 2) (string= (first arguments) "--save-core"))
+        (test-worker--save-core source-root (pathname (second arguments)))
+        (uiop:quit (test-worker-main arguments source-root)))))

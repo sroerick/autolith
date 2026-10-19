@@ -294,10 +294,11 @@ Run the complete repository check from the repository root with:
 
 The check runs FiveAM cases in independent SBCL processes, defaulting to the
 available logical CPU count (one worker if detection fails), and includes the
-recovery probes. It first saves an active image of the checked source and
-passes it to every worker as `AUTOLITH_TEST_ACTIVE_CORE`, which test
-configurations use as their active core. `--jobs` overrides concurrency; at most one worker per selected
-case is started. Select suites or individual cases for focused work:
+recovery probes. It saves a source-matched active image for nested Autolith
+processes and a separate image containing the test system. Each worker boots the
+test image; test configurations use `AUTOLITH_TEST_ACTIVE_CORE` for nested
+processes. `--jobs` overrides concurrency; at most one worker per selected case
+is started. Select suites or individual cases for focused work:
 
 ```sh
 ./script/check --list
