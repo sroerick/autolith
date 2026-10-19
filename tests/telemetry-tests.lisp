@@ -820,12 +820,42 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
                    (test-assert (not (uiop:process-alive-p process)) "Consent revocation kills child synchronously.")
                    (test-assert (null (telemetry-controller-processes *telemetry-controller*)) "No live children after revocation."))
               (bt:join-thread thread)))))
-       ;; Exercise the actual saved-core argv and startup dispatch, without replacements.
+       ;; Keep the real saved-core argv and retain controlled startup failures.
        (setf (config :telemetry-enabled-p configuration) t
              (config :telemetry-timeout-ms configuration) 10000)
-       (let ((run (telemetry--begin-run configuration)) (*telemetry-process-function* nil))
-         (test-assert (eq (telemetry--process run '(:ping)) ':ready)
-                      "Real saved-core worker dispatch returns a readiness response."))))))
+       (let ((run (telemetry--begin-run configuration))
+             (*telemetry-process-function* nil)
+             (stderr-path (merge-pathnames "worker-ping.stderr" (config :cache-root configuration)))
+             (result nil))
+         (ensure-directories-exist stderr-path)
+         (setf process nil)
+         (unwind-protect
+              (progn
+                (test-call-with-function-replacements
+                 (list (list 'uiop:launch-program
+                             (lambda (command &rest options)
+                               (when (and (listp command)
+                                          (member "--telemetry-worker" command :test #'equal))
+                                 (setf (getf options :error-output) stderr-path
+                                       (getf options :if-error-output-exists) ':supersede))
+                               (let ((child (apply original command options)))
+                                 (when (and (listp command)
+                                            (member "--telemetry-worker" command :test #'equal))
+                                   (setf process child))
+                                 child))))
+                 (lambda () (setf result (telemetry--process run '(:ping)))))
+                (test-assert
+                 (eq result ':ready)
+                 (format nil "Real saved-core readiness: result ~S, core ~S (exists ~S), child exit ~S, stderr ~S"
+                         result (config :active-image-core configuration)
+                         (not (null (probe-file (config :active-image-core configuration))))
+                         (when process (uiop:wait-process process))
+                         (with-open-file (stream stderr-path :external-format ':utf-8
+                                                             :if-does-not-exist nil)
+                           (when stream
+                             (let ((buffer (make-string 4096)))
+                               (subseq buffer 0 (read-sequence buffer stream))))))))
+           (when (probe-file stderr-path) (delete-file stderr-path))))))))
 
 (defun test-telemetry-anonymous-upload ()
   "Upload without credentials while preserving transport and consent boundaries."

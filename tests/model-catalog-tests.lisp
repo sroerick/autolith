@@ -202,48 +202,52 @@ Call ON-REQUEST, when supplied, after reading the request headers."
 
 (defun test-model-catalog-http-stream ()
   "Read an actual application/json HTTP response as bounded UTF-8 bytes."
-  (dolist (oversized '(nil t))
-    (let* ((body "{\"p\":{\"models\":{\"public-model\":{\"id\":\"public-model\"}},\"metadata\":\"é\"}}")
-           (bytes (babel:string-to-octets body :encoding :utf-8))
-           (listener (usocket:socket-listen "127.0.0.1" 0 :reuse-address t
-                                           :element-type '(unsigned-byte 8)))
-           (server nil) (server-error nil))
-      (unwind-protect
-           (progn
-             (setf server
-                   (bt:make-thread
-                    (lambda ()
-                      (handler-case
-                          (when (usocket:wait-for-input listener :timeout 5 :ready-only t)
-                            (let* ((connection (usocket:socket-accept listener))
-                                   (stream (usocket:socket-stream connection))
-                                   (text (flexi-streams:make-flexi-stream stream :external-format :utf-8))
-                                   (crlf (format nil "~C~C" #\Return #\Newline)))
-                              (unwind-protect
-                                   (progn
-                                     (loop for line = (read-line text nil nil)
-                                           while (and line (plusp (length (string-trim '(#\Return) line)))))
-                                     (write-sequence
-                                      (babel:string-to-octets
-                                       (format nil "HTTP/1.1 200 OK~AContent-Type: application/json; charset=utf-8~AContent-Length: ~D~AConnection: close~A~A"
-                                               crlf crlf (length bytes) crlf crlf crlf)
-                                       :encoding :utf-8) stream)
-                                     (write-sequence bytes stream)
-                                     (finish-output stream))
-                                (usocket:socket-close connection))))
-                        (error (condition) (setf server-error condition))))
-                    :name "public catalog HTTP fixture"))
-             (let ((*model-catalog-source*
-                     (format nil "http://127.0.0.1:~D/api.json" (usocket:get-local-port listener)))
-                   (*model-catalog-maximum-bytes*
-                     (if oversized (1- (length bytes)) (length bytes))))
-               (if oversized
-                   (test-assert (handler-case (progn (model-catalog--worker-fetch) nil)
-                                  (model-catalog-invalid () t))
-                                "The real HTTP stream enforces the byte limit.")
-                   (test-assert (equal (model-catalog--worker-fetch) body)
-                                "JSON content type does not change the binary stream contract.")))
-             (bt:join-thread server)
-             (test-assert (null server-error) "The local HTTP fixture completes without an error."))
-        (when server (ignore-errors (bt:join-thread server)))
-        (usocket:socket-close listener)))))
+  (with-test-configuration (configuration)
+    (dolist (oversized '(nil t))
+      (let* ((body "{\"p\":{\"models\":{\"public-model\":{\"id\":\"public-model\"}},\"metadata\":\"é\"}}")
+             (bytes (babel:string-to-octets body :encoding :utf-8))
+             (listener (usocket:socket-listen "127.0.0.1" 0 :reuse-address t
+                                             :element-type '(unsigned-byte 8)))
+             (server nil) (server-error nil))
+        (unwind-protect
+             (progn
+               (setf server
+                     (bt:make-thread
+                      (lambda ()
+                        (handler-case
+                            (when (usocket:wait-for-input listener :timeout 5 :ready-only t)
+                              (let* ((connection (usocket:socket-accept listener))
+                                     (stream (usocket:socket-stream connection))
+                                     (text (flexi-streams:make-flexi-stream stream :external-format :utf-8))
+                                     (crlf (format nil "~C~C" #\Return #\Newline)))
+                                (unwind-protect
+                                     (progn
+                                       (loop for line = (read-line text nil nil)
+                                             while (and line (plusp (length (string-trim '(#\Return) line)))))
+                                       (write-sequence
+                                        (babel:string-to-octets
+                                         (format nil "HTTP/1.1 200 OK~AContent-Type: application/json; charset=utf-8~AContent-Length: ~D~AConnection: close~A~A"
+                                                 crlf crlf (length bytes) crlf crlf crlf)
+                                         :encoding :utf-8) stream)
+                                       (write-sequence bytes stream)
+                                       (finish-output stream))
+                                  (usocket:socket-close connection))))
+                          (error (condition) (setf server-error condition))))
+                      :name "public catalog HTTP fixture"))
+               (let ((*model-catalog-source*
+                       (format nil "http://127.0.0.1:~D/api.json" (usocket:get-local-port listener)))
+                     (*model-catalog-maximum-bytes*
+                       (if oversized (1- (length bytes)) (length bytes))))
+                 (if oversized
+                     (test-assert
+                      (if (platform-http-supervision-required-p *platform*)
+                          (null (model-catalog--worker-fetch configuration))
+                          (handler-case (progn (model-catalog--worker-fetch configuration) nil)
+                            (model-catalog-invalid () t)))
+                      "The real HTTP stream enforces the byte limit.")
+                     (test-assert (equal (model-catalog--worker-fetch configuration) body)
+                                  "JSON content type does not change the binary stream contract.")))
+               (bt:join-thread server)
+               (test-assert (null server-error) "The local HTTP fixture completes without an error."))
+          (when server (ignore-errors (bt:join-thread server)))
+          (usocket:socket-close listener))))))
