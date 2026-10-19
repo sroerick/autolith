@@ -54,6 +54,8 @@
              "Return exact provenance for inputs controlling the recovery image."
              (let* ((paths '("script/build-recovery"
                              "script/build-recovery.lisp"
+                             "script/runtime-requirement.lisp"
+                             "script/windows-stat.lisp"
                              "recovery/runtime.lisp"
                              "script/trace-context.lisp"
                              "recovery/launcher.lisp"
@@ -82,6 +84,8 @@
                        (file-identity "script/trace-context.lisp")
                        :builder-blob (file-identity "script/build-recovery")
                        :builder-source-blob (file-identity "script/build-recovery.lisp")
+                       :runtime-requirement-blob (file-identity "script/runtime-requirement.lisp")
+                       :windows-stat-blob (file-identity "script/windows-stat.lisp")
                        :source-launcher-blob (file-identity "recovery/launcher.lisp")
                        :stable-launcher-blob (file-identity "bin/autolith")
                        :active-source-launcher-blob (file-identity "bin/autolith-active")

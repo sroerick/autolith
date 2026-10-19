@@ -1,4 +1,8 @@
-;;;; Minimum SBCL runtime enforcement shared by standalone build scripts.
+;;;; Runtime preparation shared by standalone build scripts.
+
+#+win32
+(load (merge-pathnames "windows-stat.lisp"
+                      (uiop:pathname-directory-pathname *load-truename*)))
 
 (defun autolith-version-components (version &key allow-suffix-p)
   "Return three numeric version components, optionally accepting an SBCL build suffix.
