@@ -32,23 +32,27 @@
 
 (-> supervised-process-terminate (t) null)
 (defun supervised-process-terminate (process)
-  "Kill and reap PROCESS, then abort its protocol streams."
+  "Kill and reap PROCESS; its request owner closes streams after joining I/O."
   (when process
-    (unwind-protect
-         (progn
-           (platform-terminate-process-object *platform* process :force t)
-           (platform-wait-process *platform* process))
-      (dolist (stream (list (uiop:process-info-error-output process)
-                           (uiop:process-info-input process)
-                           (uiop:process-info-output process)))
-        (when (streamp stream)
-          (handler-case (close stream :abort t)
-            (stream-error () nil))))))
+    (platform-terminate-process-object *platform* process :force t)
+    (platform-wait-process *platform* process))
+  nil)
+
+(-> supervised-process--close-streams (t) null)
+(defun supervised-process--close-streams (process)
+  "Abort protocol streams after their I/O thread has finished."
+  (when process
+    (dolist (stream (list (uiop:process-info-error-output process)
+                         (uiop:process-info-input process)
+                         (uiop:process-info-output process)))
+      (when (streamp stream)
+        (handler-case (close stream :abort t)
+          (stream-error () nil)))))
   nil)
 
 (-> supervised-process-stop (supervised-process &key (:terminate function)) null)
 (defun supervised-process-stop (record &key (terminate #'supervised-process-terminate))
-  "Serialize complete teardown of RECORD using TERMINATE."
+  "Serialize child termination for RECORD using TERMINATE."
   (bt:with-lock-held ((supervised-process-lock record))
     (unless (supervised-process-stopped-p record)
       (funcall terminate (supervised-process-process record))
@@ -66,7 +70,8 @@ START receives an installer function accepting the newly launched process. Owner
 must install its process and I/O thread and register RECORD atomically with their
 admission check. ACTIVE-P checks continuing authority. ACCEPT, when supplied,
 receives a response thunk to call under the owner's authorization lock. STOP kills
-and reaps the child before the I/O thread is joined; COMPLETE releases owner records."
+and reaps the child. The owner joins I/O before closing streams; COMPLETE then
+releases owner records."
   (let ((deadline (+ (get-internal-real-time)
                      (ceiling (* seconds internal-time-units-per-second))))
         (result nil) (done nil)
@@ -99,6 +104,9 @@ and reaps the child before the I/O thread is joined; COMPLETE releases owner rec
                        (funcall response)))))))
       (unwind-protect
            (funcall stop record)
-        (when (supervised-process-thread record)
-          (bt:join-thread (supervised-process-thread record)))
-        (when complete (funcall complete record))))))
+        (unwind-protect
+             (when (supervised-process-thread record)
+               (bt:join-thread (supervised-process-thread record)))
+          (unwind-protect
+               (supervised-process--close-streams (supervised-process-process record))
+            (when complete (funcall complete record))))))))

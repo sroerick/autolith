@@ -24,6 +24,8 @@
                     (lambda (&rest arguments) (declare (ignore arguments)) ':fixture))
                (list 'supervised-process-exchange
                     (lambda (process request) (declare (ignore process request)) ':ready))
+              (list 'supervised-process--close-streams
+                    (lambda (process) (declare (ignore process)) nil))
               (list 'telemetry--stop-process
                     (lambda (process)
                       (declare (ignore process))
@@ -103,7 +105,8 @@
               (retired (bt:make-semaphore))
               (make-thread (symbol-function 'bt:make-thread))
               (failure (make-condition 'simple-error :format-control "Injected thread creation failure."))
-              (stops 0) (owner nil) (revoker nil) (owner-error nil) (io-thread nil))
+              (stops 0) (closes 0) (closed-after-io-p nil)
+              (owner nil) (revoker nil) (owner-error nil) (io-thread nil))
          (test-call-with-function-replacements
           (list (list 'uiop:launch-program
                       (lambda (&rest arguments) (declare (ignore arguments)) ':fixture))
@@ -112,6 +115,12 @@
                         (declare (ignore process request))
                         (bt:wait-on-semaphore release-response :timeout 5)
                         ':ready))
+                (list 'supervised-process--close-streams
+                      (lambda (process)
+                        (declare (ignore process))
+                        (incf closes)
+                        (setf closed-after-io-p
+                              (or (null io-thread) (not (bt:thread-alive-p io-thread))))))
                 (list 'telemetry--stop-process
                       (lambda (process)
                         (declare (ignore process))
@@ -160,6 +169,8 @@
             (test-assert (eq owner-error (when fail-p failure))
                          "Thread-creation failure propagates through complete cleanup.")
             (test-assert (= stops 1) "Even partial admission reaps the child exactly once.")
+            (test-assert (and (= closes 1) closed-after-io-p)
+                         "Protocol streams close once, after I/O has stopped.")
             (test-assert (or (null io-thread) (not (bt:thread-alive-p io-thread)))
                          "No I/O thread survives synchronous revocation.")
             (test-assert (null (telemetry-controller-processes controller))
