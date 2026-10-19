@@ -218,3 +218,65 @@
          (test-assert (<= (length (babel:string-to-octets body :encoding :utf-8)) 1048576)
                       "Every encoded request fits the collector's byte limit.")))))
   nil)
+
+
+;;;; -- Native Narrative Boundary --
+
+(defun test-telemetry-worker-narratives ()
+  "Reject incomplete native narratives and close one context across all chunks."
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (let ((library (merge-pathnames "redactor-library" root))
+          (context (list ':fixture))
+          (text (apply #'concatenate 'string
+                       (make-list 500 :initial-element "Detailed observation. "))))
+      (with-open-file (stream library :direction ':output :if-exists ':supersede)
+        (write-string "fixture" stream))
+      (dolist (case '(:success :failure :saturated :expanded :unbroken :oversized))
+        (let ((loads 0) (creates 0) (closes 0) (pieces nil)
+              (input (case case
+                       (:unbroken (make-string 600 :initial-element #\a))
+                       (:oversized (make-string (1+ *telemetry-diagnostic-limit*)
+                                                :initial-element #\Space))
+                       (otherwise (subseq text 0 (min (length text) *telemetry-diagnostic-limit*))))))
+          (test-call-with-function-replacements
+           (list (list 'defingerprinter:load-library
+                       (lambda (path) (declare (ignore path)) (incf loads)))
+                 (list 'defingerprinter:make-redactor
+                       (lambda (&key model-directory runtime-library)
+                         (declare (ignore model-directory runtime-library))
+                         (incf creates)
+                         context))
+                 (list 'defingerprinter:redact
+                       (lambda (redactor piece &key language)
+                         (test-assert (and (eq redactor context) (equal language "en")
+                                           (<= (length piece) 512))
+                                      "All chunks use the same context and fit the native input bound.")
+                         (push piece pieces)
+                         (cond
+                           ((and (eq case ':failure) (= (length pieces) 2))
+                            (values "PRIVATE_UNSAFE" ':inference-error))
+                           ((and (eq case ':saturated) (= (length pieces) 2))
+                            (values (make-string 1024 :initial-element #\Space) ':ok))
+                           ((eq case ':expanded)
+                            (values (make-string 1023 :initial-element #\Space) ':ok))
+                           (t
+                            (values piece ':ok)))))
+                 (list 'defingerprinter:close-redactor
+                       (lambda (redactor)
+                         (test-assert (eq redactor context) "Close the narrative's native context.")
+                         (incf closes))))
+           (lambda ()
+             (let ((result (telemetry--worker-redact
+                            (list ':redact input "en" nil nil (namestring library)))))
+               (if (eq case ':success)
+                   (test-assert (and (equal result input) (> (length pieces) 1))
+                                "Chunk concatenation preserves the complete narrative in order.")
+                   (test-assert (null result)
+                                "Any failed, saturated, oversized or unsplittable narrative is omitted.")))))
+          (test-assert (= loads creates closes (if (eq case ':oversized) 0 1))
+                       "Each admitted narrative owns exactly one native context.")
+          (when (member case '(:failure :saturated))
+            (test-assert (= (length pieces) 2)
+                         "A bad middle chunk stops inference without exporting the first chunk."))))))
+  nil)

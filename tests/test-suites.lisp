@@ -110,6 +110,7 @@
   test-telemetry-revocation
   test-telemetry-redaction-failures
   test-telemetry-worker-redactor-contract
+  test-telemetry-worker-narratives
   test-telemetry-subprocess-deadlines
   test-telemetry-concurrent-process-retirement
   test-telemetry-process-admission-retirement
