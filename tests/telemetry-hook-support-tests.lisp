@@ -140,4 +140,3 @@
                     (equal (if (equal outcome "permission_denied") "permission" "tool")
                            (test-telemetry--attribute span "error.type")))
                (format nil "Expected ~A with ~A from the real refusal." outcome code)))
-

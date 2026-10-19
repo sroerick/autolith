@@ -267,4 +267,3 @@
          (dolist (private '("private-source-fixture" "private-output-fixture" "Fixture manually closed."))
            (test-assert (not (search private body)) "Metadata hooks omit private journal and summary text."))))))
   nil)
-

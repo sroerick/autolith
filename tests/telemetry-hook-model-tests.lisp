@@ -332,4 +332,3 @@
         "Public roles follow entry points and dynamic bindings restore after each request.")
        (test-telemetry--collector-fixture "native-roles.json" (json-decode (first bodies))))))
   nil)
-

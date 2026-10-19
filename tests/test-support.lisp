@@ -281,9 +281,9 @@ output."
   "A host facility the tests may depend on.
 
 :EMPTY-ENVIRONMENT-VALUES distinguishes an empty variable from an absent one,
-:WILDCARD-FILE-NAMES allows * ? and [ in file names, and :POSIX-ADAPTER means
-the POSIX platform adapter and the SB-POSIX symbols it reads exist."
-  '(member :symbolic-links :fifos :device-nodes :file-modes :fork
+:WILDCARD-FILE-NAMES allows * ? and [ in file names, :PERMISSION-DENIALS requires
+mode bits to restrict this process, and :POSIX-ADAPTER provides the POSIX adapter."
+  '(member :symbolic-links :fifos :device-nodes :file-modes :permission-denials :fork
            :pseudo-terminals :posix-shell :empty-environment-values
            :wildcard-file-names :posix-adapter))
 

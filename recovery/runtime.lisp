@@ -1077,6 +1077,21 @@ generation. Its validator carries this image's own stricter checks."
     (error ()
       nil)))
 
+(serapeum:-> recovery--copy-object-store (pathname pathname) null)
+(defun recovery--copy-object-store (source destination)
+  "Copy Git object bytes without hard links, retaining existing destination files."
+  (labels ((copy-directory (directory)
+             (ensure-directories-exist
+              (merge-pathnames (enough-namestring directory source) destination))
+             (dolist (file (uiop:directory-files directory))
+               (let ((target (merge-pathnames (enough-namestring file source) destination)))
+                 (unless (probe-file target)
+                   (uiop:copy-file file target))))
+             (dolist (child (uiop:subdirectories directory))
+               (copy-directory child))))
+    (copy-directory source))
+  nil)
+
 (serapeum:-> recovery-jj-source-checkout (pathname pathname string) null)
 (defun recovery-jj-source-checkout (source-root checkout commit)
   "Create an isolated jj checkout of COMMIT without changing SOURCE-ROOT.
@@ -1094,11 +1109,7 @@ Colocation lets older committed source use its original Git provenance code."
      (list "jj" "--no-pager" "--color" "never" "git" "init" "--colocate"
            (namestring checkout))
      :output ':string :error-output ':string)
-    ;; Copy bytes, not hard links; retain any identical read-only objects from init.
-    (uiop:run-program
-     (list "cp" "-R" "-n" (concatenate 'string (namestring objects) ".")
-           (namestring private-objects))
-     :output ':string :error-output ':string)
+    (recovery--copy-object-store objects private-objects)
     (ensure-directories-exist reference)
     (with-open-file (stream reference :direction ':output :if-exists ':supersede
                                      :if-does-not-exist ':create)

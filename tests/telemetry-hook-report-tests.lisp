@@ -352,4 +352,3 @@
            (test-assert (equal identity (papercut-telemetry-id (papercut-find configuration id)))
                         "The identity annotation replays without regeneration."))))))
   nil)
-

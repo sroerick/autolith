@@ -82,6 +82,7 @@
   test-telemetry-os-permission-failure-hooks)
 
 (define-test-suite telemetry
+  test-telemetry-background-start-failure
   test-telemetry-background-completion
   test-telemetry-background-progress
   test-telemetry-background-retirement
@@ -765,6 +766,7 @@
 
 (define-test-suite recovery
   test-recovery-launcher-trace-context
+  test-recovery-object-store-copy
   test-recovery-xdg-directories
   test-recovery-conversation-identifiers
   test-recovery-session-handoff

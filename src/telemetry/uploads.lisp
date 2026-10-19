@@ -54,18 +54,20 @@
 
 (-> telemetry--schedule-upload (telemetry-controller) null)
 (defun telemetry--schedule-upload (controller)
-  "Start at most one uploader under CONTROLLER's lock, retaining only projected spans."
+  "Start at most one uploader under CONTROLLER's lock; retain the queue if startup fails."
   (when (and (telemetry-controller-queue controller)
              (not (telemetry-controller-upload-thread controller)))
     (let ((context (telemetry--upload-context controller))
           (transport *telemetry-process-function*)
           (interval *telemetry-upload-interval*))
       (when (telemetry--live-p context)
-        (setf (telemetry-controller-upload-thread controller)
-              (bt:make-thread (lambda ()
-                                (let ((*telemetry-upload-interval* interval))
-                                  (telemetry--upload-loop context transport)))
-                              :name "telemetry uploader")))))
+        (handler-case
+            (setf (telemetry-controller-upload-thread controller)
+                  (bt:make-thread (lambda ()
+                                    (let ((*telemetry-upload-interval* interval))
+                                      (telemetry--upload-loop context transport)))
+                                  :name "telemetry uploader"))
+          (error () nil)))))
   nil)
 
 (-> telemetry-flush (&optional (option telemetry-run)) null)

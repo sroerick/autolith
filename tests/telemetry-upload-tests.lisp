@@ -206,3 +206,45 @@
                          "A checkpoint joins naturally retiring uploaders as well as active ones."))))
        (test-assert (= roots 50) "Every finalized root uploads exactly once.")))
    :background-uploads-p t))
+
+(defun test-telemetry-background-start-failure ()
+  "Keep user results and queued events when the runtime cannot create an uploader."
+  (test-telemetry--call
+   (lambda (configuration)
+     (setf (config :telemetry-enabled-p configuration) t)
+     (telemetry-attach configuration)
+     (let ((bodies nil)
+           (uploaded (bt:make-semaphore)))
+       (let ((*telemetry-process-function*
+               (lambda (context request)
+                 (declare (ignore context))
+                 (push (third request) bodies)
+                 (bt:signal-semaphore uploaded)
+                 t)))
+         (test-assert
+          (equal (multiple-value-list
+                  (telemetry-call-with-run
+                   configuration
+                   (lambda ()
+                     (test-call-with-function-replacements
+                      (list (list 'bt:make-thread
+                                  (lambda (&rest arguments)
+                                    (declare (ignore arguments))
+                                    (error "Injected thread creation failure."))))
+                      (lambda ()
+                        (telemetry-note-tool :tool "shell.run" :outcome "success")))
+                     (test-assert (null (telemetry-controller-upload-thread *telemetry-controller*))
+                                  "A failed launch does not register an uploader.")
+                     (test-assert (= (length (telemetry-controller-queue *telemetry-controller*)) 1)
+                                  "The completed tool event is available for a later upload.")
+                     (values :one :two))))
+                 '(:one :two))
+          "Uploader startup failure does not replace the user's return values.")
+         (test-assert (bt:wait-on-semaphore uploaded :timeout 2)
+                      "Run completion retries uploader startup.")
+         (test-assert
+          (equal (map 'list (lambda (span) (test-telemetry--attribute span "autolith.event.kind"))
+                      (test-telemetry--spans (first bodies)))
+                 '("tool" "run"))
+          "The later upload contains both the queued event and final summary."))))
+   :background-uploads-p t))

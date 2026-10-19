@@ -608,7 +608,7 @@
                                  (uiop:pathname-equal (second request) workspace))
                                authorization-requests))
                    "out-of-root resource authorization uses the active workspace directory")))
-             (with-test-fixture (':file-modes "resource.read permission failures")
+             (with-test-fixture (':permission-denials "resource.read permission failures")
                (let ((path (merge-pathnames "unreadable.txt" workspace)))
                  (workspace-resource-tests--write-text path "private content")
                  (unwind-protect

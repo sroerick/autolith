@@ -311,4 +311,3 @@
                       "An unconfigured provider is usable outside an ambient run.")))))
   (test-telemetry-hooks--mission-accounting)
   nil)
-

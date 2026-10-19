@@ -2,15 +2,29 @@
 
 ;;;; -- POSIX Host Fixtures --
 
-;;; The POSIX implementation of the host fixture protocol declared in
-;;; tests/test-support.lisp. Linux, macOS, and the BSDs provide every
-;;; fixture.
-
 (defmethod test-fixture-available-p ((platform posix-platform) fixture)
-  "POSIX hosts provide every fixture."
+  "Expose POSIX host facilities. Permission enforcement has a separate probe."
   (declare (ignore platform))
   (check-type fixture test-fixture-kind)
   t)
+
+(defmethod test-fixture-available-p ((platform posix-platform) (fixture (eql :permission-denials)))
+  "Check whether this process is denied access to a mode-000 file."
+  (let* ((root (test-make-temporary-root))
+         (file (merge-pathnames "permission-probe" root)))
+    (unwind-protect
+         (progn
+           (with-open-file (stream file :direction ':output :if-exists ':error)
+             (declare (ignore stream)))
+           (test-fixture-set-file-mode platform file 0)
+           (handler-case
+               (with-open-file (stream file)
+                 (declare (ignore stream))
+                 nil)
+             (file-error () t)))
+      (when (probe-file file)
+        (test-fixture-set-file-mode platform file #o600))
+      (platform-delete-directory-tree platform root :validate t :if-does-not-exist ':ignore))))
 
 
 ;;;; -- Files --

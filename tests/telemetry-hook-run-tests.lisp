@@ -921,4 +921,3 @@
           (test-assert (not (telemetry--live-p *telemetry-run*))
                        "Interactive revocation invalidates the in-flight root."))))))
   nil)
-

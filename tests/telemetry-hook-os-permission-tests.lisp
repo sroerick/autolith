@@ -6,7 +6,7 @@
   "Real OS-denied reads, path resolution, edit staging and parent creation retain permission codes."
   (test-telemetry--call
    (lambda (configuration)
-     (with-test-fixture (':file-modes "telemetry OS permission refusals")
+     (with-test-fixture (':permission-denials "telemetry OS permission refusals")
        (let* ((workspace (merge-pathnames "workspace/" (test-configuration-root configuration)))
               (file (merge-pathnames "unreadable.txt" workspace))
               (directory (merge-pathnames "unreadable/" workspace))
@@ -75,4 +75,3 @@
          (test-assert (not (probe-file (merge-pathnames "new/" read-only)))
                       "Refused parent creation leaves no directory or staged file.")))))
   nil)
-

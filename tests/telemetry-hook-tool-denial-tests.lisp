@@ -375,4 +375,3 @@
                    (equal (test-telemetry--attribute span "error.type") "permission"))
               "The E2E papercut read and edit are child-policy denials even with full command access.")))))))
   nil)
-

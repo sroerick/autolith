@@ -248,4 +248,3 @@
                     do (test-telemetry-hooks--assert-failure span (fourth case) (fifth case))))
          (task-orchestrator-close orchestrator)))))
   nil)
-

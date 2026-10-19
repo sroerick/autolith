@@ -299,4 +299,3 @@
                     "Parallel spans retain measured wall duration even without presentation timings.")
        (test-telemetry-hooks--assert-attempts (first bodies) 2))))
   nil)
-

@@ -187,4 +187,3 @@
              (test-assert (null server-error) "The local HTTP fixture completes without an error."))
         (when server (ignore-errors (bt:join-thread server)))
         (usocket:socket-close listener)))))
-
