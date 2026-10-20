@@ -1529,6 +1529,15 @@ Responses, and Anthropic Messages reuse the existing transports. This
 integration uses GitHub's internal Copilot endpoints, following pi and VS Code,
 so it may require updates when GitHub changes that service.
 
+ChatGPT models use Codex's default context windows, currently 272,000 tokens,
+instead of public OpenAI API limits from models.dev. In =(settings)=, toggle
+=prefer-codex-context-window-p= off to use public catalog limits, or evaluate
+=(setf (config :prefer-codex-context-window-p) nil)=. This saved choice applies only to
+the built-in ChatGPT provider. Set =AUTOLITH_PREFER_CODEX_CONTEXT_WINDOW=off= to
+override it for one process. =AUTOLITH_CONTEXT_WINDOW= takes precedence over
+both sources. Compaction uses =compaction-threshold-percent= of the selected
+window, 80% by default.
+
 ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
 advertises Fast support. Fast responses count more heavily against plan usage;
 the exact rate is set by OpenAI per model and is not tracked here. The built-in

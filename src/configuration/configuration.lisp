@@ -267,6 +267,14 @@ exist yet, and is only put in directory form."
   :scope :durable
   :environment "AUTOLITH_CODEX_FAST_MODE")
 
+(define-setting :prefer-codex-context-window-p (boolean-setting)
+  :label "Prefer Codex context window"
+  :group :model
+  :documentation "Whether built-in ChatGPT models use Codex context defaults instead of public models.dev limits. AUTOLITH_CONTEXT_WINDOW overrides either choice."
+  :scope :durable
+  :environment "AUTOLITH_PREFER_CODEX_CONTEXT_WINDOW"
+  :default t)
+
 (define-setting :web-search-mode (web-search-mode-setting)
   :label "Web search"
   :group :model
@@ -285,7 +293,8 @@ exist yet, and is only put in directory form."
   :type '(integer 1)
   :function (lambda (configuration)
               (configuration--context-window-for
-               (config :model configuration) (config :model-provider configuration))))
+               (config :model configuration) (config :model-provider configuration)
+               configuration)))
 
 (define-setting :compaction-threshold-percent (integer-setting)
   :label "Compaction threshold"

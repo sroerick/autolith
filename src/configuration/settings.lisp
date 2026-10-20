@@ -497,18 +497,26 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
                               family)
                           model)))))))
 
-(-> configuration--context-window-for (string &optional (option string)) integer)
-(defun configuration--context-window-for (model &optional provider)
-  "Return MODEL's context window from the environment, registry, or fallback.
+(-> configuration--context-window-for
+    (string &optional (option string) (option configuration)) integer)
+(defun configuration--context-window-for (model &optional provider configuration)
+  "Return MODEL's window from an explicit override, Codex defaults, or metadata.
 
-AUTOLITH_CONTEXT_WINDOW wins when set. Otherwise the registered window is used:
-a declared model :context-window, else the catalog window, else the default."
-  (environment-positive-integer
-   "AUTOLITH_CONTEXT_WINDOW"
-   (or (and (fboundp 'provider-model-context-window-for)
-            (provider-model-context-window-for model :provider (and (non-empty-string-p provider) provider)))
-       (rest (assoc model *model-context-windows* :test #'string=))
-       *default-context-window*)))
+Known built-in ChatGPT models prefer Codex defaults unless CONFIGURATION opts
+out. Other providers use their registry metadata, then the conservative fallback."
+  (let* ((provider (and (non-empty-string-p provider) provider))
+         (codex-window
+           (and (or (null configuration)
+                    (config :prefer-codex-context-window-p configuration))
+                (fboundp 'provider-codex-context-window-for)
+                (provider-codex-context-window-for model :provider provider))))
+    (environment-positive-integer
+     "AUTOLITH_CONTEXT_WINDOW"
+     (or codex-window
+         (and (fboundp 'provider-model-context-window-for)
+              (provider-model-context-window-for model :provider provider))
+         (rest (assoc model *model-context-windows* :test #'string=))
+         *default-context-window*))))
 
 (-> configuration--compaction-threshold () integer)
 (defun configuration--compaction-threshold ()

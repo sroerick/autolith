@@ -155,29 +155,53 @@
 
 
 ;; ChatGPT subscription metadata: https://github.com/openai/codex,
-;; codex-rs/models-manager/models.json at 444da310e108da16aaeb18fd790b0ac464f08aca.
+;; codex-rs/models-manager/models.json at c465563aa9626d99420062135b187d299f904f81.
+(defparameter *codex-models*
+  '((:name "gpt-6.1-sol"
+     :context-window 272000
+     :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
+    (:name "gpt-6-astra"
+     :context-window 272000
+     :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
+    (:name "gpt-6-sol"
+     :context-window 272000
+     :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
+    (:name "gpt-6-luna"
+     :context-window 272000
+     :reasoning-efforts ("low" "medium" "high" "xhigh" "max"))
+    (:name "gpt-5.6-sol"
+     :context-window 272000
+     :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
+    (:name "gpt-5.6-luna"
+     :context-window 272000
+     :reasoning-efforts ("low" "medium" "high" "xhigh" "max"))
+    (:name "gpt-5.6-terra"
+     :context-window 272000
+     :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra")))
+  "Codex subscription defaults, independent of public OpenAI API metadata.")
+
 (register-provider
  "chatgpt"
  :description "ChatGPT Codex subscription"
  :family ':codex
  :protocol ':responses
- :models '((:name "gpt-6.1-sol"
-            :context-window 272000
-            :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
-           (:name "gpt-6-astra"
-            :context-window 272000
-            :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
-           (:name "gpt-6-sol"
-            :context-window 272000
-            :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
-           (:name "gpt-6-luna"
-            :context-window 272000
-            :reasoning-efforts ("low" "medium" "high" "xhigh" "max"))
-           "gpt-5.6-sol"
-           "gpt-5.6-luna"
-           "gpt-5.6-terra")
+ :models *codex-models*
  :factory #'provider--codex-registration-factory
  :source ':builtin)
+
+(-> provider-codex-context-window-for
+    (string &key (:provider (option string)))
+    (option integer))
+(defun provider-codex-context-window-for (model &key provider)
+  "Return Codex's default window for a known built-in ChatGPT MODEL, or NIL."
+  (multiple-value-bind (identifier registration)
+      (provider--resolve-model-metadata model :provider provider)
+    (when (and registration
+               (eq (provider-registration-source registration) ':builtin)
+               (equal (provider-registration-name registration) "chatgpt"))
+      (getf (find identifier *codex-models*
+                  :key (lambda (spec) (getf spec :name)) :test #'string=)
+            :context-window))))
 
 (register-provider
  "openai-api"
