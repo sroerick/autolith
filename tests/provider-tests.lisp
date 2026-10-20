@@ -2506,3 +2506,88 @@
             "usage-limit responses still record the rate limit snapshot"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+
+(-> test-provider-truncation-recovery () null)
+(defun test-provider-truncation-recovery ()
+  "Exercise Chat truncation recovery and exhaustion through authenticated requests."
+  (with-test-configuration (configuration)
+    (let ((snapshot (provider--registry-snapshot))
+          (*provider-maximum-transient-retries* 6)
+          (*provider-maximum-streaming-retries* 2))
+      (unwind-protect
+           (progn
+             (register-openai-compatible-provider
+              :name "truncation-test"
+              :endpoint "https://provider.invalid/v1/chat/completions"
+              :models '("retry/chat-model"))
+             (openai-compatible-provider-tests--save-key
+              configuration "truncation-test" "synthetic-truncation-key")
+             (let* ((selected (configuration-copy configuration :model "retry/chat-model"))
+                    (provider (provider-create selected))
+                    (conversation (conversation-create selected :identifier "truncation-recovery")))
+               (labels ((source (truncated-p)
+                          "Return a complete SSE response, optionally ending in truncation."
+                          (format nil "data: ~A~%~%data: [DONE]~%~%"
+                                  (json-encode
+                                   (json-object
+                                    "id" "truncation-response"
+                                    "choices"
+                                    (json-array
+                                     (json-object
+                                      "delta"
+                                      (if truncated-p
+                                          (json-object
+                                           "content" "partial"
+                                           "tool_calls"
+                                           (json-array
+                                            (json-object
+                                             "index" 0 "id" "partial-call" "type" "function"
+                                             "function"
+                                             (json-object
+                                              "name" (provider-wire-function-name--encode "test" "unwanted")
+                                              "arguments" "{\"incomplete\":"))))
+                                          (json-object "content" "finished"))
+                                      "finish_reason" (if truncated-p "length" "stop"))))))))
+                 (dolist (mode '(:recover :exhaust))
+                   (let ((attempts 0)
+                         (streams nil)
+                         (delays nil)
+                         (result nil)
+                         (failure nil))
+                     (let ((*bounded-retry-sleep-function* (lambda (delay) (push delay delays))))
+                       (test-call-with-function-replacements
+                        (list
+                         (list 'dexador:post
+                               (lambda (url &rest arguments)
+                                 (declare (ignore url arguments))
+                                 (incf attempts)
+                                 (let ((stream (make-string-input-stream
+                                                (source (or (eq mode ':exhaust) (= attempts 1))))))
+                                   (push stream streams)
+                                   (values stream 200 '(("x-request-id" . "truncation-request")))))))
+                        (lambda ()
+                          (handler-case
+                              (setf result (provider-stream-turn provider conversation
+                                                                 :tool-namespaces #()
+                                                                 :event-callback #'identity))
+                            (provider-stream-abandoned (condition)
+                              (setf failure condition))))))
+                     (test-assert (= attempts (if (eq mode ':recover) 2 3))
+                                  "recovery stops at success and exhaustion stops after three attempts")
+                     (test-assert (and (= (length delays) (1- attempts))
+                                       (every (lambda (delay) (<= 1 delay 60)) delays))
+                                  "each permitted retry uses bounded backoff")
+                     (test-assert (every (lambda (stream) (not (open-stream-p stream))) streams)
+                                  "every attempted response stream is closed")
+                     (if (eq mode ':recover)
+                         (test-assert (and result (null failure)
+                                           (string= (provider-result-assistant-text result) "finished")
+                                           (null (provider-result-tool-calls result)))
+                                      "only the completed retry exposes output or executable calls")
+                         (test-assert (and failure (null result)
+                                           (= (provider-stream-abandoned-attempts failure) 3)
+                                           (string= (provider-error-request-id failure) "truncation-request"))
+                                      "exhaustion returns the typed terminal failure and last request ID")))))))
+        (provider--registry-restore snapshot))))
+  nil)

@@ -578,7 +578,8 @@
   test-provider-authentication-retries
   test-agent-attempt-failure-metadata
   test-provider-response-deadlines
-  test-provider-stream-retries)
+  test-provider-stream-retries
+  test-provider-truncation-recovery)
 
 (define-test-suite grok-provider
   grok-provider-test--selection
