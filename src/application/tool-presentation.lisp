@@ -588,9 +588,9 @@ structural discriminator as a readable heading instead."
              (list (terminal-span ':notice (format nil "│ ~A" restart))))
        (when (non-empty-string-p value)
          (append (list (application--tool-section-row "restart value"))
-                 (application--preview-rows
-                  value ':code *application-tool-call-lines*
-                  :gutter "│ ")))))))
+                  (application--source-preview-rows
+                   value :language *application-common-lisp-language*
+                   :limit *application-tool-call-lines*)))))))
 
 (-> application--generic-tool-call-entry (application json-object) list)
 (defun application--generic-tool-call-entry (application call)
@@ -1804,16 +1804,21 @@ OPERATION's own declared target line so they stay numbered."
      :rows rows)))
 
 (-> application--section-preview-rows
-    (string string terminal-style &key (:limit integer))
+    (string string terminal-style &key (:limit integer)
+                                      (:language (option language)))
     list)
 (defun application--section-preview-rows
-    (label text style &key (limit *application-tool-output-lines*))
-  "Return a labeled, bounded transcript section for TEXT."
+    (label text style &key (limit *application-tool-output-lines*) language)
+  "Return a labeled, bounded transcript section, highlighting declared LANGUAGE."
   (append
    (list (application--tool-section-row label))
-   (if (non-empty-string-p text)
-       (application--preview-rows text style limit :gutter "│ ")
-       (list (list (terminal-span ':dim "│ (none)"))))))
+   (cond
+     ((not (non-empty-string-p text))
+      (list (list (terminal-span ':dim "│ (none)"))))
+     (language
+      (application--source-preview-rows text :language language :limit limit))
+     (t
+      (application--preview-rows text style limit :gutter "│ ")))))
 
 (-> application--evaluation-parts
     (string)
@@ -1849,9 +1854,9 @@ OPERATION's own declared target line so they stay numbered."
          (when captured
            (application--section-preview-rows "output" captured ':plain))
          (when (and captured values-text) (list nil))
-         (application--section-preview-rows "values"
-                                            (or values-text "")
-                                            ':code))
+         (application--section-preview-rows
+          "values" (or values-text "") ':code
+          :language *application-common-lisp-language*))
         (application--preview-rows output
                                    ':dim
                                    *application-tool-output-lines*
@@ -2615,7 +2620,8 @@ that follow are the model's next observation, not something the user reads."
                          (application--labeled-output-rows captured)))
                       (when (and captured values-text) (list nil))
                       (application--section-preview-rows
-                       "values" (or values-text "") ':code))
+                       "values" (or values-text "") ':code
+                       :language *application-common-lisp-language*))
                      (application--labeled-output-rows output)))))
       (call-next-method)))
 

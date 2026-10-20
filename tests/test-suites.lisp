@@ -1121,6 +1121,7 @@
   test-native-role-and-continuity-presentation
   test-native-tool-result-presentation-bounds
   test-lisp-source-result-highlighting
+  test-evaluation-value-highlighting
   test-lsp-result-severity-presentation
   test-tool-execution-handoff-presentation
   test-recovery-cursor-normalization

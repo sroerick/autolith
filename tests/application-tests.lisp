@@ -2307,6 +2307,22 @@
                           (find ':syntax-string entry :key #'terminal-span-style))
                      "Lisp result previews retain keyword, function and string token styles")))))
 
+(-> test-evaluation-value-highlighting () null)
+(defun test-evaluation-value-highlighting ()
+  "Highlight Lisp values separately from arbitrary captured output."
+  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+    (dolist (name '("lisp.eval" "lisp.scratchpad-run" "self.eval" "lisp.describe"))
+      (let* ((record
+               (list :tool-result :tool name :status ':ok
+                     :output (format nil "Output:~%a captured message~%~%Values:~%(:answer 42 :text ~S)"
+                                     "hello")))
+             (entry (conversation-record-entry application record)))
+        (test-assert (and (find ':syntax-number entry :key #'terminal-span-style)
+                          (find ':syntax-string entry :key #'terminal-span-style))
+                     "Evaluation values retain Lisp token roles.")
+        (test-assert (search "a captured message" (test-terminal-row-text entry))
+                     "Captured output is presented independently of Lisp values.")))))
+
 (-> test-lsp-result-severity-presentation () null)
 (defun test-lsp-result-severity-presentation ()
   "Distinguish transport success, server failure and diagnostic severity in spans."
@@ -2867,7 +2883,7 @@
       (test-assert (and (search "output" text)
                         (search "hello" text)
                         (search "values" text)
-                        (find (terminal-span :code "42") entry :test #'equal))
+                        (find (terminal-span :syntax-number "42") entry :test #'equal))
                    "self.eval results separate captured output from values"))
     (let* ((entry (conversation-record-entry
                    application
