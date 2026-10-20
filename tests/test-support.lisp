@@ -20,8 +20,13 @@
 
 (-> test-terminal-row-text (list) string)
 (defun test-terminal-row-text (row)
-  "Return ROW's concatenated terminal span text."
-  (apply #'concatenate 'string (mapcar #'terminal-span-text row)))
+  "Return ROW's concatenated terminal span and widget label text."
+  (apply #'concatenate 'string
+         (mapcar (lambda (item)
+                   (if (termdown:widget-p item)
+                       (termdown:widget-label item)
+                       (terminal-span-text item)))
+                 row)))
 
 (-> test-call-with-function-replacements (list function) t)
 (defun test-call-with-function-replacements (replacements function)

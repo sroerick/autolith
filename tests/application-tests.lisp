@@ -2323,6 +2323,93 @@
         (test-assert (search "a captured message" (test-terminal-row-text entry))
                      "Captured output is presented independently of Lisp values.")))))
 
+(-> test-tool-code-output-highlighting () null)
+(defun test-tool-code-output-highlighting ()
+  "Format explicit code payloads through generic and shell result boundaries."
+  (let* ((application (application-tests--ui-application :columns 100 :compact-view-p nil))
+         (json "{\"answer\":42,\"message\":\"hello\"}")
+         (diff (format nil "diff --git a/demo.lisp b/demo.lisp~%--- a/demo.lisp~%+++ b/demo.lisp~%@@ -1 +1 @@~%-(defun greet () ~S)~%+(defun greet () ~S)"
+                       "before" "after")))
+    (dolist (output (list (format nil "```json~%~A~%```" json)
+                          "(:state :ready :message \"hello\")"
+                          diff))
+      (let ((entry (conversation-record-entry
+                    application (list :tool-result :tool "unknown.run" :status ':ok :output output))))
+        (test-assert (find ':syntax-string entry :key #'terminal-span-style)
+                     "Self-identifying code receives syntax token roles in generic results.")
+        (test-assert (find-if (lambda (span) (search "│" (terminal-span-text span))) entry)
+                     "Formatted tool content retains a left rail.")))
+    (let* ((output (format nil "exit 0~%Execution: exited; timeout no; cancelled no~%combined output: 31 bytes retained, 31 bytes observed; capture-complete yes; status complete~%Log: shell-log:fixture~%~A" json))
+           (entry (conversation-record-entry
+                   application (list :tool-result :tool "shell.run" :status ':ok :output output))))
+      (test-assert (and (find ':syntax-string entry :key #'terminal-span-style)
+                        (find ':syntax-number entry :key #'terminal-span-style))
+                   "Complete JSON stdout is highlighted rather than assumed to be shell source."))
+    (let* ((output (format nil "```lisp~%#.(error ~S)~%~C[2J~%```" "do not read tool text" #\Esc))
+           (entry (conversation-record-entry
+                   application (list :tool-result :tool "unknown.run" :status ':ok :output output))))
+      (test-assert (not (find #\Esc (test-terminal-row-text entry)))
+                   "Code output is terminal-safe and is never evaluated.")
+      (let ((widget (find-if #'termdown:widget-p entry)))
+        (test-assert (and widget
+                          (eq ':copy (first (termdown:widget-action widget)))
+                          (search "do not read tool text"
+                                  (second (termdown:widget-action widget))))
+                     "Fenced tool code retains its copy action and source payload.")))
+    (let* ((*application-tool-output-lines* 4)
+           (output (format nil "```json~%[~%~{~A~%~}]~%```" (make-list 30 :initial-element "42,")))
+           (entry (conversation-record-entry
+                   application (list :tool-result :tool "unknown.run" :status ':ok :output output))))
+      (test-assert (<= (count #\Newline (test-terminal-row-text entry)) 6)
+                   "Fenced output obeys the tool row budget."))))
+
+(-> test-resource-source-highlighting () null)
+(defun test-resource-source-highlighting ()
+  "Render retained numbered file contents without depending on live file state."
+  (let ((expanded (application-tests--ui-application :columns 100 :compact-view-p nil))
+        (compact (application-tests--ui-application :columns 100)))
+    (dolist (case '(("source.lisp" "(defun greet () \"hello\")" :syntax-function)
+                    ("data.json" "{\"answer\":42}" :syntax-number)
+                    ("task.sh" "echo \"hello\"" :syntax-string)
+                    ("notes.txt" "plain text" :plain)))
+      (destructuring-bind (path source role) case
+        (let* ((body (text--numbered-line-window
+                      (vector source) 1 1 10000
+                      :line-anchor-function #'cl-hashline:line-anchor))
+               (output (format nil "URI: workspace:~A~%Revision: Rfixture~%Kind: file~%Visible lines: 1 of 1~%Elided: none~%Content:~%~A"
+                               path body))
+               (record (list :tool-result :tool "resource.read" :status ':ok :output output))
+               (entry (conversation-record-entry expanded record))
+               (text (test-terminal-row-text entry)))
+          (test-assert (and (search source text)
+                            (search (cl-hashline:line-anchor source) text)
+                            (find role entry :key #'terminal-span-style))
+                       "File contents preserve source, anchors and path-specific syntax.")
+          (test-assert (not (search source (test-terminal-row-text
+                                           (conversation-record-entry compact record))))
+                       "Resource source formatting respects compact result suppression.")
+          (let ((failed (copy-list record)))
+            (setf (getf (rest failed) :status) ':error)
+            (test-assert (not (find ':syntax-function
+                                    (conversation-record-entry expanded failed)
+                                    :key #'terminal-span-style))
+                         "Failed reads use the condition renderer rather than source formatting.")))))))
+
+(-> test-search-source-highlighting () null)
+(defun test-search-source-highlighting ()
+  "Highlight retained source snippets while preserving match locations and text."
+  (let ((application (application-tests--ui-application :columns 100 :compact-view-p nil)))
+    (dolist (path '("src/demo.lisp" "C:\\work\\demo.lisp"))
+      (let* ((source "(defun greet () \"hello\")")
+             (output (format nil "1 match~%~A:12:3 [git:clean]~%  > 12  ~A" path source))
+             (entry (conversation-record-entry
+                     application (list :tool-result :tool "search.content" :status ':ok :output output))))
+        (test-assert (and (search source (test-terminal-row-text entry))
+                          (search (format nil "~A:12:3" path) (test-terminal-row-text entry))
+                          (find ':syntax-function entry :key #'terminal-span-style)
+                          (find ':syntax-string entry :key #'terminal-span-style))
+                     "Search source preserves paths and coordinates while exposing syntax roles.")))))
+
 (-> test-lsp-result-severity-presentation () null)
 (defun test-lsp-result-severity-presentation ()
   "Distinguish transport success, server failure and diagnostic severity in spans."

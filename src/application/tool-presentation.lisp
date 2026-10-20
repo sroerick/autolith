@@ -17,6 +17,86 @@
   (language-find "bash" :errorp nil)
   "The ColorLisp language used for shell command previews.")
 
+(-> application--fenced-output-rows (application string integer) (option list))
+(defun application--fenced-output-rows (application text limit)
+  "Render explicit Markdown code fences within a bounded tool-output rail."
+  (when (or (search "```" text) (search "~~~" text))
+    (let* ((renderer (application--markdown-renderer application))
+           (safe (sanitize-text (bounded-string text :limit 16384)))
+           (rows (append
+                  (loop for line in (uiop:split-string safe :separator '(#\Newline))
+                        append (application--markdown-rows renderer line))
+                  (termdown:markdown-render-finish renderer))))
+      (append
+       (loop for row in (subseq rows 0 (min limit (length rows)))
+             collect (cons (terminal-span ':dim "│ ") row))
+       (when (> (length rows) limit)
+         (list (list (terminal-span ':dim "… more content"))))))))
+
+(-> application--diff-output-rows (string integer) (option list))
+(defun application--diff-output-rows (text limit)
+  "Render a unified diff with shared change gutters and path-aware source tokens."
+  (let* ((lines (application--display-lines text))
+         (first (first lines)))
+    (when (and first
+               (or (uiop:string-prefix-p "diff --git " first)
+                   (and (uiop:string-prefix-p "--- " first)
+                        (search (format nil "~%+++ ") text)))
+               (search "@@" text))
+      (let ((path nil))
+        (append
+         (loop for line in (subseq lines 0 (min limit (length lines)))
+               collect
+               (cond
+                 ((or (uiop:string-prefix-p "--- " line)
+                      (uiop:string-prefix-p "+++ " line))
+                  (let ((name (subseq line 4)))
+                    (setf path (if (or (uiop:string-prefix-p "a/" name)
+                                      (uiop:string-prefix-p "b/" name))
+                                   (subseq name 2)
+                                   name)))
+                  (list (terminal-span ':dim "│ ") (terminal-span ':strong line)))
+                 ((and (plusp (length line))
+                       (find (char line 0) "+- " :test #'char=))
+                  (let* ((content (subseq line 1))
+                         (kind (case (char line 0)
+                                 (#\+ ':added)
+                                 (#\- ':removed)
+                                 (otherwise ':context))))
+                  (append
+                   (list (syntax--terminal-span
+                          (case kind
+                            (:added ':added-gutter)
+                            (:removed ':removed-gutter)
+                            (otherwise ':context-gutter))
+                          (format nil "~C │ " (char line 0))))
+                   (or (and path (syntax--highlight-spans content :pathname path))
+                       (list (terminal-span ':plain content))))))
+                 (t
+                  (list (terminal-span ':dim "│ ") (terminal-span ':hint line)))))
+         (when (> (length lines) limit)
+           (list (list (terminal-span ':dim "… more diff lines")))))))))
+
+(-> application--code-output-rows
+    (application string &key (:limit integer) (:json-p boolean))
+    (option list))
+(defun application--code-output-rows
+    (application text &key (limit *application-tool-output-lines*) json-p)
+  "Format self-identifying code output without reading Lisp or accessing files.
+
+JSON-P also recognizes complete JSON captures, which otherwise retain the
+recursive field layout of the generic result presenter. Shell output is not
+assumed to be shell source."
+  (let ((trimmed (string-left-trim '(#\Space #\Tab #\Newline #\Return) text)))
+    (or (application--fenced-output-rows application text limit)
+        (application--diff-output-rows trimmed limit)
+        (when (uiop:string-prefix-p "(:" trimmed)
+          (application--source-preview-rows
+           text :language *application-common-lisp-language* :limit limit))
+        (when (and json-p (nth-value 1 (application--structured-output-value text)))
+          (application--source-preview-rows
+           text :language (language-find "json" :errorp nil) :limit limit)))))
+
 
 (-> application--preview-rows
     (string terminal-style integer &key (:gutter (option string)))
@@ -2036,8 +2116,9 @@ remains ordinary bounded tool text, including malformed untrusted JSON."
               (append (subseq rows 0 (min (length rows) *application-tool-output-lines*))
                       (list (list (terminal-span ':dim "… more fields"))))
               rows))
-        (application--preview-rows output ':dim *application-tool-output-lines*
-                                   :gutter "│ "))))
+        (or (application--code-output-rows application output)
+            (application--preview-rows output ':dim *application-tool-output-lines*
+                                       :gutter "│ ")))))
 
 (-> application--mcp-content-sections (t string) list)
 (defun application--mcp-content-sections (details output)
@@ -2474,8 +2555,8 @@ and byte counts are kept for the model and are not part of any preview."
      (when (search "cancelled yes" execution)
        (list (list (terminal-span ':notice "cancelled")))))))
 
-(-> application--shell-section-rows (list boolean) list)
-(defun application--shell-section-rows (section labeled-p)
+(-> application--shell-section-rows (application list boolean) list)
+(defun application--shell-section-rows (application section labeled-p)
   "Return SECTION's preview rows, headed by its stream name when LABELED-P."
   (let* ((lines (getf section :lines))
          (stderr-p (string= (getf section :label) "stderr"))
@@ -2496,10 +2577,12 @@ and byte counts are kept for the model and are not part of any preview."
                             (getf section :retained)
                             (getf section :observed))))))
      (when lines
-       (application--preview-rows text
-                                  (if stderr-p ':failure ':dim)
-                                  *application-tool-output-lines*
-                                  :gutter "│ ")))))
+       (or (unless stderr-p
+             (application--code-output-rows application text :json-p t))
+           (application--preview-rows text
+                                      (if stderr-p ':failure ':dim)
+                                      *application-tool-output-lines*
+                                      :gutter "│ "))))))
 
 (defmethod application-tool-result-entry
     ((tool shell-run-tool) (application application) record)
@@ -2530,7 +2613,7 @@ log references and byte counts are for the model."
                         collect (list (terminal-span ':notice note)))
                   (loop for section in sections
                         append (application--shell-section-rows
-                                section (and (rest (getf parts :sections)) t))))))
+                                application section (and (rest (getf parts :sections)) t))))))
         (call-next-method))))
 
 (-> application--first-line-summary (string) string)
@@ -2650,3 +2733,131 @@ that follow are the model's next observation, not something the user reads."
               :language *application-common-lisp-language*
               :limit *application-tool-output-lines*))
       (call-next-method)))
+
+
+;;;; -- Numbered Resource Source --
+
+(-> application--numbered-source-line (string) (option cons))
+(defun application--numbered-source-line (line)
+  "Split a numbered resource LINE into its exact annotation and source text."
+  (let* ((start (position-if-not (lambda (character) (char= character #\Space)) line))
+         (end (and start (position-if-not #'digit-char-p line :start start))))
+    (when (and start end (< start end))
+      (let ((separator
+              (cond
+                ((and (char= (char line end) #\:)
+                      (<= (+ end 7) (length line))
+                      (every (lambda (character) (digit-char-p character 16))
+                             (subseq line (1+ end) (+ end 5)))
+                      (string= "  " line :start2 (+ end 5) :end2 (+ end 7)))
+                 (+ end 7))
+                ((and (<= (+ end 2) (length line))
+                      (string= "  " line :start2 end :end2 (+ end 2)))
+                 (+ end 2)))))
+        (when separator
+          (cons (subseq line 0 separator) (subseq line separator)))))))
+
+(-> application--resource-source-rows (string) (option list))
+(defun application--resource-source-rows (output)
+  "Highlight a retained workspace file window without resolving or rereading it."
+  (let* ((lines (application--display-lines output))
+         (identity (first lines))
+         (content (member "Content:" lines :test #'string=))
+         (uri (and identity (uiop:string-prefix-p "URI: " identity) (subseq identity 5)))
+         (path (and uri (application--file-resource-path uri))))
+    (when (and path content (member "Kind: file" lines :test #'string=))
+      (let* ((parts (mapcar #'application--numbered-source-line (rest content)))
+             (visible-count (min *application-tool-output-lines* (length parts)))
+             (elision (find-if (lambda (line)
+                                (and (uiop:string-prefix-p "Elided: " line)
+                                     (not (string= line "Elided: none"))))
+                              (ldiff lines content))))
+        (when (and parts (every #'consp parts))
+          (let* ((source (format nil "~{~A~^~%~}" (mapcar #'rest parts)))
+                 (highlighted (syntax--highlight-lines source :pathname path)))
+            (append
+             (list (list (terminal-span ':dim identity)))
+             (loop for part in parts
+                   for index below visible-count
+                   collect (append
+                            (list (terminal-span ':success "│ ")
+                                  (terminal-span ':dim (first part)))
+                            (if (and highlighted (< index (length highlighted)))
+                                (aref highlighted index)
+                                (list (terminal-span ':plain (rest part))))))
+             (when (> (length parts) visible-count)
+               (list (list (terminal-span ':dim
+                                          (format nil "… +~D more source lines"
+                                                  (- (length parts) visible-count))))))
+             (when elision
+               (list (list (terminal-span ':dim elision)))))))))))
+
+(defmethod application-tool-result-entry
+    ((tool resource-read-tool) (application application) record)
+  "Present numbered file contents with their path's source language and anchors."
+  (let ((rows (and (application--tool-result-success-p record)
+                   (application--resource-source-rows
+                    (or (getf (rest record) :output) "")))))
+    (if rows
+        (application--tool-result-entry application record :rows rows)
+        (call-next-method))))
+
+
+;;;; -- Search Source Matches --
+
+(-> application--search-result-path (string) (option string))
+(defun application--search-result-path (line)
+  "Extract the path from a retained PATH:LINE:COLUMN search heading."
+  (let* ((end (or (search " [git:" line :from-end t) (length line)))
+         (column (position #\: line :end end :from-end t))
+         (number (and column (position #\: line :end column :from-end t))))
+    (when (and number column (plusp number)
+               (< (1+ number) column) (< (1+ column) end)
+               (every #'digit-char-p (subseq line (1+ number) column))
+               (every #'digit-char-p (subseq line (1+ column) end)))
+      (subseq line 0 number))))
+
+(-> application--search-source-rows (string) (option list))
+(defun application--search-source-rows (output)
+  "Highlight bounded search snippets using retained headings, not current files."
+  (let* ((lines (application--display-lines output))
+         (visible-count (min *application-tool-output-lines* (length lines)))
+         (path nil)
+         (highlighted-p nil)
+         (rows
+           (loop for line in (subseq lines 0 visible-count)
+                 for heading = (application--search-result-path line)
+                 for marker = (position-if-not (lambda (character) (char= character #\Space)) line)
+                 for source = (and path marker (char= (char line marker) #\>)
+                                   (application--numbered-source-line (subseq line (1+ marker))))
+                 collect
+                 (cond
+                   (heading
+                    (setf path heading)
+                    (list (terminal-span ':dim "│ ") (terminal-span ':strong line)))
+                   (source
+                    (let ((spans (syntax--highlight-spans (rest source) :pathname path)))
+                      (when spans (setf highlighted-p t))
+                      (append (list (terminal-span ':dim "│ ")
+                                    (terminal-span ':dim
+                                                   (concatenate 'string
+                                                                (subseq line 0 (1+ marker))
+                                                                (first source))))
+                              (or spans (list (terminal-span ':plain (rest source)))))))
+                   (t
+                    (setf path nil)
+                    (list (terminal-span ':dim "│ ") (terminal-span ':dim line)))))))
+    (when highlighted-p
+      (append rows
+              (when (> (length lines) visible-count)
+                (list (list (terminal-span ':dim "… more search results"))))))))
+
+(defmethod application-tool-result-entry
+    ((tool search-content-tool) (application application) record)
+  "Present source matches with path-derived token styles and original annotations."
+  (let ((rows (and (application--tool-result-success-p record)
+                   (application--search-source-rows
+                    (or (getf (rest record) :output) "")))))
+    (if rows
+        (application--tool-result-entry application record :rows rows)
+        (call-next-method))))
