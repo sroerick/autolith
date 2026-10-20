@@ -8,9 +8,10 @@
 
 (-> supervised-process-environment () list)
 (defun supervised-process-environment ()
-  "Pass only locale, platform runtime and certificate paths to a one-shot child."
+  "Pass only locale, runtime search paths and certificate paths to a one-shot child.
+PATH is required when a saved core reopens native libraries by their basename."
   (cons "LANG=en_US.UTF-8"
-        (loop for name in '("SYSTEMROOT" "WINDIR" "TEMP" "TMP" "TMPDIR" "SBCL_HOME"
+        (loop for name in '("PATH" "SYSTEMROOT" "WINDIR" "TEMP" "TMP" "TMPDIR" "SBCL_HOME"
                             "SSL_CERT_FILE" "SSL_CERT_DIR" "NIX_SSL_CERT_FILE")
               for value = (uiop:getenv name)
               when value collect (concatenate 'string name "=" value))))

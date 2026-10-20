@@ -779,6 +779,15 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
 
 (defun test-telemetry-subprocess-deadlines ()
   "Deadline and revocation terminate an actual isolated child, without HTTP or native FFI."
+  (with-test-environment (("AUTOLITH_TEST_SUPERVISED_SECRET" "fixture-secret"))
+    (let ((environment (supervised-process-environment))
+          (path (uiop:getenv "PATH")))
+      (when path
+        (test-assert (member (concatenate 'string "PATH=" path) environment :test #'equal)
+                     "Saved-core children inherit the native library search path."))
+      (test-assert (not (find "AUTOLITH_TEST_SUPERVISED_SECRET=" environment
+                             :test (lambda (prefix entry) (uiop:string-prefix-p prefix entry))))
+                   "Unlisted parent environment values are not passed to children.")))
   (test-telemetry--call
    (lambda (configuration)
      (setf (config :telemetry-enabled-p configuration) t
