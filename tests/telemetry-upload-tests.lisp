@@ -100,6 +100,7 @@
              (config :telemetry-timeout-ms configuration) (if (eq action ':clean-exit) 250 10000))
        (telemetry-attach configuration)
        (let ((original (symbol-function 'uiop:launch-program))
+             (ready-path (merge-pathnames "upload-stall.ready" (config :cache-root configuration)))
              (started (bt:make-semaphore))
              (process nil)
              (thread nil)
@@ -110,15 +111,15 @@
                         (if (and (listp command) (member "--telemetry-worker" command :test #'equal))
                             (progn
                               (setf process
-                                    (apply original
-                                           (list (namestring sb-ext:*runtime-pathname*) "--noinform" "--non-interactive"
-                                                 "--eval" "(sleep 30)") options))
+                                    (test-telemetry--launch-stalled-child original options ready-path))
                               (bt:signal-semaphore started)
                               process)
                             (apply original command options)))))
           (lambda ()
             (telemetry-call-with-run configuration (lambda () :done))
             (test-assert (bt:wait-on-semaphore started :timeout 2) "An actual upload child is running.")
+            (test-assert (and (probe-file ready-path) (uiop:process-alive-p process))
+                         (test-telemetry--stalled-child-diagnostic process ready-path))
             (let ((controller *telemetry-controller*)
                   (start (get-internal-real-time)))
               (setf thread (telemetry-controller-upload-thread controller))

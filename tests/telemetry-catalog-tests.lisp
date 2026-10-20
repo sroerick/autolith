@@ -352,6 +352,7 @@
      (telemetry-attach configuration)
      (test-model-catalog--await *telemetry-controller*)
      (let ((original (symbol-function 'uiop:launch-program))
+           (ready-path (merge-pathnames "catalog-stall.ready" (config :cache-root configuration)))
            (process nil)
            (*telemetry-process-function* nil))
        (test-call-with-function-replacements
@@ -359,16 +360,18 @@
                     (lambda (command &rest options)
                       (if (and (listp command) (member "--telemetry-worker" command :test #'equal))
                           (setf process
-                                (apply original
-                                       (list (namestring sb-ext:*runtime-pathname*) "--noinform" "--non-interactive"
-                                             "--eval" "(sleep 30)") options))
+                                (test-telemetry--launch-stalled-child original options ready-path))
                           (apply original command options)))))
         (lambda ()
           (let* ((run (telemetry--begin-run configuration))
                  (start (get-internal-real-time)))
             (test-assert (null (telemetry--process run '(:catalog))) "A stalled catalog yields no response.")
+            (test-assert (probe-file ready-path)
+                         (test-telemetry--stalled-child-diagnostic process ready-path))
             (let ((elapsed (/ (- (get-internal-real-time) start) internal-time-units-per-second)))
-              (test-assert (<= 9 elapsed 13) "Catalog work has its own ten-second deadline."))
+              (test-assert (<= 9 elapsed 13)
+                           (format nil "Catalog work has its own ten-second deadline: ~,3Fs. ~A"
+                                   elapsed (test-telemetry--stalled-child-diagnostic process ready-path))))
             (test-assert (not (uiop:process-alive-p process)) "The deadline kills and reaps catalog work."))))))))
 
 (defun test-model-catalog-transport ()

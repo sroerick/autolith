@@ -50,6 +50,53 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
           (terpri stream)))))
   nil)
 
+(-> test-telemetry--launch-stalled-child (function list pathname) t)
+(defun test-telemetry--launch-stalled-child (launch options ready-path)
+  "Launch a stock-core child and wait boundedly for its pre-sleep readiness file.
+The caller owns termination. Keep startup stderr beside READY-PATH for failures."
+  (when (probe-file ready-path)
+    (delete-file ready-path))
+  (ensure-directories-exist ready-path)
+  (setf (getf options :error-output) (make-pathname :type "stderr" :defaults ready-path)
+        (getf options :if-error-output-exists) ':supersede)
+  (let* ((core (merge-pathnames "sbcl.core" (uiop:lisp-implementation-directory)))
+         (process
+           (apply launch
+                  (list (namestring sb-ext:*runtime-pathname*) "--noinform"
+                        "--core" (namestring core)
+                        "--no-sysinit" "--no-userinit" "--non-interactive"
+                        "--eval"
+                        (format nil "(progn
+  (with-open-file (stream ~S :direction ':output
+                            :if-exists ':supersede
+                            :if-does-not-exist ':create)
+    (write-line ~S stream))
+  (sleep 30))"
+                                (namestring ready-path) "ready"))
+                  options))
+         (deadline (+ (get-internal-real-time) (* 5 internal-time-units-per-second))))
+    (loop until (or (probe-file ready-path)
+                    (not (uiop:process-alive-p process))
+                    (>= (get-internal-real-time) deadline))
+          do (sleep 0.005))
+    process))
+
+(-> test-telemetry--stalled-child-diagnostic (t pathname) string)
+(defun test-telemetry--stalled-child-diagnostic (process ready-path)
+  "Describe a stall fixture without waiting for a live child or reading unbounded stderr."
+  (let ((alive-p (and process (uiop:process-alive-p process)))
+        (stderr-path (make-pathname :type "stderr" :defaults ready-path)))
+    (format nil "Stalled child: ready ~S, alive ~S, exit ~S, stock core ~S, stderr ~S"
+            (not (null (probe-file ready-path))) alive-p
+            (when (and process (not alive-p)) (uiop:wait-process process))
+            (merge-pathnames "sbcl.core" (uiop:lisp-implementation-directory))
+            (unless alive-p
+              (with-open-file (stream stderr-path :external-format ':utf-8
+                                                  :if-does-not-exist nil)
+                (when stream
+                  (let ((buffer (make-string 4096)))
+                    (subseq buffer 0 (read-sequence buffer stream)))))))))
+
 (defun test-telemetry-span-applicability ()
   "Keep non-applicable model, tool, role and error metadata absent on the wire."
   (test-telemetry--call
@@ -794,6 +841,7 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
            (config :telemetry-timeout-ms configuration) 100)
      (telemetry-attach configuration)
      (let ((original (symbol-function 'uiop:launch-program))
+           (ready-path (merge-pathnames "telemetry-stall.ready" (config :cache-root configuration)))
            (process nil)
            (*telemetry-process-function* nil))
        (test-call-with-function-replacements
@@ -801,9 +849,7 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
                     (lambda (command &rest options)
                       (if (and (listp command) (member "--telemetry-worker" command :test #'equal))
                           (setf process
-                                (apply original
-                                       (list (namestring sb-ext:*runtime-pathname*) "--noinform" "--non-interactive"
-                                             "--eval" "(sleep 30)") options))
+                                (test-telemetry--launch-stalled-child original options ready-path))
                           (apply original command options)))))
         (lambda ()
           (let* ((run (telemetry--begin-run configuration)) (start (get-internal-real-time)))
@@ -811,6 +857,8 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
                          "Hung child times out without unsafe native interruption.")
             (test-assert (< (/ (- (get-internal-real-time) start) internal-time-units-per-second) 3)
                          "Hard deadline returns within a bounded allowance.")
+            (test-assert (probe-file ready-path)
+                         (test-telemetry--stalled-child-diagnostic process ready-path))
             (test-assert (not (uiop:process-alive-p process)) "Timeout kills and reaps the child."))
           (setf (config :telemetry-timeout-ms configuration) 5000)
           (let* ((run (telemetry--begin-run configuration))
@@ -825,6 +873,8 @@ BACKGROUND-UPLOADS-P selects the real scheduler for upload lifecycle tests."
                          do (sleep 0.005))
                    (test-assert (telemetry-controller-processes *telemetry-controller*)
                                 "Inflight child is owned by the process controller.")
+                   (test-assert (and (probe-file ready-path) (uiop:process-alive-p process))
+                                (test-telemetry--stalled-child-diagnostic process ready-path))
                    (setf (config :telemetry-enabled-p configuration) nil)
                    (test-assert (not (uiop:process-alive-p process)) "Consent revocation kills child synchronously.")
                    (test-assert (null (telemetry-controller-processes *telemetry-controller*)) "No live children after revocation."))
