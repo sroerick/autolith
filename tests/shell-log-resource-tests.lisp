@@ -199,6 +199,58 @@
         (task-orchestrator-close orchestrator))))
   nil)
 
+(-> test-shell-log-child-delivery () null)
+(defun test-shell-log-child-delivery ()
+  "Prune child captures only after delivery in the child's private transcript."
+  (with-test-configuration (configuration)
+    (let* ((*shell-log-active* (make-hash-table :test #'equal))
+           (*shell-log-capture-byte-limit* 32)
+           (*shell-log-retention-byte-limit* 32)
+           (*shell-log-retention-count-limit* 1)
+           (root "shell-child-delivery")
+           (orchestrator (task-orchestrator-create))
+           (child-job (task-tests--make-job orchestrator :identifier "child-owner"
+                                             :root-identifier root))
+           (owner (task-job-execution-identifier child-job))
+           (child (conversation-create configuration :identifier owner
+                                       :storage-root (task--artifact-root configuration child-job)))
+           (unrelated (conversation-create configuration :identifier owner))
+           (context (make-instance 'tool-context :configuration configuration
+                                                :conversation child :worker nil))
+           (job (task-tests--make-job orchestrator :identifier "child-command"
+                                       :root-identifier root :detached-p nil)))
+      (unwind-protect
+           (progn
+             (conversation-append-user-message child "Run one command.")
+             (setf (slot-value job 'completion-owner-conversation) owner
+                   (slot-value job 'parent-call-id) "child-shell-call")
+             (let* ((artifact (shell-log-allocate context :job job))
+                    (metadata (shell-log-tests--finish artifact (utf8-string-to-octets "child-output")))
+                    (directory (shell-log-capture-directory artifact))
+                    (capture (merge-pathnames "output.bin" directory))
+                    (receipt (list :tool-result :call-id "child-shell-call" :tool "shell.run"
+                                   :status ':ok :category ':success :output "finished"
+                                   :details (list :shell-logs
+                                                  (list (shell-log--public-metadata metadata))))))
+               (conversation-append-record unrelated receipt)
+               (let ((replacement (handler-case (shell-log-allocate context)
+                                    (shell-log-error () nil))))
+                 (when replacement (shell-log-release-artifact replacement))
+                 (test-assert (null replacement)
+                              "A same-ID primary transcript cannot acknowledge a child capture"))
+               (test-assert (probe-file capture)
+                            "Undelivered child output remains available under quota pressure")
+               (conversation-append-record child receipt)
+               (let ((replacement (shell-log-allocate context)))
+                 (unwind-protect
+                      (test-assert
+                       (and (eq ':pruned (getf (shell-log--read-manifest configuration directory) :state))
+                            (not (probe-file capture)))
+                       "The exact child transcript permits quota pruning of delivered output")
+                   (shell-log-release-artifact replacement)))))
+        (task-orchestrator-close orchestrator))))
+  nil)
+
 (-> shell-log-tests--pre-executor-unwind () null)
 (defun shell-log-tests--pre-executor-unwind ()
   "Release real pre-executor failures even when a synchronous job has no receipt."

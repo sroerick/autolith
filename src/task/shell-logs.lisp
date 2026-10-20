@@ -206,7 +206,8 @@ Disable measurement until resource resolution has checked ancestor ownership."
 (defun shell-log--sync-delivered-p (configuration metadata)
   "Require exact-owner durable tool or mission-gate evidence for terminal sync logs.
   Match execution, artifact and originating provider call, including stale manifests."
-  (let ((owner (getf metadata :completion-owner-conversation))
+  (let ((root (getf metadata :root-conversation))
+        (owner (getf metadata :completion-owner-conversation))
         (execution (getf metadata :execution-id))
         (artifact (getf metadata :artifact-id))
         (call-id (getf metadata :parent-call-id)))
@@ -218,9 +219,17 @@ Disable measurement until resource resolution has checked ancestor ownership."
                      logs)))
       (and (member (getf metadata :state) '(:closed :interrupted))
            (not (getf metadata :detached-p t))
-           (stringp owner)
+           (every #'shell-log--component-p (list root owner))
            (handler-case
-               (let* ((identity (conversation-pathname-for-id configuration owner))
+               (let* ((identity
+                        (if (equal owner root)
+                            (conversation-pathname-for-id configuration owner)
+                            (shell-log--safe-path
+                             configuration
+                             (merge-pathnames
+                              (make-pathname :name owner :type "sexp")
+                              (merge-pathnames (format nil "~A/" owner)
+                                               (task--artifact-group-root configuration root))))))
                       (header (conversation-peek-header identity))
                       (delivered-p nil))
                  (when (equal owner (getf (rest header) :id))

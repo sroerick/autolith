@@ -146,6 +146,7 @@
 
 (define-test-suite shell-log-resource
   test-shell-log-private-allocation
+  test-shell-log-child-delivery
   test-shell-log-byte-windows-and-search
   test-shell-log-resource-authority
   test-shell-log-reopen-and-pruning
