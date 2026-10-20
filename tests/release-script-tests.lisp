@@ -3597,8 +3597,8 @@ esac
             (length (remove-duplicates models :test #'string=)))
      "models output is deduplicated")
     (test-assert
-     (member "gpt-5.6-luna" models :test #'string=)
-     "models includes catalog entries without authentication")
+     (member "chatgpt/gpt-5.6-luna" models :test #'string=)
+     "models includes provider-qualified catalog entries without authentication")
     (test-assert
      (every (lambda (model)
               (and (plusp (length model))
