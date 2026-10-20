@@ -309,11 +309,33 @@ an exact model in that provider first, so a slash ID cannot be misrouted."
   "Return the provider for a bare or provider-qualified MODEL selection."
   (nth-value 1 (provider-resolve-model model)))
 
+(-> provider--resolve-model-metadata
+    (string &key (:provider (option string)))
+    (values string (option provider-registration)))
+(defun provider--resolve-model-metadata (model &key provider)
+  "Resolve metadata without requiring a populated model catalog.
+
+Concrete adapters and deferred configurations may name models before discovery.
+Keep selection validation in PROVIDER-RESOLVE-MODEL; metadata callers use their
+normal defaults when no exact model metadata exists. Ambiguous selections and
+contradictory provider prefixes still signal their selection errors."
+  (handler-case (provider-resolve-model model :provider provider)
+    (model-selection-error (condition)
+      (unless (member (model-selection-error-reason condition)
+                      '(:unsupported-model :unknown-provider))
+        (error condition))
+      (let* ((slash (position #\/ model))
+             (name (or provider (and slash (subseq model 0 slash))))
+             (registration (and name
+                                (provider-registration-find
+                                 (provider--canonical-name name)))))
+        (values model registration)))))
+
 (-> provider-model-for (string &key (:provider (option string))) (option provider-model))
 (defun provider-model-for (model &key provider)
-  "Return metadata from the resolved provider for MODEL."
+  "Return available metadata for MODEL without validating catalog membership."
   (multiple-value-bind (identifier registration)
-      (provider-resolve-model model :provider provider)
+      (provider--resolve-model-metadata model :provider provider)
     (and registration (provider--registration-model registration identifier))))
 
 (-> provider-model-identifiers () list)
@@ -323,14 +345,14 @@ an exact model in that provider first, so a slash ID cannot be misrouted."
 
 (-> provider-model-family (string &key (:provider (option string))) (option keyword))
 (defun provider-model-family (model &key provider)
-  "Return MODEL's selected provider metadata."
-  (let ((registration (nth-value 1 (provider-resolve-model model :provider provider))))
+  "Return MODEL's selected provider family, even before model discovery."
+  (let ((registration (nth-value 1 (provider--resolve-model-metadata model :provider provider))))
     (and registration (provider-registration-family registration))))
 
 (-> provider-model-endpoint (string &key (:provider (option string))) (option string))
 (defun provider-model-endpoint (model &key provider)
-  "Return MODEL's selected provider metadata."
-  (let ((registration (nth-value 1 (provider-resolve-model model :provider provider))))
+  "Return MODEL's selected provider endpoint, even before model discovery."
+  (let ((registration (nth-value 1 (provider--resolve-model-metadata model :provider provider))))
     (and registration (provider-registration-endpoint registration))))
 
 (-> provider-model-context-window-for (string &key (:provider (option string))) (option integer))

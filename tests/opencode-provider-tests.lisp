@@ -455,13 +455,21 @@
                         "opencode/gpt-5.6-luna"))
                       "opencode"))
             "OpenCode discovery cannot steal colliding built-in model names")
-           (let ((description
-                   (application--models-description
+           (let ((items
+                   (application--model-items
                     (make-instance 'application :configuration configuration))))
-             (test-assert
-              (and (search "opencode / opencode/gpt-5.6-luna" description)
-                   (search "opencode / opencode/grok-4.5" description))
-              "/models exposes dynamic-only OpenCode models under their namespace"))
+             (dolist (model '("opencode/gpt-5.6-luna" "opencode/grok-4.5"))
+               (let ((item (find model items :key (lambda (item) (getf item :model))
+                                            :test #'string=)))
+                 (test-assert (and item (equal (getf item :provider) "opencode"))
+                              "/models offers dynamic OpenCode models with their provider identity")
+                 (when item
+                   (multiple-value-bind (identifier registration)
+                       (provider-resolve-model (getf item :name))
+                     (test-assert
+                      (and (equal identifier model)
+                           (equal (provider-registration-name registration) "opencode"))
+                      "offered OpenCode selections retain the adapter's namespaced catalog ID"))))))
            (let* ((entries
                     (getf (rest (provider--read-model-cache configuration)) :providers))
                   (entry
