@@ -98,9 +98,9 @@
         (openai-compatible-provider-stream-usage-p provider)))
 
 (-> openai-compatible--authenticate
-    (openai-compatible-provider &key
-                                (:stream stream)
-                                (:open-browser-p boolean))
+    (model-provider &key
+                    (:stream stream)
+                    (:open-browser-p boolean))
     string)
 (defun openai-compatible--authenticate (provider &key stream open-browser-p)
   "Interactively store or replace PROVIDER's private API key."

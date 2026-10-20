@@ -22,7 +22,8 @@
 (defun test-openai-compatible-provider-tool-schemas ()
   "Project built-in tools at the request boundary without relaxing local validation."
   (with-test-configuration (configuration)
-    (let* ((provider (provider-authentication-provider configuration "openai-api"))
+    (let* ((provider (openai-compatible-provider-create
+                      configuration :name "chat-schema-fixture" :family ':fixture))
            (registry (make-default-tool-registry :configuration configuration))
            (conversation (conversation-create configuration))
            (search-tool (tool-registry-find registry "search" "content"))
@@ -1239,4 +1240,130 @@
        (and (not (tool-result-success-p result))
             (search "Unknown tool missing." (tool-result-content result)))
        "an unknown bare tool name fails with its own name")))
+  nil)
+
+
+(-> test-openai-api-responses () null)
+(defun test-openai-api-responses ()
+  "Exercise public API projection, portable tools, transport, and key lifecycle."
+  (let ((snapshot (provider--registry-snapshot)))
+    (unwind-protect
+         (with-test-configuration (configuration)
+           (let* ((registry (make-default-tool-registry :configuration configuration))
+                  (search-tool (tool-registry-find registry "search" "content"))
+                  (canonical (json-encode (tool-parameters search-tool))))
+             (openai-compatible-provider-tests--save-key configuration "openai-api" "discovery-fixture-key")
+             (test-call-with-function-replacements
+              (list (list 'dexador:get
+                          (lambda (endpoint &key headers &allow-other-keys)
+                            (test-assert
+                             (and (string= endpoint "https://api.openai.com/v1/models")
+                                  (equal "Bearer discovery-fixture-key"
+                                         (cdr (assoc "Authorization" headers :test #'string-equal))))
+                             "model discovery uses the private key without account identity")
+                            (values "{\"data\":[{\"id\":\"gpt-4.1\"},{\"id\":\"gpt-6-astra\"},{\"id\":\"gpt-6.1-sol\"}]}"
+                                    200 nil))))
+              (lambda ()
+                (test-assert (null (provider-refresh-models configuration :provider-name "openai-api"))
+                             "the public API catalog is discovered successfully")))
+             (dolist (model '("gpt-4.1" "gpt-6-astra" "gpt-6.1-sol"))
+               (let* ((selected (configuration-copy configuration :model model))
+                      (provider (provider-create selected))
+                      (conversation (conversation-create selected))
+                      (request (provider-request-object
+                                provider conversation
+                                (tool-registry-provider-schemas registry))))
+                 (test-assert (typep provider 'openai-api-provider)
+                              "official models use the API-key Responses adapter")
+                 (test-assert
+                  (and (vectorp (json-get request "input"))
+                       (not (gethash "messages" request))
+                       (not (gethash "reasoning" request))
+                       (not (gethash "reasoning_effort" request))
+                       (eq yason:false (json-get request "store")))
+                  "modern and legacy models use default reasoning with storage disabled")
+                 (test-assert
+                  (every (lambda (tool)
+                           (let ((schema (json-get tool "parameters"))
+                                 (name (json-get tool "name")))
+                             (and (json-string= (json-get schema "type") "object")
+                                  (notany (lambda (key) (gethash key schema))
+                                          '("oneOf" "anyOf" "allOf" "enum" "const" "not"))
+                                  (<= (length name) 64)
+                                  (not (find #\. name)))))
+                         (json-get request "tools"))
+                  "built-in functions have acceptable Responses parameter roots and names")
+                 (test-assert (string= canonical (json-encode (tool-parameters search-tool)))
+                              "wire projection leaves canonical validation intact")
+                 (let ((compaction (provider-request-object provider conversation #()
+                                                            :compaction-p t)))
+                   (test-assert (and (eq yason:false (json-get compaction "store"))
+                                     (not (gethash "reasoning" compaction)))
+                                "compaction uses the public API policy"))
+                 (dolist (pair '(("search" "content") ("custom__ns" "some.name")
+                                 ("_x000041_" "with space")))
+                   (let* ((wire (provider-wire-tool-name provider (first pair) (second pair)))
+                          (item (json-object "type" "function_call" "name" wire
+                                             "call_id" "codec" "arguments" "{}"))
+                          (decoded (provider-normalize-output-item provider item)))
+                     (test-assert
+                      (and (string= (first pair) (json-get decoded "namespace"))
+                           (string= (second pair) (json-get decoded "name"))
+                           (string= wire (json-get (provider-wire-input-item provider decoded) "name")))
+                      "function calls round-trip through dispatch and replay")))
+                 (let ((reconfigured (provider-with-configuration provider selected)))
+                   (test-assert
+                    (and (typep reconfigured 'openai-api-provider)
+                         (equal (provider-session-id provider) (provider-session-id reconfigured))
+                         (eq (provider-credential-manager provider)
+                             (provider-credential-manager reconfigured)))
+                    "reconfiguration preserves the API session and private key manager"))))
+             (let* ((selected (configuration-copy configuration :model "gpt-6-astra"))
+                    (provider (provider-create selected))
+                    (conversation (conversation-create selected))
+                    (item (json-object "type" "function_call" "id" "server-call"
+                                       "call_id" "api-tool"
+                                       "name" (provider-wire-tool-name provider "search" "content")
+                                       "arguments" "{\"query\":\"fixture\"}"))
+                    (source (concatenate
+                             'string
+                             (test-sse-event-string
+                              (json-object "type" "response.output_item.done" "item" item))
+                             (test-sse-event-string
+                              (json-object "type" "response.completed"
+                                           "response" (json-object "id" "public-response")))))
+                    (requests 0))
+               (openai-compatible-provider-tests--save-key selected "openai-api" "public-fixture-key")
+               (test-call-with-function-replacements
+                (list (list 'provider-post-event-stream
+                            (lambda (endpoint content &key headers &allow-other-keys)
+                              (declare (ignore content))
+                              (test-assert
+                               (and (string= endpoint "https://api.openai.com/v1/responses")
+                                    (equal "Bearer public-fixture-key"
+                                           (cdr (assoc "Authorization" headers :test #'string-equal)))
+                                    (not (assoc "ChatGPT-Account-Id" headers :test #'string-equal))
+                                    (not (assoc "OpenAI-Beta" headers :test #'string-equal)))
+                               "transport uses public bearer auth without subscription headers")
+                              (incf requests)
+                              (values (make-string-input-stream source) 200 nil))))
+                (lambda ()
+                  (let* ((result (provider-attempt-turn
+                                  provider conversation
+                                  :tool-namespaces (tool-registry-provider-schemas registry)
+                                  :event-callback #'identity :force-refresh nil))
+                         (call (first (provider-result-tool-calls result))))
+                    (test-assert
+                     (and (= requests 1)
+                          (string= "public-response" (provider-result-response-id result))
+                          (string= "search" (json-get call "namespace"))
+                          (string= "content" (json-get call "name")))
+                     "the shared authenticated stream returns decoded function calls"))))
+               (test-assert
+                (equal "public-fixture-key"
+                       (oauth-credentials-access-token
+                        (credential-source-load
+                         (credential-manager-primary-source (provider-credential-manager provider)))))
+                "replacing the API key updates the private credential store"))))
+      (provider--registry-restore snapshot)))
   nil)

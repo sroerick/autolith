@@ -146,6 +146,7 @@
                              (:file "provider/wire-protocol")
                              (:file "provider/grok/client")
                              (:file "provider/openai-compatible")
+                             (:file "provider/openai-api")
                              (:file "provider/gemini-code-assist")
                              (:file "provider/fireworks/client")
                              (:file "provider/anthropic/client")

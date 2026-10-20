@@ -441,12 +441,12 @@ its native method dispatch, terminal ownership, and the tour presenter real."
                      (conversation (conversation-create selected :identifier "openai-onboarding-request"))
                      (request (provider-request-object provider conversation #())))
                 (test-assert
-                 (and (string= "https://api.openai.com/v1/chat/completions"
+                 (and (string= "https://api.openai.com/v1/responses"
                                (config :provider-endpoint (provider-configuration provider)))
                       (string= "openai-api" (provider-account-label provider))
                       (string= "openai-onboarding-fixture" (json-get request "model"))
-                      (vectorp (json-get request "messages")))
-                 "a discovered API model resolves to the official Chat Completions request"))
+                      (vectorp (json-get request "input")))
+                 "a discovered API model resolves to the public Responses endpoint"))
               (test-assert (null (queued-recording-terminal-events terminal))
                            "API-key entry does not open the subscription method picker")
               (test-assert (null (onboarding-state-pending configuration pages))

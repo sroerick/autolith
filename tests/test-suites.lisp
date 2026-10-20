@@ -595,6 +595,7 @@
   test-openai-compatible-provider-bare-auth-selection
   test-openai-compatible-tool-name-recovery
   test-openai-compatible-provider-tool-schemas
+  test-openai-api-responses
   test-openai-compatible-provider-discovery-is-on-demand
   test-openai-compatible-provider-model-cache-boundary
   test-openai-compatible-provider-authentication-bootstrap

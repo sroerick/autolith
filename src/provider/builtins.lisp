@@ -179,12 +179,16 @@
  :factory #'provider--codex-registration-factory
  :source ':builtin)
 
-(register-openai-compatible-provider
- :name "openai-api"
+(register-provider
+ "openai-api"
  :description "OpenAI API (pay-per-token)"
- :endpoint "https://api.openai.com/v1/chat/completions"
- :models-endpoint "https://api.openai.com/v1/models"
- :reasoning-parameter "reasoning_effort"
+ :family ':openai-api
+ :protocol ':responses
+ :endpoint "https://api.openai.com/v1/responses"
+ :model-discovery #'openai-api--fetch-models
+ :model-discovery-endpoint "https://api.openai.com/v1/models"
+ :authenticator #'openai-compatible--authenticate
+ :factory #'openai-api--registration-factory
  :source ':builtin)
 
 (register-provider
