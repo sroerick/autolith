@@ -13,6 +13,20 @@ $private = Join-Path $Root 'private\sandbox'
 New-Item -ItemType Directory -Force -Path $source,$private | Out-Null
 foreach ($name in $AutolithSandboxFiles) { [IO.File]::WriteAllText((Join-Path $source $name), "fixture-$name") }
 $identity = Get-AutolithSandboxIdentity $source
+# Preserve the identity format used by Get-FileHash for readable bundle members.
+$referenceRecords = foreach ($name in $AutolithSandboxFiles) {
+  $hash = (Get-FileHash -LiteralPath (Join-Path $source $name) -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+  "$name=$hash`n"
+}
+$sha = [Security.Cryptography.SHA256]::Create()
+try { $referenceIdentity = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(($referenceRecords -join ''))))).Replace('-', '').ToLowerInvariant() }
+finally { $sha.Dispose() }
+Assert ($identity -ceq $referenceIdentity) 'Stream hashing changed the bundle identity.'
+# Every hash reader must be closed before another caller requests exclusive access.
+foreach ($name in $AutolithSandboxFiles) {
+  $stream = [IO.File]::Open((Join-Path $source $name), 'Open', 'Read', 'None')
+  $stream.Dispose()
+}
 $generation = Join-Path $private $identity
 New-Item -ItemType Directory -Path $generation | Out-Null
 foreach ($name in $AutolithSandboxFiles) { Copy-Item -LiteralPath (Join-Path $source $name) -Destination $generation }
@@ -142,7 +156,13 @@ public static class AutolithSandboxSharingFixture {
   # A sharing violation while hashing an already-published winner is retried too.
   $handle = [IO.File]::Open((Join-Path $sharingGeneration $AutolithSandboxFiles[0]), 'Open', 'Read', 'None')
   try {
-    Assert-Failure { Get-AutolithSandboxIdentity $sharingGeneration }
+    $blocked = $false
+    try { Get-AutolithSandboxIdentity $sharingGeneration | Out-Null }
+    catch {
+      Assert ((Get-AutolithSandboxErrorCode $_.Exception) -eq 32) 'Native hash failure lost its sharing code.'
+      $blocked = $true
+    }
+    Assert $blocked 'An exclusive file handle did not block hashing.'
     [AutolithSandboxSharingFixture]::ReleaseAfter($handle, 250)
     Publish-AutolithSandboxGeneration $sharingStage $sharingGeneration $identity
   } finally { $handle.Dispose() }

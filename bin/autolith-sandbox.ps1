@@ -25,7 +25,14 @@ function Get-AutolithSandboxIdentity([string]$Directory) {
     if ($item.PSIsContainer -or $item.Length -eq 0 -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
       throw "Invalid sandbox bundle member: $path"
     }
-    "$name=$((Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant())`n"
+    # Direct .NET calls preserve native sharing errors on PowerShell 5.1 and 7.
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+      $stream = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+      try { $hash = ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }
+      finally { $stream.Dispose() }
+    } finally { $sha.Dispose() }
+    "$name=$hash`n"
   }
   $sha = [Security.Cryptography.SHA256]::Create()
   try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(($records -join ''))))).Replace('-', '').ToLowerInvariant() }
