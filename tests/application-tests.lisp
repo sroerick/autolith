@@ -4565,8 +4565,8 @@
                  (list
                   (list
                    'application-set-model
-                   (lambda (candidate model)
-                     (declare (ignore candidate model))
+                   (lambda (candidate model &key provider)
+                     (declare (ignore candidate model provider))
                      nil))
                   (list
                    'application--pick-reasoning-effort
