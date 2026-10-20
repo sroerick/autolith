@@ -156,7 +156,7 @@
      "output" (or (conversation--usage-field usage "output_tokens") ':null)
      "cached" (or (conversation--usage-field (or usage cached-usage) "cached_input_tokens") ':null)
      "contextUsed" (or input ':null)
-     "contextLimit" (or (provider-model-context-window-for (config :model configuration)) ':null)
+     "contextLimit" (config :context-window configuration)
      "contextMeasured" (if input t (argo:json-false)))))
 
 (-> acp-extension-live-job-count (acp-session) integer)
