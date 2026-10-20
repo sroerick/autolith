@@ -1453,6 +1453,20 @@ available. =(models)= triggers discovery. You can also pass non-secret
 =:headers= and static =:models= for descriptions, windows, efforts, or
 providers that have no model-list endpoint.
 
+Select a model with =(model "glm-5.3-flash" :provider "neuralwatt")= or
+=(model "neuralwatt/glm-5.3-flash")=. Use =(models :provider "neuralwatt")=
+to refresh and list one provider, or =(model nil :provider "neuralwatt")=
+to filter the interactive picker. The picker and listings show the provider
+with each model, including identical IDs offered by different providers.
+
+Bare model IDs use the existing registration precedence. Only a registered
+provider name introduces a provider prefix; catalog IDs containing slashes,
+such as =hf:zai-org/GLM-5.3-Flash=, are matched intact. If a catalog ID also
+looks like another provider's full ID, specify =:provider= to select its exact
+catalog ID. An explicit provider and a conflicting qualified prefix signal a
+selection error. The selected provider is saved with the model in preferences
+and conversation history, so reopening a session uses the same registration.
+
 The built-in model picker uses =https://models.dev/api.json= for ChatGPT,
 Gemini, Grok, Anthropic, Fireworks, OpenCode, OpenRouter, and Mistral metadata.
 An explicit =(models)= refresh downloads the public catalog once without

@@ -101,7 +101,6 @@ transcript renderer, including in fullscreen."
                            (agenda-item-identifier item)
                            (agenda-item-memory-identifiers item))))))))))
 
-
 (-> application--papercut-list-row (papercut) list)
 (defun application--papercut-list-row (papercut)
   "Return one styled compact row for PAPERCUT."
@@ -573,7 +572,6 @@ notice preference is on, so enabling it mid-session takes effect immediately."
     (values (format nil "~4,'0D-~2,'0D-~2,'0D" year month date)
             (format nil "~2,'0D:~2,'0D" hour minute))))
 
-
 (-> application--calendar-description (integer) string)
 (defun application--calendar-description (universal-time)
   "Return UNIVERSAL-TIME as a compact local calendar description."
@@ -608,7 +606,6 @@ notice preference is on, so enabling it mid-session takes effect immediately."
          (error ()
            nil))))
 
-
 (-> application--conversation-description
     (integer &key (:directory (option string)) (:current-p boolean)
              (:preview (option string)))
@@ -626,7 +623,6 @@ notice preference is on, so enabling it mid-session takes effect immediately."
        (list (terminal-span ':plain (format nil "~A " date))
              (terminal-span ':timestamp-time time)
              (terminal-span ':plain suffix))))))
-
 
 (-> application--conversation-metadata-tally
     (conversation-picker-metadata)
@@ -650,7 +646,6 @@ notice preference is on, so enabling it mid-session takes effect immediately."
     (if metadata
         (application--conversation-metadata-tally metadata)
         "0 turns")))
-
 
 (-> application--conversation-items (application) list)
 (defun application--conversation-items (application)
@@ -726,7 +721,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
          (current (config :reasoning-effort configuration)))
     (loop for effort in
           (configuration--reasoning-efforts-for
-           (config :model configuration))
+           (config :model configuration) (config :model-provider configuration))
           collect (list :name effort
                         :argument nil
                         :description (if (string= effort current)
@@ -735,13 +730,13 @@ notice preference is on, so enabling it mid-session takes effect immediately."
 
 (-> application--persist-model-selection (application configuration) null)
 (defun application--persist-model-selection (application configuration)
-  "Record CONFIGURATION's model and effort on the active conversation.
-
-The durable copy was written when the setting changed."
-  (conversation-set-model-selection
-   (application-conversation application)
-   (config :model configuration)
-   (config :reasoning-effort configuration))
+  "Record the selected provider, model and effort on the active conversation."
+  (let ((provider (config :model-provider configuration)))
+    (conversation-set-model-selection
+     (application-conversation application)
+     (config :model configuration)
+     (config :reasoning-effort configuration)
+     :provider (and (non-empty-string-p provider) provider)))
   nil)
 
 (-> application-set-reasoning-effort (application string) null)
@@ -752,6 +747,7 @@ The model the effort belongs to is saved beside it, so a later start pairs
 the effort with the same model even when the model was never chosen."
   (let ((configuration (application-configuration application)))
     (setf (config :reasoning-effort configuration) effort)
+    (configuration-persist configuration :model-provider)
     (configuration-persist configuration :model)
     (application--persist-model-selection application configuration)
     (application--install-configuration application configuration)))
@@ -1083,86 +1079,54 @@ the effort with the same model even when the model was never chosen."
   (or (and current-provider (string= provider-name current-provider))
       (and (member provider-name credentialed :test #'string=) t)))
 
-(-> application--model-items (application) list)
-(defun application--model-items (application)
-  "Return picker items for every credentialed provider's models."
-  (let* ((current (config :model
-                   (application-configuration application)))
-         (current-provider (provider-model-provider-name current))
-         (credentialed
-           (application--credentialed-provider-names application)))
-    (loop for model in (provider-model-identifiers)
-          for provider-name = (provider-model-provider-name model)
-          for metadata = (provider-model-for model)
-          when (application--offered-provider-p
-                provider-name current-provider credentialed)
-            collect (list :name model
-                        :argument nil
-                        :group provider-name
-                        :description
-                        (format nil
-                                "~A~@[; ~A~]"
-                                (if (string= model current)
-                                    "current"
-                                    "")
-                                (and metadata
-                                     (non-empty-string-p
-                                      (provider-model-description metadata))))))))
+(-> application--model-items (application &key (:provider (option string))) list)
+(defun application--model-items (application &key provider)
+  "Return distinct model/provider picker items, optionally filtered by PROVIDER."
+  (when provider (provider-model-selections :provider provider))
+  (let* ((configuration (application-configuration application))
+         (current (configuration-model-registration configuration))
+         (current-provider (and current (provider-registration-name current)))
+         (credentialed (application--credentialed-provider-names application)))
+    (loop for registration in (provider-registrations)
+          for name = (provider-registration-name registration)
+          when (if provider
+                   (string= name (provider--canonical-name provider))
+                   (application--offered-provider-p name current-provider credentialed))
+            append
+            (loop for metadata in (provider-registration-models registration)
+                  for model = (provider-model-name metadata)
+                  collect (list :name (provider-model-selection-id model registration)
+                                :model model :provider name
+                                :current-p (and (eq current registration)
+                                                (string= model (config :model configuration)))
+                                :argument nil :group name
+                                :description
+                                (format nil "~{~A~^; ~}"
+                                        (remove nil
+                                                (list (when (and (eq current registration)
+                                                                 (string= model (config :model configuration)))
+                                                        "current")
+                                                      (provider-model-description metadata)))))))))
 
-(-> application--models-description (application) string)
-(defun application--models-description (application)
-  "Return a readable listing of every credentialed provider's models."
-  (let* ((current (config :model
-                   (application-configuration application)))
-         (current-provider (provider-model-provider-name current))
-         (credentialed
-           (application--credentialed-provider-names application)))
-    (if (null (provider-model-identifiers))
-        "No registered provider models exist."
-        (format nil
-                "Available models:~%~{~A~%~}"
-                (loop for model in (provider-model-identifiers)
-                      for provider-name = (provider-model-provider-name model)
-                      for metadata = (provider-model-for model)
-                        when (application--offered-provider-p
-                              provider-name current-provider credentialed)
-                          collect
-                      (format nil "- ~A / ~A~:[~; (current)~]~@[ - ~A~]"
-                              provider-name
-                              model
-                              (string= model current)
-                              (and metadata
-                                   (non-empty-string-p
-                                    (provider-model-description metadata)))))))))
+(-> application--models-description (application &key (:provider (option string))) string)
+(defun application--models-description (application &key provider)
+  "Return a provider-distinct model listing, optionally restricted to PROVIDER."
+  (let ((items (application--model-items application :provider provider)))
+    (if items
+        (format nil "Available models:~%~{- ~A~%~}" (mapcar (lambda (item) (getf item :name)) items))
+        "No registered provider models are available.")))
 
-(-> application-models-entry (application list) list)
-(defun application-models-entry (application failures)
-  "Return offered models and discovery FAILURES with semantic terminal roles."
-  (let* ((current (config :model (application-configuration application)))
-         (current-provider (provider-model-provider-name current))
-         (credentialed (application--credentialed-provider-names application))
-         (models (remove-if-not
-                  (lambda (model)
-                    (application--offered-provider-p
-                     (provider-model-provider-name model) current-provider credentialed))
-                  (provider-model-identifiers))))
+(-> application-models-entry (application list &key (:provider (option string))) list)
+(defun application-models-entry (application failures &key provider)
+  "Return offered provider/model selections and discovery FAILURES."
+  (let ((items (application--model-items application :provider provider)))
     (append
      (list (terminal-span ':brand (format nil "Available models~%")))
-     (if models
-         (loop for model in models
-               for provider = (provider-model-provider-name model)
-               for metadata = (provider-model-for model)
-               append (append
-                       (list (terminal-span ':dim (format nil "  ~A / " provider))
-                             (terminal-span ':code model)
-                             (terminal-span (if (string= model current) ':success ':dim)
-                                            (if (string= model current) " (current)" ""))
-                             (terminal-span ':plain (string #\Newline)))
-                       (when (and metadata
-                                  (non-empty-string-p (provider-model-description metadata)))
-                         (list (terminal-span ':dim
-                                              (format nil "    ~A~%"
-                                                      (provider-model-description metadata)))))))
+     (if items
+         (loop for item in items
+               append (list (terminal-span ':code (format nil "  ~A" (getf item :name)))
+                            (terminal-span (if (getf item :current-p) ':success ':dim)
+                                           (format nil " ~A~%" (getf item :description)))))
          (list (terminal-span ':hint (format nil "No registered provider models are available.~%"))))
      (when failures
        (cons (terminal-span ':notice (format nil "Model discovery warnings~%"))
@@ -1170,20 +1134,33 @@ the effort with the same model even when the model was never chosen."
                    collect (terminal-span ':notice
                                           (format nil "  ~A~%" (autolith-error-message failure)))))))))
 
-(-> application-models-command (application) null)
-(defun application-models-command (application)
-  "Refresh and show the effective registered providers and their model identifiers."
-  (let ((failures (provider-refresh-models (application-configuration application))))
-    (application-present application (application-models-entry application failures)))
+(-> application-models-command (application &key (:provider (option string))) null)
+(defun application-models-command (application &key provider)
+  "Refresh and show registered models, optionally restricted to PROVIDER."
+  (when provider (provider-model-selections :provider provider))
+  (let ((failures (provider-refresh-models (application-configuration application)
+                                         :provider-name (and provider (provider--canonical-name provider)))))
+    (application-present application (application-models-entry application failures :provider provider)))
   nil)
 
-(-> application-set-model (application string) null)
-(defun application-set-model (application model)
-  "Switch APPLICATION to MODEL and save it as the global default."
-  (let ((configuration (application-configuration application)))
-    (setf (config :model configuration) model)
-    (application--persist-model-selection application configuration)
-    (application--install-configuration application configuration)))
+(-> application-set-model (application string &key (:provider (option string))) null)
+(defun application-set-model (application model &key provider)
+  "Select MODEL from PROVIDER, preserving provider identity in durable state."
+  (multiple-value-bind (identifier registration)
+      (provider-resolve-model model :provider provider)
+    (unless registration
+      (provider--selection-error
+       model provider :reason ':unsupported-model
+       :message (format nil "Unknown model ~S. Use (models) to list available models." model)))
+    (let ((configuration
+            (configuration-copy
+             (application-configuration application)
+             :model identifier
+             :model-provider (provider-registration-name registration))))
+      (application--install-configuration application configuration)
+      (configuration-persist configuration :model-provider)
+      (configuration-persist configuration :model)
+      (application--persist-model-selection application configuration))))
 
 ;;;; -- Private Replay Skips --
 
@@ -1672,7 +1649,6 @@ NIL and :STATUS show the goal. :UPDATE takes one string objective; :PAUSE,
       (application-present application (princ-to-string condition))))
   nil)
 
-
 (-> application--generation-items (application) list)
 (defun application--generation-items (application)
   "Return picker items for retained generations, newest first."
@@ -1728,7 +1704,6 @@ are forwarded to TERMINAL-UI-SELECT."
        :on-event on-event
        :resize-callback #'application-pending-terminal-size))))
 
-
 (-> application--conversation-delete-confirm-items (list) list)
 (defun application--conversation-delete-confirm-items (item)
   "Return the delete/keep confirmation items for ITEM."
@@ -1739,7 +1714,6 @@ are forwarded to TERMINAL-UI-SELECT."
    (list :name "keep"
          :argument nil
          :description "return to the conversation list")))
-
 
 (-> application--pick-conversation (application) (option string))
 (defun application--pick-conversation (application)
@@ -1863,21 +1837,21 @@ are forwarded to TERMINAL-UI-SELECT."
        :usage "Usage: /resume ID"
        :empty-notice "No saved conversations exist."))))
 
-
-(-> application--pick-model (application) (option string))
-(defun application--pick-model (application)
-  "Prompt for one registered model and return the selected identifier."
-  (let ((configuration (application-configuration application)))
-    (application--pick-identifier
-     application
-     :title "pick the model"
-     :items (application--model-items application)
-     :visible-count 15
-     :initial-name (config :model configuration)
-     :search-p t
-     :usage "Usage: /model NAME"
-     :empty-notice "No registered provider models exist.")))
-
+(-> application--pick-model (application &key (:provider (option string))) (values (option string) (option string)))
+(defun application--pick-model (application &key provider)
+  "Return the picked exact model and provider as two values, or two NILs."
+  (let* ((configuration (application-configuration application))
+         (registration (configuration-model-registration configuration))
+         (items (application--model-items application :provider provider))
+         (selection
+           (application--pick-identifier
+            application :title "pick the model" :items items :visible-count 15
+            :initial-name (and registration
+                               (provider-model-selection-id (config :model configuration) registration))
+            :search-p t :usage "Usage: /model PROVIDER/MODEL"
+            :empty-notice "No registered provider models exist."))
+         (item (find selection items :key (lambda (item) (getf item :name)) :test #'equal)))
+    (values (getf item :model) (getf item :provider))))
 
 (-> application--pick-reasoning-effort (application) (option string))
 (defun application--pick-reasoning-effort (application)
@@ -1985,11 +1959,9 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (-> application--authentication-provider-items (application) list)
 (defun application--authentication-provider-items (application)
-  "Return picker items for every effective registered provider."
-  (let ((current-provider
-          (provider-model-provider-name
-           (config :model
-            (application-configuration application)))))
+  "Return all registered providers, marking the selected provider."
+  (let ((current-provider (configuration-model-provider-name
+                           (application-configuration application))))
     (loop for registration in (provider-registrations)
           for name = (provider-registration-name registration)
           collect (list :name name
@@ -2014,16 +1986,11 @@ are forwarded to TERMINAL-UI-SELECT."
 (defun application--pick-authentication-provider (application)
   "Prompt for one registered provider to authenticate."
   (application--pick-identifier
-   application
-   :title "pick the provider to authenticate"
+   application :title "pick the provider to authenticate"
    :items (application--authentication-provider-items application)
    :visible-count (application--authentication-provider-visible-count application)
-   :initial-name
-   (provider-model-provider-name
-    (config :model
-     (application-configuration application)))
-   :search-p t
-   :usage "Usage: /auth PROVIDER"
+   :initial-name (configuration-model-provider-name (application-configuration application))
+   :search-p t :usage "Usage: /auth PROVIDER"
    :empty-notice "No registered providers exist."))
 
 (-> application--authentication-provider (application string) model-provider)
@@ -2094,7 +2061,6 @@ are forwarded to TERMINAL-UI-SELECT."
 (-> application-authentication-input-stream--controller-p
     (application-authentication-input-stream)
     boolean)
-
 (defun application-authentication-input-stream--controller-p (stream)
   "Return true while STREAM's localgroup terminal has a controller."
   (let ((terminal (application-authentication-input-stream-terminal stream)))
@@ -2297,11 +2263,14 @@ are forwarded to TERMINAL-UI-SELECT."
     (let ((model (provider-authenticated-model
                   (application-configuration application) provider)))
       (when model
-        (application-set-model application model)
+        (application-set-model application model
+                               :provider (provider-registration-name
+                                          (model-provider-registration provider)))
         (application-present
          application
          (format nil "Active provider: ~A; model: ~A."
-                 (provider-model-provider-name model) model)))))
+                 (configuration-model-provider-name
+                  (application-configuration application)) model)))))
   nil)
 
 (-> application-checkpoint (application) null)
@@ -2997,44 +2966,43 @@ The current value and its source sit in aligned columns of their own."
 
 (define-application-command application--builtin-model-command
     (:name "/model"
-     :argument "[MODEL]"
+     :argument "[MODEL] [:provider PROVIDER]"
      :description "pick a registered provider model and reasoning effort"
-     :tip "selects the provider/model used for replies and then its reasoning effort; the choice is saved for future sessions."
+     :tip "Select a provider/model ID, or use (model \"ID\" :provider \"NAME\"). The choice is saved for future sessions."
      :busy-behavior :apply
      :terminal-behavior :exclusive
      :callable t)
-    (application &optional (model nil model-supplied-p))
-  (let ((model
-          (if model-supplied-p
-              model
-              (and *application-command-interactive-p*
-                   (application--pick-model application)))))
-    (when model
-      (application-set-model application model)
-      (let ((effort
-              (and *application-command-interactive-p*
-                   (application--pick-reasoning-effort application))))
-        (when effort
-          (application-set-reasoning-effort application effort))
+    (application &optional (model nil model-supplied-p) &key provider)
+  (multiple-value-bind (selected selected-provider)
+      (cond
+        (model
+         (values model provider))
+        ((and model-supplied-p (null provider))
+         (values nil nil))
+        (*application-command-interactive-p*
+         (application--pick-model application :provider provider)))
+    (when selected
+      (application-set-model application selected :provider selected-provider)
+      (let ((effort (and *application-command-interactive-p*
+                         (application--pick-reasoning-effort application))))
+        (when effort (application-set-reasoning-effort application effort))
         (application-present
          application
          (format nil "The model is now ~A with reasoning effort ~A."
-                 (config :model
-                  (application-configuration application))
-                 (config :reasoning-effort
-                  (application-configuration application)))))))
+                 (configuration-model-selection-id (application-configuration application))
+                 (config :reasoning-effort (application-configuration application)))))))
   ':continue)
 
 (define-application-command application--builtin-models-command
     (:name "/models"
-     :argument nil
+     :argument "[:provider PROVIDER]"
      :description "list registered providers and models"
-     :tip "shows every effective provider registration and its models."
+     :tip "Use (models :provider \"NAME\") to list one provider's models."
      :busy-behavior :inspect
      :terminal-behavior :shared
      :callable t)
-    (application)
-  (application-models-command application)
+    (application &key provider)
+  (application-models-command application :provider provider)
   ':continue)
 
 (define-application-command application--builtin-effort-command

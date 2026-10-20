@@ -294,14 +294,11 @@
     ("accounts/fireworks/models/kimi-k3" . 1048576))
   "Provider context window sizes in tokens for known models.")
 
-(-> model-family (string) keyword)
-(defun model-family (model)
-  "Return the provider family serving MODEL.
-
-Registered providers take precedence over built-in model fallbacks so
-configuration can be created before executable user initialization loads."
+(-> model-family (string &optional (option string)) keyword)
+(defun model-family (model &optional provider)
+  "Return MODEL's provider family, respecting an explicit PROVIDER."
   (or (and (fboundp 'provider-model-family)
-           (provider-model-family model))
+           (provider-model-family model :provider (and (non-empty-string-p provider) provider)))
       (cond
         ((uiop:string-prefix-p "grok" model)
          ':grok)
@@ -310,31 +307,37 @@ configuration can be created before executable user initialization loads."
         (t
          ':codex))))
 
-(-> configuration--reasoning-efforts-for (string) list)
-(defun configuration--reasoning-efforts-for (model)
-  "Return the reasoning efforts supported by MODEL, or the global defaults."
+(-> configuration--reasoning-efforts-for (string &optional (option string)) list)
+(defun configuration--reasoning-efforts-for (model &optional provider)
+  "Return reasoning efforts for MODEL in PROVIDER, or the global defaults."
   (or (and (fboundp 'provider-model-reasoning-efforts-for)
-           (provider-model-reasoning-efforts-for model))
+           (provider-model-reasoning-efforts-for
+            model :provider (and (non-empty-string-p provider) provider)))
       (copy-list *supported-reasoning-efforts*)))
 
 (-> configuration--model-supported-p (string) boolean)
 (defun configuration--model-supported-p (model)
   "Return true when an effective provider registration serves MODEL."
-  (not (null (member model *supported-models* :test #'string=))))
+  (if (fboundp 'provider-registration-for-model)
+      (not (null (provider-registration-for-model model)))
+      (not (null (member model *supported-models* :test #'string=)))))
 
 (-> configuration--model-problem (string t) (option string))
 (defun configuration--model-problem (model configuration)
-  "Return why no effective provider registration serves MODEL, or NIL when one does."
-  (declare (ignore configuration))
-  (unless (configuration--model-supported-p model)
-    (format nil "Unsupported model ~S. The choices are ~{~A~^, ~}."
-            model *supported-models*)))
+  "Return why MODEL is unavailable in CONFIGURATION's selected provider."
+  (let ((provider (config :model-provider configuration)))
+    (unless (if (and (non-empty-string-p provider) (fboundp 'provider-resolve-model))
+                (nth-value 1 (provider-resolve-model model :provider provider))
+                (configuration--model-supported-p model))
+      (format nil "Unsupported model ~S. The choices are ~{~A~^, ~}."
+              model *supported-models*))))
 
 (-> configuration--reasoning-effort-problem (string t) (option string))
 (defun configuration--reasoning-effort-problem (effort configuration)
-  "Return why CONFIGURATION's model does not support EFFORT, or NIL when it does."
+  "Return why CONFIGURATION's model/provider does not support EFFORT."
   (let* ((model (config :model configuration))
-         (efforts (configuration--reasoning-efforts-for model)))
+         (efforts (configuration--reasoning-efforts-for
+                   model (config :model-provider configuration))))
     (unless (member effort efforts :test #'string=)
       (format nil "Unsupported reasoning effort ~S for model ~A. The choices are ~{~A~^, ~}."
               effort model efforts))))
@@ -366,7 +369,6 @@ configuration can be created before executable user initialization loads."
 
 (defparameter *default-compaction-threshold-percent* 80
   "The context window percentage that triggers compaction.")
-
 
 (-> environment-directory (string pathname) pathname)
 (defun environment-directory (variable fallback)
@@ -431,9 +433,8 @@ configuration can be created before executable user initialization loads."
                           (merge-pathnames ".grok/"
                                            (user-homedir-pathname)))))
 
-
-(-> configuration--provider-endpoint-for (string) string)
-(defun configuration--provider-endpoint-for (model)
+(-> configuration--provider-endpoint-for (string &optional (option string)) string)
+(defun configuration--provider-endpoint-for (model &optional provider)
   "Return MODEL's environment override, registered endpoint, or family default.
 
 AUTOLITH_PROVIDER_ENDPOINT overrides the Codex family endpoint,
@@ -443,7 +444,7 @@ AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint,
 AUTOLITH_OPENCODE_PROVIDER_ENDPOINT overrides the OpenCode family endpoint,
 AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT overrides the OpenRouter family endpoint,
 and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
-  (let* ((family (model-family model))
+  (let* ((family (model-family model provider))
          (override
            (case family
              (:codex
@@ -468,7 +469,7 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
               (uiop:getenv "AUTOLITH_MISTRAL_PROVIDER_ENDPOINT"))))
          (registered
            (and (fboundp 'provider-model-endpoint)
-                (provider-model-endpoint model))))
+                (provider-model-endpoint model :provider (and (non-empty-string-p provider) provider)))))
     (or (and (non-empty-string-p override) override)
         registered
         (case family
@@ -496,8 +497,8 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
                               family)
                           model)))))))
 
-(-> configuration--context-window-for (string) integer)
-(defun configuration--context-window-for (model)
+(-> configuration--context-window-for (string &optional (option string)) integer)
+(defun configuration--context-window-for (model &optional provider)
   "Return MODEL's context window from the environment, registry, or fallback.
 
 AUTOLITH_CONTEXT_WINDOW wins when set. Otherwise the registered window is used:
@@ -505,7 +506,7 @@ a declared model :context-window, else the catalog window, else the default."
   (environment-positive-integer
    "AUTOLITH_CONTEXT_WINDOW"
    (or (and (fboundp 'provider-model-context-window-for)
-            (provider-model-context-window-for model))
+            (provider-model-context-window-for model :provider (and (non-empty-string-p provider) provider)))
        (rest (assoc model *model-context-windows* :test #'string=))
        *default-context-window*)))
 

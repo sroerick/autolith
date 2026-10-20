@@ -238,7 +238,7 @@ REGISTRATION selects an explicit provider layer for callers such as /auth. When
 it is NIL, the effective registration for CONFIGURATION's model is used."
   (let* ((model (config :model configuration))
          (effective-registration
-           (or registration (provider-registration-for-model model)))
+           (or registration (configuration-model-registration configuration)))
          (provider
            (if effective-registration
                (progn
@@ -317,7 +317,9 @@ credentials and model metadata independently of their cached wire routes."
                      :message (format nil "Provider ~A has no available models."
                                       (provider-registration-name registration))))
             (provider-create
-             (configuration-copy configuration :model (provider-model-name model))
+             (configuration-copy configuration
+                                 :model (provider-model-name model)
+                                 :model-provider (provider-registration-name registration))
              :reasoning-summaries-p reasoning-summaries-p
              :registration registration))))))
 
@@ -363,10 +365,11 @@ credentials and model metadata independently of their cached wire routes."
     ((provider subscription-provider) (configuration configuration))
   "Create a fresh provider when CONFIGURATION selects another registration."
   (let ((selected-registration
-          (provider-registration-for-model (config :model configuration)))
+          (configuration-model-registration configuration))
         (current-registration (model-provider-registration provider)))
     (if (and (eq (provider-family provider)
-                 (model-family (config :model configuration)))
+                 (model-family (config :model configuration)
+                               (config :model-provider configuration)))
              (or (null current-registration)
                  (eq current-registration selected-registration)))
         (call-next-method)

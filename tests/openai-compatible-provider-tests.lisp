@@ -962,7 +962,7 @@
            (let ((application
                   (make-instance 'application :configuration provider-configuration)))
              (test-assert
-              (search "test-openai / test/chat-model"
+              (search "test-openai/test/chat-model"
                       (application--models-description application))
               "/models describes registered provider models")
              (let ((named-provider
@@ -972,15 +972,17 @@
                      (string= (openai-compatible-provider-display-name named-provider)
                               "test-openai"))
                 "/auth PROVIDER selects the named registration")))
-           (unregister-provider "test-openai" :source ':runtime)
-           (test-assert
-            (handler-case
-             (progn
-              (application--validate-provider-registration provider
-                                                           provider-configuration)
-              nil)
-             (configuration-error nil t))
-            "reload rejects a lost active custom provider instead of falling back")
+           (let ((registered-state (provider--registry-snapshot)))
+             (unregister-provider "test-openai" :source ':runtime)
+             (test-assert
+              (handler-case
+                  (progn
+                    (application--validate-provider-registration provider provider-configuration)
+                    nil)
+                (configuration-error () t))
+              "reload rejects a lost active custom provider instead of falling back")
+             ;; Restore the rejected reload before exercising the provider's wire protocol.
+             (provider--registry-restore registered-state))
            (let* ((output (make-string-output-stream))
                   (message
                    (openai-compatible-provider-tests--call-with-input

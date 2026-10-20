@@ -222,6 +222,12 @@
     :accessor conversation-model
     :type (option non-empty-string)
     :documentation "The provider model most recently selected for this conversation.")
+   (model-provider
+    :initarg :model-provider
+    :initform nil
+    :accessor conversation-model-provider
+    :type (option non-empty-string)
+    :documentation "The explicit provider selected with this conversation's model.")
    (reasoning-effort
     :initarg :reasoning-effort
     :initform nil
@@ -749,6 +755,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
         :title (conversation-title conversation)
         :title-source (conversation-title-source conversation)
         :model (conversation-model conversation)
+        :model-provider (conversation-model-provider conversation)
         :reasoning-effort (conversation-reasoning-effort conversation)
         :chunk-start-sequence chunk-start-sequence
         :working-seconds (conversation-working-seconds conversation)
@@ -1141,6 +1148,9 @@ a crash may leave one that a later lease acquisition can reuse safely."
                    :created-at created-at
                    :origin-directory origin-directory
                    :model (config :model configuration)
+                   :model-provider
+                   (let ((name (config :model-provider configuration)))
+                     (and (non-empty-string-p name) name))
                    :reasoning-effort
                    (config :reasoning-effort configuration)
                    :next-sequence 1
@@ -1424,7 +1434,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
     (let ((model (conversation-model conversation)))
       (when (non-empty-string-p model)
         (setf (gethash item (conversation-input-item-families conversation))
-              (model-family model)))
+              (model-family model (conversation-model-provider conversation))))
       (clinker-transcript:projection-append (conversation-projection conversation) item))))
 
 (-> conversation--append-ephemeral-input-item
@@ -1495,6 +1505,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
            :created-at (conversation-created-at conversation)
            :origin-directory (conversation-origin-directory conversation)
            :model (conversation-model conversation)
+           :model-provider (conversation-model-provider conversation)
            :reasoning-effort (conversation-reasoning-effort conversation)
            :next-sequence (conversation-next-sequence conversation)
            :input-items (copy-list items))))
@@ -2129,24 +2140,27 @@ transcript show automatic INPUT as a short notice."
   (and (non-empty-string-p model)
        (non-empty-string-p reasoning-effort)))
 
-(-> conversation-set-model-selection (conversation string string) null)
-(defun conversation-set-model-selection (conversation model reasoning-effort)
-  "Remember MODEL and REASONING-EFFORT without persisting an empty conversation."
-  (unless (conversation--model-selection-p model reasoning-effort)
+(-> conversation-set-model-selection
+    (conversation string string &key (:provider (option string))) null)
+(defun conversation-set-model-selection (conversation model reasoning-effort &key provider)
+  "Remember MODEL, PROVIDER and effort without persisting an empty conversation."
+  (unless (and (conversation--model-selection-p model reasoning-effort)
+               (or (null provider) (non-empty-string-p provider)))
     (error 'conversation-invariant-error
            :message "A conversation model selection is invalid."
            :pathname (conversation-pathname conversation)
            :sequence (conversation-next-sequence conversation)))
   (unless (and (string= model (or (conversation-model conversation) ""))
+               (equal provider (conversation-model-provider conversation))
                (string= reasoning-effort
                         (or (conversation-reasoning-effort conversation) "")))
     (when (conversation-persisted-p conversation)
       (conversation-append-record
        conversation
-       (list :configuration
-             :model model
+       (list :configuration :model model :model-provider provider
              :reasoning-effort reasoning-effort)))
     (setf (conversation-model conversation) model
+          (conversation-model-provider conversation) provider
           (conversation-reasoning-effort conversation) reasoning-effort))
   nil)
 
@@ -2674,12 +2688,15 @@ later picker searches read it without scanning the log."
 (defmethod conversation--project-record
     ((kind (eql :configuration)) conversation properties)
   (let ((model (getf properties :model))
+        (provider (getf properties :model-provider))
         (reasoning-effort (getf properties :reasoning-effort)))
-    (unless (conversation--persisted-model-selection-p model reasoning-effort)
+    (unless (and (conversation--persisted-model-selection-p model reasoning-effort)
+                 (or (null provider) (non-empty-string-p provider)))
       (conversation--record-error
        conversation properties
        "A persisted conversation model selection is invalid."))
     (setf (conversation-model conversation) model
+          (conversation-model-provider conversation) provider
           (conversation-reasoning-effort conversation) reasoning-effort)))
 
 (defmethod conversation--project-record
@@ -2848,6 +2865,7 @@ later picker searches read it without scanning the log."
                   (conversation-title-normalize title)))
            (title-source (and (= version 2) (getf properties :title-source)))
            (model (getf properties :model))
+           (model-provider (getf properties :model-provider))
            (reasoning-effort (getf properties :reasoning-effort))
            (prompt-cache-key (getf properties :prompt-cache-key))
            (chunk-start-sequence
@@ -2899,8 +2917,9 @@ later picker searches read it without scanning the log."
                    (string= identifier identity-identifier))
         (invalid
          "The conversation header identifier disagrees with its storage identity."))
-      (unless (or (and (null model) (null reasoning-effort))
-                  (conversation--persisted-model-selection-p model reasoning-effort))
+      (unless (and (or (null model-provider) (non-empty-string-p model-provider))
+                   (or (and (null model) (null reasoning-effort) (null model-provider))
+                       (conversation--persisted-model-selection-p model reasoning-effort)))
         (invalid "The conversation header has an invalid model selection."))
       (when (and prompt-cache-key
                  (not (non-empty-string-p prompt-cache-key)))
@@ -2950,6 +2969,7 @@ later picker searches read it without scanning the log."
                                          (copy-seq normalized-title))
                              :title-source title-source
                              :model (and (non-empty-string-p model) model)
+                             :model-provider model-provider
                              :reasoning-effort
                              (and (non-empty-string-p reasoning-effort)
                                   reasoning-effort)

@@ -208,6 +208,15 @@ exist yet, and is only put in directory form."
              (declare (ignore configuration))
              (configuration--default-grok-bootstrap-path)))
 
+(define-setting :model-provider (string-setting)
+  :label "Model provider"
+  :group :model
+  :documentation "The selected registered provider; empty uses legacy model precedence."
+  :scope :durable
+  :visible-p nil
+  :environment "AUTOLITH_MODEL_PROVIDER"
+  :default "")
+
 (define-setting :model (choice-setting)
   :label "Model"
   :group :model
@@ -232,9 +241,11 @@ exist yet, and is only put in directory form."
   :scope :durable
   :environment "AUTOLITH_REASONING_EFFORT"
   :deferrable-p t
+  ;; The provider is installed before the model when selecting a pair.
   :depends-on '(:model)
   :options (lambda (configuration)
-             (configuration--reasoning-efforts-for (config :model configuration)))
+             (configuration--reasoning-efforts-for
+              (config :model configuration) (config :model-provider configuration)))
   :validator 'configuration--reasoning-effort-problem
   :default (lambda (configuration)
              (declare (ignore configuration))
@@ -273,7 +284,8 @@ exist yet, and is only put in directory form."
   :documentation "The provider context window in tokens for the model."
   :type '(integer 1)
   :function (lambda (configuration)
-              (configuration--context-window-for (config :model configuration))))
+              (configuration--context-window-for
+               (config :model configuration) (config :model-provider configuration))))
 
 (define-setting :compaction-threshold-percent (integer-setting)
   :label "Compaction threshold"
@@ -293,7 +305,8 @@ exist yet, and is only put in directory form."
   :type 'non-empty-string
   :visible-p nil
   :function (lambda (configuration)
-              (configuration--provider-endpoint-for (config :model configuration))))
+              (configuration--provider-endpoint-for
+               (config :model configuration) (config :model-provider configuration))))
 
 (define-setting :reasoning-traces-p (boolean-setting)
   :label "Reasoning traces"
@@ -590,7 +603,7 @@ a model the registry does not serve. Listeners stay with the original; a child
 or frame reacts to its own changes."
   (setinka:configuration-copy
    configuration
-   :overrides (configuration--overrides overrides '(:provider-validation-p))
+    :overrides (configuration--overrides overrides '(:provider-validation-p) configuration)
    :validation-deferred-p (not provider-validation-p)))
 
 (-> configuration-create (&rest t) configuration)
@@ -610,12 +623,36 @@ registered providers. DURABLE-P NIL skips the preferences file."
    :validation-deferred-p defer-provider-validation-p
    :durable-p durable-p))
 
-(-> configuration--overrides (list list) list)
-(defun configuration--overrides (arguments options)
-  "Return the setting overrides in ARGUMENTS without the constructor OPTIONS."
-  (loop for (name value) on arguments by #'cddr
-        unless (member name options)
-          append (list name value)))
+(-> configuration--overrides (list list &optional (option configuration)) list)
+(defun configuration--overrides (arguments options &optional configuration)
+  "Remove constructor OPTIONS and resolve model overrides to canonical pairs.
+
+A copy naming its existing bare model retains its provider. A different model
+selects its own registration, rather than inheriting the previous provider."
+  (let* ((overrides (loop for (name value) on arguments by #'cddr
+                          unless (member name options)
+                            append (list name value)))
+         (model (getf overrides :model))
+         (provider-cell (loop for tail on overrides by #'cddr
+                              when (eq (first tail) ':model-provider) return tail)))
+    (when (and (stringp model) (fboundp 'provider-resolve-model)
+               (or (null provider-cell) (stringp (second provider-cell))))
+      (let ((provider (if provider-cell
+                          (second provider-cell)
+                          (and configuration
+                               (equal model (config :model configuration))
+                               (config :model-provider configuration)))))
+        (multiple-value-bind (identifier registration)
+            (handler-case
+                (provider-resolve-model model :provider (and (non-empty-string-p provider) provider))
+              (model-selection-error () (values model nil)))
+          (cond
+            (registration
+             (setf (getf overrides :model) identifier
+                   (getf overrides :model-provider) (provider-registration-name registration)))
+            ((null provider-cell)
+             (setf (getf overrides :model-provider) ""))))))
+    overrides))
 
 
 ;;;; -- Derived Helpers --
@@ -623,7 +660,7 @@ registered providers. DURABLE-P NIL skips the preferences file."
 (-> configuration-codex-fast-mode-available-p (configuration) boolean)
 (defun configuration-codex-fast-mode-available-p (configuration)
   "Return true when CONFIGURATION's current Codex model supports Fast mode."
-  (and (eq (model-family (config :model configuration)) ':codex)
+  (and (eq (model-family (config :model configuration) (config :model-provider configuration)) ':codex)
        (not (null (member (config :model configuration)
                           *codex-fast-mode-models*
                           :test #'string=)))))
@@ -753,7 +790,6 @@ registered providers. DURABLE-P NIL skips the preferences file."
 (defun configuration-agenda-path (configuration)
   "Return the atomic workspace-agenda pathname."
   (merge-pathnames "agendas.sexp" (config :data-root configuration)))
-
 
 (-> configuration-image-commit-root (configuration) pathname)
 (defun configuration-image-commit-root (configuration)

@@ -325,7 +325,8 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
   (let* ((messages
            (loop for item in (conversation-input-items-for-family
                               conversation
-                              (model-family (config :model configuration)))
+                              (model-family (config :model configuration)
+                                            (config :model-provider configuration)))
                  for message = (and (json-object-p item)
                                     (web--search-message item))
                  when message

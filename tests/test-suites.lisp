@@ -563,6 +563,10 @@
   test-provider-usage-export-failures
   test-provider-usage-export-concurrent)
 
+(define-test-suite provider-model-selection
+  test-provider-qualified-model-resolution
+  test-provider-qualified-model-application)
+
 (define-test-suite provider
   test-provider-deferred-tool-models
   test-provider-deferred-tool-loading

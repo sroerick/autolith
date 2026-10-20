@@ -440,26 +440,24 @@ exchange without scrolling through reasoning and tool activity.")
     (configuration conversation)
     configuration)
 (defun application--configuration-for-conversation (configuration conversation)
-  "Restore CONVERSATION's model selection over CONFIGURATION when it remains valid.
-
-A recorded model that no effective provider registration serves falls back to
-CONFIGURATION's own model, so removing a provider cannot block reopening a
-conversation. Omitting an unsupported recorded effort leaves the selected
-model's effort choice to CONFIGURATION--CLONE."
-  (let* ((recorded-model (conversation-model conversation))
-         (model (if (and recorded-model
-                         (configuration--model-supported-p recorded-model))
-                    recorded-model
-                    (config :model configuration)))
-         (recorded-effort (conversation-reasoning-effort conversation)))
-    (if (and recorded-effort
-             (member recorded-effort
-                     (configuration--reasoning-efforts-for model)
-                     :test #'string=))
-        (configuration-copy configuration
-                              :model model
-                              :reasoning-effort recorded-effort)
-        (configuration-copy configuration :model model))))
+  "Restore the recorded model/provider and a supported effort over CONFIGURATION."
+  (multiple-value-bind (recorded-model registration)
+      (handler-case
+          (if (conversation-model conversation)
+              (provider-resolve-model (conversation-model conversation)
+                                      :provider (conversation-model-provider conversation))
+              (values nil nil))
+        (model-selection-error () (values nil nil)))
+    (let* ((model (if registration recorded-model (config :model configuration)))
+           (provider (if registration (provider-registration-name registration)
+                         (config :model-provider configuration)))
+           (effort (conversation-reasoning-effort conversation))
+           (overrides (list :model model :model-provider provider)))
+      (when (and effort
+                 (member effort (configuration--reasoning-efforts-for model provider)
+                         :test #'string=))
+        (setf overrides (append overrides (list :reasoning-effort effort))))
+      (apply #'configuration-copy configuration overrides))))
 
 (-> application--task-orchestrator
     (application)
@@ -718,7 +716,7 @@ model's effort choice to CONFIGURATION--CLONE."
   "Reject a reload that loses the provider serving the active model."
   (let* ((previous-registration (model-provider-registration provider))
          (selected-registration
-           (provider-registration-for-model (config :model configuration))))
+           (configuration-model-registration configuration)))
     (when (and previous-registration
                (or (null selected-registration)
                    (not (and

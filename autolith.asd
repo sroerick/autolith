@@ -450,6 +450,7 @@
                              (:file "installer-checksum-tests" :if-feature (:not :win32))
                              (:file "release-server-tests" :if-feature (:not :win32))
                              (:file "application-tests")
+                             (:file "provider-model-selection-tests")
                              (:file "onboarding-source-tests")
                              (:file "onboarding-tests")
                              (:file "mission-tests")

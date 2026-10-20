@@ -26,6 +26,25 @@
   ()
   (:documentation "A failure caused by invalid or unavailable configuration."))
 
+(define-condition model-selection-error (configuration-error)
+  ((model
+    :initarg :model
+    :reader model-selection-error-model
+    :type string
+    :documentation "The requested model identifier.")
+   (provider
+    :initarg :provider
+    :initform nil
+    :reader model-selection-error-provider
+    :type (option string)
+    :documentation "The requested provider, when supplied.")
+   (reason
+    :initarg :reason
+    :reader model-selection-error-reason
+    :type keyword
+    :documentation "The selection failure category."))
+  (:documentation "A model or provider selection cannot be resolved unambiguously."))
+
 (define-condition user-init-error (configuration-error)
   ((pathname
     :initarg :pathname

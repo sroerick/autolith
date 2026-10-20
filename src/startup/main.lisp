@@ -1203,11 +1203,10 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
              (unless (zerop status)
                (uiop:quit status))))))))
 
-
 (-> main--known-model-identifiers () list)
 (defun main--known-model-identifiers ()
   "Return all known model identifiers in deterministic display order."
-  (sort (remove-duplicates (copy-list (provider-model-identifiers))
+  (sort (remove-duplicates (provider-model-selections)
                            :test #'string=)
         #'string<))
 

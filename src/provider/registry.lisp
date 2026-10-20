@@ -191,46 +191,158 @@ The default startup path never performs remote model discovery."
   "Return the effective provider registration named NAME."
   (provider-registry-find *provider-registry* name))
 
+(-> provider--selection-error
+    (string (option string) &key (:reason keyword) (:message string)) null)
+(defun provider--selection-error (model provider &key reason message)
+  "Signal a structured selection failure with actionable MESSAGE."
+  (error 'model-selection-error :model model :provider provider
+         :reason reason :message message))
+
+(-> provider--registration-model (provider-registration string) (option provider-model))
+(defun provider--registration-model (registration model)
+  "Find the exact MODEL in REGISTRATION, including slash-containing identifiers."
+  (find model (provider-registration-models registration)
+        :key #'provider-model-name :test #'string=))
+
+(-> provider-resolve-model
+    (string &key (:provider (option string)))
+    (values string (option provider-registration)))
+(defun provider-resolve-model (model &key provider)
+  "Return the registry model ID and its provider registration.
+
+Bare IDs retain registry precedence. A registered provider prefix selects that
+provider; arbitrary slashes in exact catalog IDs are preserved. PROVIDER selects
+an exact model in that provider first, so a slash ID cannot be misrouted."
+  (let* ((requested (and provider (provider--canonical-name provider)))
+         (selected (and requested (provider-registration-find requested)))
+         (slash (position #\/ model))
+         (prefix (and slash (subseq model 0 slash)))
+         (prefixed (and prefix (provider-registration-find prefix)))
+         (suffix (and slash (subseq model (1+ slash))))
+         (exact (provider-registry-for-model *provider-registry* model)))
+    (when (and requested (null selected))
+      (provider--selection-error
+       model provider :reason ':unknown-provider
+       :message (format nil "Unknown provider ~S. Registered providers: ~{~A~^, ~}."
+                        provider (mapcar #'provider-registration-name (provider-registrations)))))
+    (when selected
+      (cond
+        ((provider--registration-model selected model)
+         (return-from provider-resolve-model (values model selected)))
+        ((and prefixed (not (eq selected prefixed)))
+         (provider--selection-error
+          model provider :reason ':provider-mismatch
+          :message (format nil "Model ~S names provider ~A, not ~A. Select its exact model ID with :provider ~S."
+                           model (provider-registration-name prefixed) requested requested)))
+        ((and prefixed (provider--registration-model selected suffix))
+         (return-from provider-resolve-model (values suffix selected)))
+        (t
+         (provider--selection-error
+          model provider :reason ':unsupported-model
+          :message (format nil "Provider ~A does not serve model ~S. Use (models :provider ~S) to list its models."
+                           requested model requested)))))
+    (let ((qualified (and prefixed (provider--registration-model prefixed suffix))))
+      (when (and exact qualified (not (eq exact prefixed)))
+        (provider--selection-error
+         model nil :reason ':ambiguous-model
+         :message (format nil "Model ~S is both a catalog ID and a provider-qualified ID. Select explicitly with :provider."
+                          model)))
+      (cond
+        (qualified
+         (values suffix prefixed))
+        (exact
+         (values model exact))
+        (prefixed
+         (provider--selection-error
+          model prefix :reason ':unsupported-model
+          :message (format nil "Provider ~A does not serve model ~S." prefix suffix)))
+        (t
+         (values model nil))))))
+
+(-> provider-model-selection-id (string provider-registration) string)
+(defun provider-model-selection-id (model registration)
+  "Return a provider-qualified selection, preserving legacy namespaced catalog IDs."
+  (let ((prefix (format nil "~A/" (provider-registration-name registration))))
+    (if (and (uiop:string-prefix-p prefix model)
+             (null (provider--registration-model registration (subseq model (length prefix)))))
+        model
+        (concatenate 'string prefix model))))
+
+(-> configuration-model-selection-id (configuration) string)
+(defun configuration-model-selection-id (configuration)
+  "Return CONFIGURATION's provider-qualified display ID."
+  (let ((registration (configuration-model-registration configuration))
+        (model (config :model configuration)))
+    (if registration (provider-model-selection-id model registration) model)))
+
+(-> configuration-model-registration (configuration) (option provider-registration))
+(defun configuration-model-registration (configuration)
+  "Resolve CONFIGURATION's selected provider without discarding its identity."
+  (let ((provider (config :model-provider configuration)))
+    (nth-value 1 (provider-resolve-model
+                  (config :model configuration)
+                  :provider (and (non-empty-string-p provider) provider)))))
+
+(-> configuration-model-provider-name (configuration) (option string))
+(defun configuration-model-provider-name (configuration)
+  "Return the selected provider name, including legacy bare-model resolution."
+  (let ((registration (configuration-model-registration configuration)))
+    (and registration (provider-registration-name registration))))
+
+(-> provider-model-selections (&key (:provider (option string))) list)
+(defun provider-model-selections (&key provider)
+  "Return every model as a qualified ID, optionally restricted to PROVIDER."
+  (let ((registrations
+          (if provider
+              (list (or (provider-registration-find (provider--canonical-name provider))
+                        (provider--selection-error
+                         "" provider :reason ':unknown-provider
+                         :message (format nil "Unknown provider ~S." provider))))
+              (provider-registrations))))
+    (loop for registration in registrations
+          append (loop for metadata in (provider-registration-models registration)
+                       collect (provider-model-selection-id
+                                (provider-model-name metadata) registration)))))
+
 (-> provider-registration-for-model (string) (option provider-registration))
 (defun provider-registration-for-model (model)
-  "Return the highest-precedence effective provider serving MODEL.
+  "Return the provider for a bare or provider-qualified MODEL selection."
+  (nth-value 1 (provider-resolve-model model)))
 
-When more than one provider claims MODEL, the registration source precedence and
-then newest registration order decide which provider is effective."
-  (provider-registry-for-model *provider-registry* model))
-
-(-> provider-model-for (string) (option provider-model))
-(defun provider-model-for (model)
-  "Return the effective model metadata for MODEL."
-  (provider-registry-model *provider-registry* model))
+(-> provider-model-for (string &key (:provider (option string))) (option provider-model))
+(defun provider-model-for (model &key provider)
+  "Return metadata from the resolved provider for MODEL."
+  (multiple-value-bind (identifier registration)
+      (provider-resolve-model model :provider provider)
+    (and registration (provider--registration-model registration identifier))))
 
 (-> provider-model-identifiers () list)
 (defun provider-model-identifiers ()
   "Return unique model identifiers exposed by effective providers."
   (provider-registry-model-identifiers *provider-registry*))
 
-(-> provider-model-family (string) (option keyword))
-(defun provider-model-family (model)
-  "Return the registered family serving MODEL, or NIL when unknown."
-  (let ((registration (provider-registration-for-model model)))
+(-> provider-model-family (string &key (:provider (option string))) (option keyword))
+(defun provider-model-family (model &key provider)
+  "Return MODEL's selected provider metadata."
+  (let ((registration (nth-value 1 (provider-resolve-model model :provider provider))))
     (and registration (provider-registration-family registration))))
 
-(-> provider-model-endpoint (string) (option string))
-(defun provider-model-endpoint (model)
-  "Return the registered endpoint serving MODEL, when metadata declares one."
-  (let ((registration (provider-registration-for-model model)))
+(-> provider-model-endpoint (string &key (:provider (option string))) (option string))
+(defun provider-model-endpoint (model &key provider)
+  "Return MODEL's selected provider metadata."
+  (let ((registration (nth-value 1 (provider-resolve-model model :provider provider))))
     (and registration (provider-registration-endpoint registration))))
 
-(-> provider-model-context-window-for (string) (option integer))
-(defun provider-model-context-window-for (model)
-  "Return the registered context window for MODEL, when metadata declares one."
-  (let ((metadata (provider-model-for model)))
+(-> provider-model-context-window-for (string &key (:provider (option string))) (option integer))
+(defun provider-model-context-window-for (model &key provider)
+  "Return MODEL's metadata from the selected provider."
+  (let ((metadata (provider-model-for model :provider provider)))
     (and metadata (provider-model-context-window metadata))))
 
-(-> provider-model-reasoning-efforts-for (string) (option list))
-(defun provider-model-reasoning-efforts-for (model)
-  "Return the reasoning efforts declared for MODEL, when available."
-  (let ((metadata (provider-model-for model)))
+(-> provider-model-reasoning-efforts-for (string &key (:provider (option string))) (option list))
+(defun provider-model-reasoning-efforts-for (model &key provider)
+  "Return MODEL's metadata from the selected provider."
+  (let ((metadata (provider-model-for model :provider provider)))
     (and metadata (copy-list (provider-model-reasoning-efforts metadata)))))
 
 (-> provider-model-provider-name (string) (option string))
@@ -244,12 +356,13 @@ then newest registration order decide which provider is effective."
 
 (-> provider--refresh-model-settings () null)
 (defun provider--refresh-model-settings ()
-  "Synchronize legacy model tables with the effective provider registry."
+  "Synchronize legacy bare-model tables with registry precedence."
   (let ((models (provider-model-identifiers)))
     (setf *supported-models* models
           *model-context-windows*
           (loop for model in models
-                for window = (provider-model-context-window-for model)
+                for metadata = (provider-registry-model *provider-registry* model)
+                for window = (and metadata (provider-model-context-window metadata))
                 when window collect (cons model window))))
   nil)
 

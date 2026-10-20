@@ -7940,11 +7940,9 @@
            (let ((items (application--model-items application)))
               (test-assert (= (length items) 7)
                            "every configured ChatGPT model is offered")
-             (test-assert (string= (getf (find "current" items
-                                               :key (lambda (item)
-                                                      (getf item :description))
-                                               :test #'string=)
-                                         :name)
+             (test-assert (string= (getf (find t items
+                                               :key (lambda (item) (getf item :current-p)))
+                                         :model)
                                    *default-model*)
                           "the active model is marked current"))
            (application-set-model application "gpt-5.6-terra")
@@ -8009,14 +8007,14 @@
                             "medium"))
               "model commands persist both choices as global defaults"))
            (test-assert
-            (search "The model is now gpt-5.6-luna with reasoning effort medium."
+            (search "chatgpt/gpt-5.6-luna with reasoning effort medium."
                     (recording-terminal-output terminal))
             "model commands report the complete selection")
            (test-assert (handler-case
                             (progn
                               (application-set-model application "gpt-4")
                               nil)
-                          (setting-error ()
+                          (model-selection-error ()
                             t))
                         "unsupported models are rejected with the choices")
            (conversation-append-user-message conversation "persist this choice")
