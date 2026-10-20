@@ -8,15 +8,42 @@
     application)
 (defun application-tests--ui-application
     (&key (columns 40) reasoning-traces-p (compact-view-p t))
-  "Return a minimal application presenting into a recording terminal."
-  (make-instance 'application
-                 :configuration (make-configuration
-                                 :reasoning-traces-p reasoning-traces-p
-                                 :compact-view-p compact-view-p)
-                 :tool-registry (make-default-tool-registry)
-                 :ui (terminal-ui-create
-                      :terminal (make-instance 'recording-terminal
-                                               :columns columns))))
+  "Return a nonpersistent application presenting into a recording terminal."
+  (let ((*configuration-store* nil))
+    (make-instance 'application
+                   :configuration (make-configuration
+                                   :reasoning-traces-p reasoning-traces-p
+                                   :compact-view-p compact-view-p)
+                   :tool-registry (make-default-tool-registry)
+                   :ui (terminal-ui-create
+                        :terminal (make-instance 'recording-terminal
+                                                 :columns columns)))))
+
+
+(-> test-presentation-configuration-isolation () null)
+(defun test-presentation-configuration-isolation ()
+  "Exercise recording UI setting changes without any durable store writes."
+  (with-test-configuration (configuration)
+    (let ((writes nil))
+      (test-call-with-function-replacements
+       (list
+        (list 'preferences-store
+              (lambda (target name value)
+                (push (list target name value) writes)
+                nil)))
+       (lambda ()
+         (let* ((application (application-tests--ui-application))
+                (presentation (application-configuration application)))
+           (test-assert (null (setinka:configuration-store presentation))
+                        "Recording UI configuration must not own a durable store.")
+           (setf (application-compact-view-p application) nil)
+           (test-assert (not (application-compact-view-p application))
+                        "Recording UI settings must remain mutable.")
+           (test-assert (config :compact-view-p configuration)
+                        "A presentation change must not affect the enclosing fixture."))))
+      (test-assert (null writes)
+                   "Presentation fixtures must never attempt durable writes.")))
+  nil)
 
 (defclass cursor-observing-provider (scripted-provider)
   ((visibility-function

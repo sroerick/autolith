@@ -1084,6 +1084,7 @@
     test-release-server))
 
 (define-test-suite application
+  test-presentation-configuration-isolation
   test-operation-request-turn
   test-application-transcript-actions
   test-application-mermaid-transcript
