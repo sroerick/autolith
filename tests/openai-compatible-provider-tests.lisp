@@ -18,6 +18,76 @@
   "Call FUNCTION with a descriptor-backed input stream containing CONTENT."
   (test-fixture-call-with-descriptor-input *platform* content function))
 
+(-> test-openai-compatible-provider-tool-schemas () null)
+(defun test-openai-compatible-provider-tool-schemas ()
+  "Project built-in tools at the request boundary without relaxing local validation."
+  (with-test-configuration (configuration)
+    (let* ((provider (provider-authentication-provider configuration "openai-api"))
+           (registry (make-default-tool-registry :configuration configuration))
+           (conversation (conversation-create configuration))
+           (search-tool (tool-registry-find registry "search" "content"))
+           (canonical (json-encode (tool-parameters search-tool)))
+           (context (make-instance 'tool-context
+                                   :configuration configuration
+                                   :conversation conversation
+                                   :registry registry
+                                   :worker nil))
+           (request
+             (json-decode
+              (json-encode
+               (provider-request-object provider conversation
+                                        (tool-registry-provider-schemas registry)))))
+           (tools (json-get request "tools"))
+           (search-function
+             (find (openai-compatible--wire-tool-name "search" "content") tools
+                   :key (lambda (tool) (json-get (json-get tool "function") "name"))
+                   :test #'string=)))
+      (test-assert
+       (and (plusp (length tools))
+            (every (lambda (tool)
+                     (let ((schema (json-get (json-get tool "function") "parameters")))
+                       (and (json-string= (json-get schema "type") "object")
+                            (notany (lambda (keyword) (nth-value 1 (gethash keyword schema)))
+                                    '("oneOf" "anyOf" "allOf" "enum" "const" "not")))))
+                   tools))
+       "the full built-in toolset has OpenAI-compatible root object schemas")
+      (test-assert
+       (let ((properties (json-get (json-get (json-get search-function "function") "parameters")
+                                   "properties")))
+         (and (json-string= (json-get (json-get properties "query") "type") "string")
+              (json-string= (json-get (json-get properties "patterns") "type") "array")))
+       "the actual encoded search function declares its original argument fields")
+      (test-assert
+       (and (gethash "oneOf" (tool-parameters search-tool))
+            (string= canonical (json-encode (tool-parameters search-tool))))
+       "wire projection does not mutate the canonical exclusive search schema")
+      (let ((worker-calls 0))
+        (test-call-with-function-replacements
+         (list (list 'search-worker-request
+                     (lambda (worker config &key operation arguments)
+                       (declare (ignore worker config operation arguments))
+                       (incf worker-calls)
+                       "Fixture search matches.")))
+         (lambda ()
+           (dolist (arguments '("{}" "{\"query\":\"needle\",\"patterns\":[\"needle\"]}"))
+             (let ((result (tool-registry-execute-call
+                            registry
+                            (json-object "namespace" "search" "name" "content" "arguments" arguments)
+                            context)))
+               (test-assert (not (tool-result-success-p result))
+                            "local dispatch rejects both or neither search input after projection")))
+           (test-assert (zerop worker-calls) "invalid inputs never reach the search worker")
+           (dolist (arguments '("{\"query\":\"needle\"}" "{\"patterns\":[\"needle\"]}"))
+             (test-assert
+              (tool-result-success-p
+               (tool-registry-execute-call
+                registry
+                (json-object "namespace" "search" "name" "content" "arguments" arguments)
+                context))
+              "each exclusive search input dispatches successfully after projection"))
+           (test-assert (= worker-calls 2) "only valid inputs reach the search worker"))))))
+  nil)
+
 (-> test-openai-compatible-provider-bootstrap () null)
 (defun test-openai-compatible-provider-bootstrap ()
   "Test deferred startup validation for user-defined model metadata."
