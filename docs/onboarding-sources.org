@@ -212,12 +212,14 @@ Run =autolith --immutable= to prevent self-modification during a session.
 * Connect your first provider
 :PROPERTIES:
 :ID: first-provider
-:VERSION: 1
+:VERSION: 2
 :EXERCISE: authentication
 :END:
 Choose a provider and sign in before your first conversation.
 
 For *ChatGPT*, choose *browser* for direct browser OAuth or *device-code* to enter a code in your browser. For other providers, follow their login or API-key prompts.
+
+For an *OpenAI API key*, choose *openai-api*, then paste your key at the hidden prompt. Autolith saves it in its private credential store and discovers your available models. Choose *chatgpt* for a ChatGPT subscription instead.
 
 Don't want to sign in yet? Type =continue=.
 

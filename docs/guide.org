@@ -1475,8 +1475,16 @@ on =localhost:1455= or =localhost:1457= by default. Use
 browser authorization URL is always printed for manual use. Grok and Nous
 Research use browser device flows. Gemini uses Google installed-application
 OAuth with a local loopback callback.
-Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, and user-registered
-OpenAI-compatible providers use API keys.
+Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, OpenAI API, and
+user-registered OpenAI-compatible providers use API keys.
+
+For the official OpenAI API, choose =openai-api= during onboarding, run
+=autolith auth openai-api=, or use =(auth "openai-api")=. Paste your API key
+at the hidden prompt. Autolith stores it in its private credential store and
+loads the models available to that key from =https://api.openai.com/v1/models=.
+Requests use =https://api.openai.com/v1/chat/completions=. No =init.lisp=
+registration is needed. The =chatgpt= provider uses a ChatGPT subscription
+instead.
 
 Authenticate a GitHub Copilot subscription with =autolith auth copilot=
 or =(auth "copilot")=. Approve the displayed device code at

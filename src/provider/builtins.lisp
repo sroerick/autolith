@@ -179,6 +179,14 @@
  :factory #'provider--codex-registration-factory
  :source ':builtin)
 
+(register-openai-compatible-provider
+ :name "openai-api"
+ :description "OpenAI API (pay-per-token)"
+ :endpoint "https://api.openai.com/v1/chat/completions"
+ :models-endpoint "https://api.openai.com/v1/models"
+ :reasoning-parameter "reasoning_effort"
+ :source ':builtin)
+
 (register-provider
  "gemini"
  :description "Gemini Code Assist subscription"

@@ -284,6 +284,7 @@
   test-onboarding-startup-interruption
   test-onboarding-settings-exercise
   test-onboarding-authentication
+  test-onboarding-openai-api
   test-onboarding-authentication-pending)
 
 (define-test-suite job-completion-policy

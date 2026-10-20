@@ -1995,10 +1995,13 @@ are forwarded to TERMINAL-UI-SELECT."
           collect (list :name name
                         :argument nil
                         :description
-                        (if (and current-provider
-                                 (string= name current-provider))
-                            "current provider"
-                            "registered provider")))))
+                        (let ((description
+                                (or (provider-registration-description registration)
+                                    "registered provider")))
+                          (if (and current-provider
+                                   (string= name current-provider))
+                              (format nil "~A (current provider)" description)
+                              description))))))
 
 (-> application--authentication-provider-visible-count (application) (integer 1))
 (defun application--authentication-provider-visible-count (application)

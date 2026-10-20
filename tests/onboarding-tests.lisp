@@ -379,6 +379,81 @@ its native method dispatch, terminal ownership, and the tour presenter real."
                         "authentication restores output suspension"))))))
   nil)
 
+(-> test-onboarding-openai-api () null)
+(defun test-onboarding-openai-api ()
+  "Enter an official API key through onboarding and discover its models."
+  (let ((snapshot (provider--registry-snapshot)))
+    (unwind-protect
+         (onboarding-tests--call
+          (lambda (application controller configuration terminal)
+            (declare (ignore controller))
+            (setf (application-configuration application)
+                  (configuration-copy configuration :boot-screen-p nil))
+            (let* ((pages (list (onboarding-ui-test--page "first-provider" ':authentication)
+                                (onboarding-ui-test--page "finish")))
+                   (output (make-string-output-stream))
+                   (input (make-string-input-stream (format nil "onboarding-fixture-key~%")))
+                   (requests 0))
+              (dolist (event '((:paste "(auth)") :submit (:paste "openai-api")
+                               :submit :submit :submit))
+                (queued-recording-terminal-enqueue terminal event))
+              (test-call-with-function-replacements
+               (list
+                (list 'onboarding-pages
+                      (lambda (config) (declare (ignore config)) pages))
+                (list 'application--authentication-streams
+                      (lambda (target)
+                        (test-assert (eq target application) "authentication uses this application")
+                        (values input output nil t -1)))
+                (list 'dexador:get
+                      (lambda (url &key headers &allow-other-keys)
+                        (test-assert (string= url "https://api.openai.com/v1/models")
+                                     "the official API model endpoint is queried")
+                        (test-assert
+                         (equal (cdr (assoc "Authorization" headers :test #'string-equal))
+                                "Bearer onboarding-fixture-key")
+                         "model discovery uses the privately saved key")
+                        (incf requests)
+                        (values "{\"data\":[{\"id\":\"openai-onboarding-fixture\"}]}" 200 nil))))
+               (lambda ()
+                 (test-assert (eq ':completed (application-onboard application))
+                              "API-key onboarding returns to and completes the tour")))
+              (test-assert (= requests 1) "authentication discovers the account catalog once")
+              (test-assert
+               (member "openai-onboarding-fixture" (provider-model-identifiers) :test #'string=)
+               "the discovered model is available for selection")
+              (let* ((provider (application--authentication-provider application "openai-api"))
+                     (credentials
+                       (credential-source-load
+                        (credential-manager-primary-source (provider-credential-manager provider))))
+                     (transcript (concatenate 'string (get-output-stream-string output)
+                                              (recording-terminal-output terminal))))
+                (test-assert (and credentials
+                                  (string= "onboarding-fixture-key"
+                                           (oauth-credentials-access-token credentials)))
+                             "onboarding saves the key in the private API-key store")
+                (test-assert (not (search "onboarding-fixture-key" transcript))
+                             "the key is absent from prompts and the terminal transcript")
+                (test-assert (not (secret-use-active-p)) "authentication exits the secret-use scope"))
+              (let* ((selected
+                       (configuration-copy configuration :model "openai-onboarding-fixture"))
+                     (provider (provider-create selected))
+                     (conversation (conversation-create selected :identifier "openai-onboarding-request"))
+                     (request (provider-request-object provider conversation #())))
+                (test-assert
+                 (and (string= "https://api.openai.com/v1/chat/completions"
+                               (config :provider-endpoint (provider-configuration provider)))
+                      (string= "openai-api" (provider-account-label provider))
+                      (string= "openai-onboarding-fixture" (json-get request "model"))
+                      (vectorp (json-get request "messages")))
+                 "a discovered API model resolves to the official Chat Completions request"))
+              (test-assert (null (queued-recording-terminal-events terminal))
+                           "API-key entry does not open the subscription method picker")
+              (test-assert (null (onboarding-state-pending configuration pages))
+                           "successful onboarding acknowledges its pages"))))
+      (provider--registry-restore snapshot)))
+  nil)
+
 (-> test-onboarding-authentication-pending () null)
 (defun test-onboarding-authentication-pending ()
   "Offer the new provider lesson to existing users without forcing a login."

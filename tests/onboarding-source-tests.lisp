@@ -87,8 +87,10 @@
       (dolist (page pages)
         (test-assert (= (getf page :version)
                         (cond
-                          ((member (getf page :id) '("missions" "agent-definition" "first-provider") :test #'string=)
+                          ((member (getf page :id) '("missions" "agent-definition") :test #'string=)
                            1)
+                          ((string= "first-provider" (getf page :id))
+                           2)
                           ((string= "detached-sessions" (getf page :id))
                            5)
                           ((member (getf page :id) revised :test #'string=)
