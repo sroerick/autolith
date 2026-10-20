@@ -309,12 +309,15 @@
               "max")
      "ultra maps to the provider max effort")
     (test-assert
-     (string= (configuration-wire-effort
-               (configuration-copy configuration
-                                   :model "gpt-5.6-terra"
-                                   :reasoning-effort "none"))
-              "none")
-     "none is passed through as a provider reasoning effort")
+     (handler-case
+         (progn
+           (configuration-copy configuration
+                               :model "gpt-5.6-terra"
+                               :reasoning-effort "none")
+           nil)
+       (setting-invalid ()
+         t))
+     "Codex model metadata rejects unsupported reasoning levels")
     (let ((*print-readably* t))
       (test-assert
        (search "Condition text."
