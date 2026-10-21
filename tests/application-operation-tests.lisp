@@ -974,7 +974,7 @@
 
 (-> test-fix-skipped-definitions-operation () null)
 (defun test-fix-skipped-definitions-operation ()
-  "Test the repair command reports an empty skip list and needs a live session otherwise."
+  "Test optional user direction reaches the queued repair request through both syntaxes."
   (let ((provider (make-instance 'scripted-provider :results nil)))
     (application-operation-tests--call-with-compaction-provider
      provider
@@ -1003,9 +1003,56 @@
             (configuration-error ()
               t))
           "queueing the repair turn without an interactive controller is a configuration failure")
+         (let* ((controller (make-instance 'application-input-controller
+                                           :application application))
+                (work-items (application-input-controller-work-items controller))
+                (comment (format nil "Drop these experiments, including \"quoted\" names.~%Keep ~A literal."
+                                 "~%")))
+           (setf (application-input-controller application) controller)
+           (dolist (case (list (list ':lisp "(fix-skipped-definitions)" "")
+                              (list ':lisp "(fix-skipped-definitions \"\")" "")
+                              (list ':lisp (format nil "(fix-skipped-definitions ~S)" comment)
+                                    comment)
+                              (list ':slash "/fix-skipped-definitions" "")
+                              (list ':slash (concatenate 'string "/fix-skipped-definitions " comment)
+                                    comment)))
+             (destructuring-bind (syntax input direction) case
+               (test-assert
+                (if (eq syntax ':lisp)
+                    (eq (application-lisp-evaluation-status
+                         (application-lisp-evaluate input :application application))
+                        ':ok)
+                    (eq (application-command application input) ':continue))
+                "the command accepts an omitted, empty, or complete direction string")
+               (let* ((work (deque-pop-front work-items))
+                      (text (getf (second work) :text))
+                      (request (getf (second work) :request)))
+                 (test-assert
+                  (and (eq (first work) ':operation-request)
+                       (string= (getf request :operation) "fix-skipped-definitions")
+                       (search "(defun test-self-target () 7)" text)
+                       (or (zerop (length direction)) (search direction text))
+                       (deque-empty-p work-items))
+                  "one repair request contains the skipped source and the user's exact direction"))))
+           (dolist (input '("(fix-skipped-definitions 7)"
+                            "(fix-skipped-definitions nil)"))
+             (test-assert
+              (and (eq (application-lisp-evaluation-status
+                        (application-lisp-evaluate input :application application))
+                       ':aborted)
+                   (deque-empty-p work-items))
+              "non-string direction is rejected before queueing work"))
+           (setf (application-input-controller-stopping-p controller) t)
+           (test-assert
+            (handler-case
+                (progn (application-command application "/fix-skipped-definitions Drop all experiments.")
+                       nil)
+              (configuration-error ()
+                (deque-empty-p work-items)))
+            "a stopping session rejects the directed repair request"))
          (test-assert
           (null (scripted-provider-input-snapshots provider))
-          "no provider request is made without a controller")))))
+          "queueing the command makes no provider request before the controller runs it")))))
   nil)
 
 (-> test-compact-operation-empty () null)

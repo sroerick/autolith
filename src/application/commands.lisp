@@ -1316,34 +1316,43 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
     (list &key (:configuration (option configuration))
                (:commit-identifier (option string))
                (:lineage-source-commit (option string))
-               (:image-source-commit (option string)))
+               (:image-source-commit (option string))
+               (:comment string))
     string)
 (defun application--skipped-definitions-prompt
     (skips &key configuration commit-identifier lineage-source-commit
-                image-source-commit)
-  "Return the model request that rebuilds SKIPS on the current tracked source."
+                image-source-commit (comment ""))
+  "Return the model request that resolves SKIPS according to the user's COMMENT."
   (with-output-to-string (stream)
     (format stream
             "Autolith skipped ~D private definition~:[s~;~] at startup because ~
              the tracked source they override moved on since they were ~
              published (private commit ~A, published against ~A; this image ~
-             runs ~A). Bring every one of them up to date with the current ~
-             tracked source.~2%~
-             For each definition below, compare the persisted override with ~
-             the tracked definition it was written against and with the ~
-             current tracked definition. If the current tracked source already ~
-             provides the override's behavior, drop the override and say so. ~
-             Otherwise rewrite the override on top of the current tracked ~
-             definition, keeping its intent while following the current ~
-             calling conventions, install it with self.redefine, and check ~
-             that it works. When every definition is handled, publish the ~
-             result with self.commit so the next start replays the rebuilt ~
-             overrides. Do not edit tracked source files.~%"
+             runs ~A). Resolve every skipped definition against the current ~
+             tracked source.~2%"
             (length skips)
             (= (length skips) 1)
             (application--short-revision commit-identifier)
             (application--short-revision lineage-source-commit)
             (application--short-revision image-source-commit))
+    (when (plusp (length comment))
+      (format stream
+              "User direction (takes precedence over the default repair policy):~%~A~2%"
+              comment))
+    (format stream
+            "Default repair policy: for each definition below, compare the ~
+             persisted override with the tracked definition it was written ~
+             against and with the current tracked definition. Drop overrides ~
+             the user asks to drop, including temporary development experiments, ~
+             by leaving them uninstalled. Also drop any override whose behavior ~
+             the current tracked source already provides. Otherwise rewrite ~
+             the override on top of the current tracked definition, keeping ~
+             its intent while following the current calling conventions, ~
+             install it with self.redefine, and check that it works. When every ~
+             definition is handled, publish the result with self.commit, even ~
+             if all skipped overrides were dropped, so the next start replays ~
+             only the retained overrides. Explain which overrides were dropped. ~
+             Do not edit tracked source files.~%")
     (flet ((write-sections ()
              (loop for skip in skips
                    for index from 1
@@ -1354,9 +1363,10 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
             (write-sections))
           (write-sections)))))
 
-(-> application-fix-skipped-definitions (application) null)
-(defun application-fix-skipped-definitions (application)
-  "Queue one model turn that rebuilds every skipped private definition."
+(-> application-fix-skipped-definitions (application &optional string) null)
+(defun application-fix-skipped-definitions (application &optional (comment ""))
+  "Queue one model turn to rebuild or drop skipped definitions, guided by COMMENT."
+  (check-type comment string)
   (let ((skips *image-replay-skips*))
     (cond
       ((null skips)
@@ -1379,7 +1389,8 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
                    :lineage-source-commit
                    (application--replay-lineage-source-commit application)
                    :image-source-commit
-                   (image-commit--base-source-commit nil))
+                   (image-commit--base-source-commit nil)
+                   :comment comment)
                   (list :operation "fix-skipped-definitions"
                         :summary
                         (format nil "Rebuild or drop the ~D private definition~:P skipped at startup."
@@ -1390,10 +1401,16 @@ it was published, and the tracked definition CONFIGURATION's source holds now."
           application
           (list (terminal-span
                  ':hint
-                 (format nil "Queued ~D skipped definition~:[s~;~] for the model to rebuild on the current source."
+                 (format nil "Queued ~D skipped definition~:[s~;~] for repair or removal."
                          (length skips)
                          (= (length skips) 1)))))))))
   nil)
+
+(-> application--skipped-definitions-slash-arguments (string) list)
+(defun application--skipped-definitions-slash-arguments (text)
+  "Return the complete slash remainder TEXT as one optional direction string."
+  (when (plusp (length text))
+    (list text)))
 
 
 ;;;; -- Manual Compaction --
@@ -3477,14 +3494,15 @@ The current value and its source sit in aligned columns of their own."
 
 (define-application-command application--builtin-fix-skipped-definitions-command
     (:name "/fix-skipped-definitions"
-     :argument nil
-     :description "ask the model to rebuild skipped private definitions"
-     :tip "hands every private definition the startup replay skipped to the model, with its persisted, recorded, and current tracked source, to rebuild and commit."
+     :argument "[comment]"
+     :description "ask the model to rebuild or drop skipped private definitions"
+     :tip "Use `(fix-skipped-definitions \"Drop temporary development overrides.\")` to direct which skipped definitions to rebuild or drop before committing."
      :busy-behavior :hold
      :terminal-behavior :shared
-     :callable t)
-    (application)
-  (application-fix-skipped-definitions application)
+     :callable t
+     :slash-parser application--skipped-definitions-slash-arguments)
+    (application &optional (comment ""))
+  (application-fix-skipped-definitions application comment)
   ':continue)
 
 (define-application-command application--builtin-compact-tool-command
